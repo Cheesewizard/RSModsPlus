@@ -33,6 +33,8 @@ Constraints that follow from this design:
 - The pedal must be set before entering the tuner (see
   [the tuner latch](#the-tuner-latch)).
 - Uniform tunings only.
+- Single player only. The tuning-reference redirect is global, so with a shift
+  applied a second player's notes are scored against the wrong expectation.
 - Tones reset per song, so the tone slot key is pressed each time.
 
 ## Controls
@@ -131,6 +133,7 @@ bass pedal tones, then use the pedal only for the song's tuning offset.
 | Bass: audio right, nothing registers | Octave is in the pedal instead of the tone's Pitch 1 |
 | Game tuner screen stuck listening | Pedal changed mid-listen; back out of the screen and re-enter |
 | Pitch keys do nothing | Pedal toggled off (`F8`), or Rocksmith is not the focused window |
+| Multiplayer: player 2's notes do not register | The tuning-reference redirect is global; use single player with this engine |
 
 The debug log is `RSMods_debug.txt`, next to `Rocksmith2014.exe`, not in the
 `RSMods` subfolder. It is overwritten on every launch and locked while the

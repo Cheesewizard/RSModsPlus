@@ -18,6 +18,11 @@ and the tuning reference used by note detection is adjusted to match. Range is
 To play an Eb song on a guitar in E standard, set the pedal to -1. Works for
 guitar and for emulated bass.
 
+Multiplayer is limited: the ASIO engine shifts only player 1's
+`[Asio.Input.0]` channel, so player 2 remains unshifted. The Cable engine is
+single-player only because its tuning-reference redirect is global and makes a
+second player's notes score against the wrong tuning.
+
 **Setup and usage:** with RS_ASIO and an ASIO interface, follow the
 **[ASIO Drop Pedal guide](docs/asio-drop-pedal.md)**. With a Real Tone cable and
 no RS_ASIO, follow the
@@ -99,6 +104,9 @@ are playing bass and include the octave in the pedal value, such as `-12` for
 E-standard bass from an E-standard guitar. That shifts before the game hears the
 signal and avoids Rocksmith's emulated-bass post-processing path.
 
+In multiplayer, only player 1 is shifted. Player 2's `[Asio.Input.1]` channel
+plays unshifted, with detection unaffected.
+
 **Cable Drop Pedal.** Without RS_ASIO, detection reads the raw signal
 upstream of the tone chain, so the mod shifts inside the game instead: it
 retunes a MultiPitch pedal in the player's tone and redirects the reference
@@ -106,6 +114,10 @@ frequency the game derives its expected pitch from. This is the same value CDLC
 charters set as an arrangement's tuning pitch. Shift the audio down a semitone,
 move the expectation up one, and the two agree. This engine needs the
 MultiPitch pedal in the tone and covers uniform tunings only.
+
+This engine is single-player only. The tuning-reference redirect is global, so
+with a shift applied a second player's notes are scored against the wrong
+expectation.
 
 Reverse-engineering notes, including everything that was ruled out along the
 way, are in [docs/wwise-plugin-internals.md](docs/wwise-plugin-internals.md).
