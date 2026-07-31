@@ -12,6 +12,8 @@ This guide covers the ASIO engine. For setups without RS_ASIO, see the
 
 - [RS_ASIO](https://github.com/mdias/rs_asio) with an ASIO audio interface.
 - No in-game setup. The pedal operates on every tone, stock or custom.
+- The pedal shifts the one channel `[Asio.Input.0]` names. In multiplayer the
+  second player (`[Asio.Input.1]`) plays unshifted, with detection unaffected.
 
 The engine is selected at launch and announced beside the pedal readout, then
 fades after a few seconds:
@@ -87,6 +89,7 @@ Eb bass, and so on. This avoids Rocksmith's emulated-bass post-processing path.
 | Game reports "no audio output device" on launch | Another program changed the interface's sample rate (DAWs and amp sims do this silently). Set it back to 48000 Hz in the interface's control panel and relaunch |
 | Tuner reads a different tuning than the guitar is in | The shift, working as designed |
 | Pitch keys do nothing | Pedal toggled off (`F8`), or Rocksmith is not the focused window |
+| Multiplayer: player 2 hears no shift | The pedal shifts only the `[Asio.Input.0]` channel |
 
 The debug log is `RSMods_debug.txt`, next to `Rocksmith2014.exe`, not in the
 `RSMods` subfolder. It is overwritten on every launch and locked while the
