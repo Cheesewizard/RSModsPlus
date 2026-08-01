@@ -19,6 +19,26 @@ RS_ASIO supplies its virtual input later through the Windows Core Audio device
 interfaces. It does not satisfy Rocksmith's earlier WMI cable search, so the
 game completes its retry loop before requesting the ASIO endpoints.
 
+This is best described as a compatibility defect at the boundary between
+Rocksmith and RS_ASIO. Rocksmith performs the slow scans, but its retry logic is
+reasonable for a physical USB cable that may still be appearing. RS_ASIO
+provides the replacement input at a later discovery layer and does not satisfy
+that earlier search. Neither component intentionally waits for an ASIO device;
+the delay is the result of those two discovery paths not meeting.
+
+From an RS_ASIO user's perspective this behaves like an RS_ASIO startup bug,
+and it could also be fixed there by satisfying or bypassing Rocksmith's early
+cable search. It is not ASIO driver initialization: tracing showed that the
+configured ASIO driver opens quickly once Rocksmith finally requests it.
+
+### Physical Real Tone Cable users
+
+A physical Real Tone Cable present at launch should be visible to the first WMI
+scan. The retry-loop interpretation therefore predicts that those users boot
+faster without this optimization because Rocksmith can stop searching early.
+That prediction has not yet been verified with a real cable A/B test, so it is
+documented as an inference rather than a measured result.
+
 ## How the optimization works
 
 RSModsPlus observes creation of the specific WMI locator and the
@@ -31,8 +51,11 @@ RSModsPlus observes creation of the specific WMI locator and the
 
 The scope is deliberately narrow: it activates only when `RS_ASIO.dll` is
 loaded and only affects `Win32_PNPEntity` during the startup window. Systems
-using a real Real Tone Cable retain Rocksmith's original device-discovery
-behavior.
+without RS_ASIO retain Rocksmith's original device-discovery behavior. In a
+hybrid installation where `RS_ASIO.dll` is loaded but a physical Real Tone
+Cable is also used, the cable and audio interface should be connected before
+launch. Hardware connected after the first scan may not be discovered during
+that session and Rocksmith should be restarted.
 
 ## Measured result
 
