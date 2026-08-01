@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClCompile Include="Audio\AsioHook.cpp" />
     <ClCompile Include="Audio\AudioCaptureHook.cpp" />
+    <ClCompile Include="Startup\ModernFastBoot.cpp" />
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp" />
     <ClCompile Include="CC\CCEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
@@ -225,6 +226,7 @@
     </ClCompile>
     <ClInclude Include="Audio\AsioHook.hpp" />
     <ClInclude Include="Audio\AudioCaptureHook.hpp" />
+    <ClInclude Include="Startup\ModernFastBoot.hpp" />
     <ClInclude Include="Audio\CaptureFormat.h" />
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp" />
     <ClInclude Include="Audio\signalsmith\fft.h" />

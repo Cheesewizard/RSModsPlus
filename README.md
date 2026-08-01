@@ -40,6 +40,8 @@ no RS_ASIO, follow the
 - A base tuning setting, so the pedal offsets from whatever your guitar is
   physically in rather than from E.
 - An on-screen readout of the current state, named relative to the base tuning.
+- Modern Fast Boot for RS_ASIO, which avoids Rocksmith's redundant startup PnP
+  scans while preserving its first real hardware scan.
 
 Everything else comes from RSMods 1.2.8.2 and behaves as upstream documents it:
 extended range mode, custom song list titles, toggle loft, force re-enumeration,
@@ -145,6 +147,7 @@ Next:
 | [docs/asio-drop-pedal.md](docs/asio-drop-pedal.md) | ASIO Drop Pedal: requirements, controls, playing, bass, troubleshooting |
 | [docs/cable-drop-pedal.md](docs/cable-drop-pedal.md) | Cable Drop Pedal: tone setup, constraints, bass, troubleshooting |
 | [docs/wwise-plugin-internals.md](docs/wwise-plugin-internals.md) | How the Wwise pitch shifter is reached, and what was ruled out |
+| [docs/modern-fast-boot.md](docs/modern-fast-boot.md) | Cause, scope and measured result of the RS_ASIO startup optimization |
 
 ---
 

@@ -67,6 +67,9 @@
     <Filter Include="Audio">
       <UniqueIdentifier>{e37e455d-2b9b-42b4-82a0-593b38e4fe23}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Startup">
+      <UniqueIdentifier>{fd45256d-b1ae-435a-9d22-28ac7642c8b1}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -308,6 +311,9 @@
     </ClCompile>
     <ClCompile Include="Audio\AudioCaptureHook.cpp">
       <Filter>Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="Startup\ModernFastBoot.cpp">
+      <Filter>Startup</Filter>
     </ClCompile>
     <ClCompile Include="Audio\AsioHook.cpp">
       <Filter>Source Files</Filter>
@@ -646,6 +652,9 @@
     </ClInclude>
     <ClInclude Include="Audio\AudioCaptureHook.hpp">
       <Filter>Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="Startup\ModernFastBoot.hpp">
+      <Filter>Startup</Filter>
     </ClInclude>
     <ClInclude Include="Audio\AsioHook.hpp">
       <Filter>Main Headers</Filter>

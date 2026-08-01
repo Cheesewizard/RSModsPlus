@@ -3,6 +3,7 @@
 #include "Mods/AudioDevices.hpp"
 #include "Mods/VoiceOverControl.hpp"
 #include "Mods/Midi.hpp"
+#include "Startup/ModernFastBoot.hpp"
 
 namespace Menu {
 	void GenerateTestingTextures(IDirect3DDevice9* pDevice) {
@@ -88,6 +89,7 @@ namespace Menu {
 		ImGui::GetIO().ImeWindowHandle = D3DHooks::hThisWnd;
 		ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+		Startup::ModernFastBoot::CompleteStartupSuppression();
 		LOG_INFO("ImGUI Init" << std::endl);
 
 		Settings::UpdateSettings();

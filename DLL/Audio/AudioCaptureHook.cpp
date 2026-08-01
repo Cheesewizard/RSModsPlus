@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "AudioCaptureHook.hpp"
 #include "ComVTable.hpp"
+#include "../Startup/ModernFastBoot.hpp"
 
 namespace Audio
 {
@@ -403,6 +404,8 @@ namespace Audio::CaptureHook
 
 			if (IsEqualIID(riid, __uuidof(IMMDeviceEnumerator)))
 				HookEnumerator(static_cast<IMMDeviceEnumerator*>(*created));
+
+			Startup::ModernFastBoot::TryHookWbemLocator(classId, riid, *created);
 
 			return result;
 		}
