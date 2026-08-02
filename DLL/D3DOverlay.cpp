@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include "D3DOverlay.hpp"
-#include "Mods/DropPedal.hpp"
+#include "Mods/DropPedal/DropPedal.hpp"
 
 /// <returns>Size of Rocksmith Window</returns>
 Resolution GameOverlay::GetWindowSize() {
@@ -252,6 +252,11 @@ static int dropPedalPlateRight = 0;
 
 void GameOverlay::DisplayDropPedalTuning()
 {
+	if (!DropPedal::IsConfiguredEnabled())
+	{
+		return;
+	}
+
 	const std::string state = DropPedal::IsEnabled()
 		? DropPedal::GetTuningName()
 		: "off";

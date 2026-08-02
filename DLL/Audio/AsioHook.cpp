@@ -14,7 +14,10 @@ namespace Audio::AsioHook
 		typedef double ASIOSampleRate;
 
 		constexpr ASIOError ASE_OK = 0;
+		constexpr long ASIOSTInt16LSB = 16;
+		constexpr long ASIOSTInt24LSB = 17;
 		constexpr long ASIOSTInt32LSB = 18;
+		constexpr long ASIOSTFloat32LSB = 19;
 		constexpr long MAX_ASIO_CHANNEL_NAME = 32;
 
 		struct ASIOBufferInfo
@@ -51,8 +54,10 @@ namespace Audio::AsioHook
 		constexpr size_t SLOT_CLASS_FACTORY_CREATE_INSTANCE = 3;
 
 		constexpr long MAX_BUFFER_FRAMES = 4096;
+		constexpr int MAX_INPUT_CHANNELS = 16;
+		constexpr float INT16_TO_FLOAT = 1.0f / 32768.0f;
+		constexpr float INT24_TO_FLOAT = 1.0f / 8388608.0f;
 		constexpr float INT32_TO_FLOAT = 1.0f / 2147483648.0f;
-		constexpr float FLOAT_TO_INT32 = 2147483647.0f;
 
 		typedef HRESULT(STDMETHODCALLTYPE* DllGetClassObject_t)(REFCLSID, REFIID, LPVOID*);
 		typedef HRESULT(STDMETHODCALLTYPE* CreateInstance_t)(IClassFactory*, IUnknown*, REFIID, void**);
@@ -68,11 +73,11 @@ namespace Audio::AsioHook
 		std::string driverName;
 
 		// Written once during createBuffers, read on the ASIO callback thread afterwards.
-		void* inputBuffers[2][2] = {};		// [channelIndex][doubleBufferIndex]
-		long inputChannelNumbers[2] = { -1, -1 };
+		void* inputBuffers[MAX_INPUT_CHANNELS][2] = {};		// [inputIndex][doubleBufferIndex]
+		long inputChannelNumbers[MAX_INPUT_CHANNELS] = {};
+		long inputSampleTypes[MAX_INPUT_CHANNELS] = {};
 		int discoveredInputChannels = 0;
 		long activeBufferFrames = 0;
-		long activeSampleType = -1;
 
 		ASIOCallbacks originalCallbacks{};
 		ASIOCallbacks hookedCallbacks{};
@@ -84,6 +89,146 @@ namespace Audio::AsioHook
 		std::atomic<int> selectedInputChannel{ -1 };
 		std::atomic<bool> processingEnabled{ false };
 		bool autoEnabledOnce = false;
+
+		SampleFormat GetSampleFormat(long sampleType)
+		{
+			switch (sampleType)
+			{
+			case ASIOSTFloat32LSB:
+				return SampleFormat::Float32;
+			case ASIOSTInt32LSB:
+				return SampleFormat::Int32;
+			case ASIOSTInt24LSB:
+				return SampleFormat::Int24;
+			case ASIOSTInt16LSB:
+				return SampleFormat::Int16;
+			default:
+				return SampleFormat::Unsupported;
+			}
+		}
+
+		float ClampSample(float value)
+		{
+			if (!std::isfinite(value)) return 0.0f;
+			if (value < -1.0f) return -1.0f;
+			if (value > 1.0f) return 1.0f;
+			return value;
+		}
+
+		int16_t FloatToInt16(float value)
+		{
+			const float clamped = ClampSample(value);
+			if (clamped <= -1.0f) return -32768;
+			if (clamped >= 1.0f) return 32767;
+			return (int16_t)(clamped * 32768.0f);
+		}
+
+		int32_t FloatToInt24(float value)
+		{
+			const float clamped = ClampSample(value);
+			if (clamped <= -1.0f) return -8388608;
+			if (clamped >= 1.0f) return 8388607;
+			return (int32_t)(clamped * 8388608.0f);
+		}
+
+		int32_t FloatToInt32(float value)
+		{
+			const float clamped = ClampSample(value);
+			if (clamped <= -1.0f) return (-2147483647 - 1);
+			if (clamped >= 1.0f) return 2147483647;
+			return (int32_t)(clamped * 2147483648.0f);
+		}
+
+		int32_t ReadInt24(const uint8_t* sample)
+		{
+			const uint32_t packed = (uint32_t)sample[0]
+				| ((uint32_t)sample[1] << 8)
+				| ((uint32_t)sample[2] << 16);
+
+			return (packed & 0x00800000u) != 0
+				? (int32_t)packed - 0x01000000
+				: (int32_t)packed;
+		}
+
+		void WriteInt24(int32_t value, uint8_t* sample)
+		{
+			const uint32_t packed = (uint32_t)value;
+			sample[0] = (uint8_t)packed;
+			sample[1] = (uint8_t)(packed >> 8);
+			sample[2] = (uint8_t)(packed >> 16);
+		}
+
+		bool ConvertInputToFloat(void* input, long sampleType, size_t count)
+		{
+			switch (sampleType)
+			{
+			case ASIOSTFloat32LSB:
+			{
+				const float* samples = reinterpret_cast<const float*>(input);
+				for (size_t i = 0; i < count; ++i)
+					conversionBuffer[i] = samples[i];
+				return true;
+			}
+			case ASIOSTInt32LSB:
+			{
+				const int32_t* samples = reinterpret_cast<const int32_t*>(input);
+				for (size_t i = 0; i < count; ++i)
+					conversionBuffer[i] = (float)samples[i] * INT32_TO_FLOAT;
+				return true;
+			}
+			case ASIOSTInt24LSB:
+			{
+				const uint8_t* samples = reinterpret_cast<const uint8_t*>(input);
+				for (size_t i = 0; i < count; ++i)
+					conversionBuffer[i] = (float)ReadInt24(samples + i * 3) * INT24_TO_FLOAT;
+				return true;
+			}
+			case ASIOSTInt16LSB:
+			{
+				const int16_t* samples = reinterpret_cast<const int16_t*>(input);
+				for (size_t i = 0; i < count; ++i)
+					conversionBuffer[i] = (float)samples[i] * INT16_TO_FLOAT;
+				return true;
+			}
+			default:
+				return false;
+			}
+		}
+
+		void ConvertFloatToInput(void* input, long sampleType, size_t count)
+		{
+			switch (sampleType)
+			{
+			case ASIOSTFloat32LSB:
+			{
+				float* samples = reinterpret_cast<float*>(input);
+				for (size_t i = 0; i < count; ++i)
+					samples[i] = ClampSample(conversionBuffer[i]);
+				break;
+			}
+			case ASIOSTInt32LSB:
+			{
+				int32_t* samples = reinterpret_cast<int32_t*>(input);
+				for (size_t i = 0; i < count; ++i)
+					samples[i] = FloatToInt32(conversionBuffer[i]);
+				break;
+			}
+			case ASIOSTInt24LSB:
+			{
+				uint8_t* samples = reinterpret_cast<uint8_t*>(input);
+				for (size_t i = 0; i < count; ++i)
+					WriteInt24(FloatToInt24(conversionBuffer[i]), samples + i * 3);
+				break;
+			}
+			case ASIOSTInt16LSB:
+			{
+				int16_t* samples = reinterpret_cast<int16_t*>(input);
+				for (size_t i = 0; i < count; ++i)
+					samples[i] = FloatToInt16(conversionBuffer[i]);
+				break;
+			}
+			}
+		}
 
 		std::string ReadDriverNameFromRsAsioIni()
 		{
@@ -101,9 +246,9 @@ namespace Audio::AsioHook
 			return {};
 		}
 
-		// RS_ASIO's Channel setting is the ASIO channel number the guitar arrives on, which
-		// is also the order channels appear in createBuffers, so it maps directly onto our
-		// discovered-input index.
+		// RS_ASIO's Channel setting is the ASIO channel number the guitar arrives on. It is
+		// matched against the channelNum of the buffers the driver hands out, since RS_ASIO
+		// creates buffers for every available input and accepts any nonnegative channel.
 		int ReadInputChannelFromRsAsioIni()
 		{
 			CSimpleIniA reader;
@@ -162,33 +307,35 @@ namespace Audio::AsioHook
 			return path;
 		}
 
+		int FindInputIndexForChannel(int channelNumber)
+		{
+			for (int i = 0; i < discoveredInputChannels; ++i)
+			{
+				if (inputChannelNumbers[i] == channelNumber) return i;
+			}
+
+			return -1;
+		}
+
 		void ProcessInputBuffer(long doubleBufferIndex)
 		{
-			const int channel = selectedInputChannel.load(std::memory_order_relaxed);
-			if (channel < 0 || channel >= discoveredInputChannels) return;
+			const int channel = FindInputIndexForChannel(selectedInputChannel.load(std::memory_order_relaxed));
+			if (channel < 0) return;
 
 			IInputProcessor* processor = activeProcessor.load(std::memory_order_relaxed);
 			if (!processor) return;
 
-			if (activeSampleType != ASIOSTInt32LSB) return;
 			if (activeBufferFrames <= 0 || activeBufferFrames > MAX_BUFFER_FRAMES) return;
 
-			int32_t* samples = reinterpret_cast<int32_t*>(inputBuffers[channel][doubleBufferIndex]);
+			void* samples = inputBuffers[channel][doubleBufferIndex];
 			if (!samples) return;
 
 			const size_t count = (size_t)activeBufferFrames;
-
-			for (size_t i = 0; i < count; ++i)
-				conversionBuffer[i] = (float)samples[i] * INT32_TO_FLOAT;
+			const long sampleType = inputSampleTypes[channel];
+			if (!ConvertInputToFloat(samples, sampleType, count)) return;
 
 			processor->Process(conversionBuffer.data(), (uint32_t)activeBufferFrames);
-
-			for (size_t i = 0; i < count; ++i)
-			{
-				const float value = conversionBuffer[i];
-				const float clamped = value < -1.0f ? -1.0f : (value > 1.0f ? 1.0f : value);
-				samples[i] = (int32_t)(clamped * FLOAT_TO_INT32);
-			}
+			ConvertFloatToInput(samples, sampleType, count);
 		}
 
 		// The driver fills the input buffers before calling this, and RS_ASIO copies them out
@@ -238,7 +385,7 @@ namespace Audio::AsioHook
 			activeBufferFrames = bufferSize;
 			discoveredInputChannels = 0;
 
-			for (long i = 0; i < numChannels && discoveredInputChannels < 2; ++i)
+			for (long i = 0; i < numChannels && discoveredInputChannels < MAX_INPUT_CHANNELS; ++i)
 			{
 				if (!bufferInfos[i].isInput) continue;
 
@@ -254,13 +401,19 @@ namespace Audio::AsioHook
 				GetChannelInfo_t getChannelInfo = (GetChannelInfo_t)ComVTable::GetVTable(self)[SLOT_ASIO_GET_CHANNEL_INFO];
 				if (getChannelInfo(self, nullptr, &channelInfo) == ASE_OK)
 				{
-					activeSampleType = channelInfo.type;
+					inputSampleTypes[index] = channelInfo.type;
 					LOG_INFO("[AsioHook] Input " << index << " channel " << channelInfo.channel
 						<< " type " << channelInfo.type << " name " << channelInfo.name << std::endl);
 				}
+				else
+				{
+					inputSampleTypes[index] = -1;
+				}
 			}
 
-			format.sampleFormat = activeSampleType == ASIOSTInt32LSB ? SampleFormat::Int32 : SampleFormat::Unsupported;
+			const int selectedIndex = FindInputIndexForChannel(selectedInputChannel.load(std::memory_order_relaxed));
+			const long selectedSampleType = selectedIndex >= 0 ? inputSampleTypes[selectedIndex] : -1;
+			format.sampleFormat = GetSampleFormat(selectedSampleType);
 			format.channelCount = 1;		// ASIO buffers are per channel, never interleaved.
 
 			ASIOSampleRate sampleRate = 0;
@@ -279,8 +432,8 @@ namespace Audio::AsioHook
 			LOG_INFO("[AsioHook] createBuffers: " << numChannels << " channels, " << bufferSize
 				<< " frames, " << discoveredInputChannels << " input(s) captured, " << format.sampleRate << " Hz" << std::endl);
 
-			if (format.sampleFormat != SampleFormat::Int32)
-				LOG_WARNING("[AsioHook] Input sample type " << activeSampleType << " is not ASIOSTInt32LSB; processing stays off." << std::endl);
+			if (format.sampleFormat == SampleFormat::Unsupported)
+				LOG_WARNING("[AsioHook] Selected input sample type " << selectedSampleType << " is unsupported; processing stays off." << std::endl);
 
 			return result;
 		}
@@ -429,17 +582,18 @@ namespace Audio::AsioHook
 			return;
 		}
 
-		if (enabled && format.sampleFormat != SampleFormat::Int32)
+		if (enabled && !format.IsUsable())
 		{
-			LOG_ERROR("[AsioHook] Refusing to enable processing before an int32 input is known." << std::endl);
+			LOG_ERROR("[AsioHook] Refusing to enable processing before a supported input format is known." << std::endl);
 			return;
 		}
 
 		const int channel = selectedInputChannel.load(std::memory_order_relaxed);
 
-		if (enabled && (channel < 0 || channel >= discoveredInputChannels))
+		if (enabled && FindInputIndexForChannel(channel) < 0)
 		{
-			LOG_ERROR("[AsioHook] Refusing to enable processing without a valid input channel." << std::endl);
+			LOG_ERROR("[AsioHook] Refusing to enable processing: no discovered input has channel "
+				<< channel << "." << std::endl);
 			return;
 		}
 
