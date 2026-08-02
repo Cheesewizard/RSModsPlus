@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug with Wwise Logging|Win32">
@@ -20,7 +20,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Audio\AsioHook.cpp" />
-    <ClCompile Include="Audio\AudioCaptureHook.cpp" />
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp" />
     <ClCompile Include="CC\CCEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
@@ -146,11 +145,6 @@
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
-    <ClCompile Include="Mods\TrueTuning.cpp">
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
-    </ClCompile>
     <ClCompile Include="Mods\VoiceOverControl.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
@@ -224,12 +218,8 @@
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="Audio\AsioHook.hpp" />
-    <ClInclude Include="Audio\AudioCaptureHook.hpp" />
     <ClInclude Include="Audio\CaptureFormat.h" />
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp" />
-    <ClInclude Include="Audio\signalsmith\fft.h" />
-    <ClInclude Include="Audio\signalsmith\linear.h" />
-    <ClInclude Include="Audio\signalsmith\stft.h" />
     <ClInclude Include="CC\CCEffectList.hpp" />
     <ClInclude Include="CC\Effects\BigNoteheadEffect.hpp" />
     <ClInclude Include="CC\CCEffect.hpp" />
@@ -300,14 +290,31 @@
     <ClInclude Include="Mods\Loft.hpp" />
     <ClInclude Include="Mods\Midi.hpp" />
     <ClInclude Include="Mods\RiffRepeater.hpp" />
-    <ClInclude Include="Mods\TrueTuning.hpp" />
     <ClInclude Include="Mods\VoiceOverControl.hpp" />
     <ClInclude Include="Mods\VolumeControl.hpp" />
-    <ClInclude Include="Mods\DropPedal.hpp" />
-    <ClCompile Include="Mods\DropPedal.cpp">
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+    <ClInclude Include="Mods\DropPedal\DropPedal.hpp" />
+    <ClInclude Include="Mods\DropPedal\DropPedalHooks.hpp" />
+    <ClInclude Include="Mods\DropPedal\DropPedalInput.hpp" />
+    <ClInclude Include="Mods\DropPedal\DropPedalState.hpp" />
+    <ClCompile Include="Mods\DropPedal\DropPedal.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="Mods\DropPedal\DropPedalHooks.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="Mods\DropPedal\DropPedalInput.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="Mods\DropPedal\DropPedalState.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="NoteData.h" />
     <ClInclude Include="ObjectUtil.hpp" />
@@ -538,9 +545,6 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup>
-    <BuildArchiveDir>$(SolutionDir)BuildArchive\$([System.DateTime]::Now.ToString('yyyyMMdd-HHmmss'))</BuildArchiveDir>
-  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
     <TargetName>xinput1_3</TargetName>
@@ -591,16 +595,10 @@
       <AdditionalDependencies>winmm.lib;Imagehlp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>
       </ImageHasSafeExceptionHandlers>
-      <GenerateMapFile>true</GenerateMapFile>
-      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
     </Link>
     <PostBuildEvent>
       <Command>
-IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
-if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
-copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
-copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
-if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(BuildArchiveDir)\"</Command>
+IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Copying to RS2014 folder...</Message>
@@ -634,11 +632,7 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     </Link>
     <PostBuildEvent>
       <Command>
-IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
-if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
-copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
-copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
-if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(BuildArchiveDir)\"</Command>
+IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Copying to RS2014 folder...</Message>
@@ -670,16 +664,10 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
       <AdditionalLibraryDirectories>SDK Path\Lib</AdditionalLibraryDirectories>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <AdditionalDependencies>winmm.lib;Imagehlp.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <GenerateMapFile>true</GenerateMapFile>
-      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
     </Link>
     <PostBuildEvent>
       <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\D3DX9_42.dll"</Command>
-      <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014"
-if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
-copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
-copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
-if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(BuildArchiveDir)\"</Command>
+      <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Copying to solution directory...</Message>
@@ -710,16 +698,10 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
       <AdditionalLibraryDirectories>SDK Path\Lib</AdditionalLibraryDirectories>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <AdditionalDependencies>winmm.lib;Imagehlp.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <GenerateMapFile>true</GenerateMapFile>
-      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
     </Link>
     <PostBuildEvent>
       <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\D3DX9_42.dll"</Command>
-      <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014"
-if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
-copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
-copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
-if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(BuildArchiveDir)\"</Command>
+      <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Copying to solution directory...</Message>

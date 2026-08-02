@@ -252,9 +252,6 @@
     <ClCompile Include="D3D/D3DHooks.cpp">
       <Filter>D3D</Filter>
     </ClCompile>
-    <ClCompile Include="Mods\TrueTuning.cpp">
-      <Filter>Mods</Filter>
-    </ClCompile>
     <ClCompile Include="CC\Effects\WavyNotesEffect.cpp">
       <Filter>CrowdControl\Effects</Filter>
     </ClCompile>
@@ -303,11 +300,17 @@
     <ClCompile Include="Keyboard.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Mods\DropPedal.cpp">
+    <ClCompile Include="Mods\DropPedal\DropPedal.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Audio\AudioCaptureHook.cpp">
-      <Filter>Audio</Filter>
+    <ClCompile Include="Mods\DropPedal\DropPedalHooks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Mods\DropPedal\DropPedalInput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Mods\DropPedal\DropPedalState.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Audio\AsioHook.cpp">
       <Filter>Source Files</Filter>
@@ -560,9 +563,6 @@
     <ClInclude Include="Lib\Ini\SimpleIni.h">
       <Filter>Main Headers\Ini</Filter>
     </ClInclude>
-    <ClInclude Include="Mods\TrueTuning.hpp">
-      <Filter>Mods\Headers</Filter>
-    </ClInclude>
     <ClInclude Include="CC\Effects\WavyNotesEffect.hpp">
       <Filter>CrowdControl\Effects\EffectHeaders</Filter>
     </ClInclude>
@@ -632,7 +632,16 @@
     <ClInclude Include="NoteData.h">
       <Filter>Main Headers\Structs</Filter>
     </ClInclude>
-    <ClInclude Include="Mods\DropPedal.hpp">
+    <ClInclude Include="Mods\DropPedal\DropPedal.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Mods\DropPedal\DropPedalHooks.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Mods\DropPedal\DropPedalInput.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Mods\DropPedal\DropPedalState.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
     <ClInclude Include="Audio\CaptureFormat.h">
@@ -644,22 +653,10 @@
     <ClInclude Include="Audio\IInputProcessor.hpp">
       <Filter>Audio</Filter>
     </ClInclude>
-    <ClInclude Include="Audio\AudioCaptureHook.hpp">
-      <Filter>Audio</Filter>
-    </ClInclude>
     <ClInclude Include="Audio\AsioHook.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp">
-      <Filter>Main Headers</Filter>
-    </ClInclude>
-    <ClInclude Include="Audio\signalsmith\fft.h">
-      <Filter>Main Headers</Filter>
-    </ClInclude>
-    <ClInclude Include="Audio\signalsmith\linear.h">
-      <Filter>Main Headers</Filter>
-    </ClInclude>
-    <ClInclude Include="Audio\signalsmith\stft.h">
       <Filter>Main Headers</Filter>
     </ClInclude>
   </ItemGroup>

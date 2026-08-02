@@ -1,8 +1,8 @@
 # Wwise plugin internals (Rocksmith 2014, Wwise v91 / 2013)
 
-Reference for `DLL/Mods/DropPedal.cpp`. Records how the pitch shifter is reached,
-what the surrounding data structures actually are, and which routes have been
-ruled out. Every claim is tagged:
+Reference for `DLL/Mods/DropPedal/DropPedalHooks.cpp`. Records how the pitch
+shifter and tuning reference are reached, what the surrounding data structures
+actually are, and which routes have been ruled out. Every claim is tagged:
 
 - **[proven]** — verified by disassembly or by a log line from a real run.
 - **[inferred]** — consistent with evidence but not directly demonstrated.
@@ -10,6 +10,12 @@ ruled out. Every claim is tagged:
 
 Addresses are absolute in the shipped x86 executable.
 
+> **Revision note (v6).** Removes the old `DisableTrueTuning` hook. Its LP patch
+> site was inside note-detection RMS/onset processing, and `[EBP+8]` was a sample
+> count rather than a cent offset. The shipping Cable engine now detours the
+> September 2022 cents-to-Hz reference builder and supplements that load-time
+> stamp with live writes. See §7.8.
+>
 > **Revision note (v5).** Reverses §7.8. Redirecting the true tuning reference
 > **does** move note detection and the tuner, for guitar and for emulated bass;
 > the mechanism was correct all along and was masked by a missing `test al, al`
@@ -456,42 +462,31 @@ Amps.
 
 ### 7.8 Redirecting the true tuning reference **[proven]**
 
-The game's true tuning calculation loads a reference frequency at `0x004DCCF2`
-(`fld [0x01224468]`), which the Disable True Tuning mod replaces. Scaling that
-value by `2^(V/12)` makes note detection expect a signal V semitones from the
-song's written tuning, and the in-game tuner follows it.
+The September 2022 executable builds the arrangement reference at `0x004DCCB0`.
+It computes `440 * 2^(cents / 1200)` and stamps the result at
+`[detection + 0x135C]`, the same value reached by the existing
+`ptr_trueTuning` pointer chain.
 
-This is the same mechanism CDLC charters use when they set an arrangement's
-tuning pitch to 311.2 Hz to move every expected note down six semitones
-(440 / 2^(6/12) = 311.13).
+The Cable engine detours that builder and adjusts its cent argument before the
+game performs its own calculation. If the pedal target is `s` semitones and the
+authored reference is `f` Hz, detection receives `f * 2^(-s / 12)`. Applying
+the offset to the authored cents preserves non-A440 arrangements and composes
+with the game's `-1200` emulated-bass offset.
 
-Note the sign: to shift audio *down* one semitone, expectation moves *up* one,
-so a -1 pedal logs `466.164 Hz for 1 semitone(s)`.
+The pre-song tuner snapshots the load-time stamp, so the builder hook must run
+before the song loads. Live target changes are also written to the stamped value
+so in-song note detection follows without restarting the song. The exact
+authored value is restored when the pedal is disabled, the song ends, or ASIO
+takes ownership.
 
-**Why this read as dead for two sessions.** The hook branched on the result of
-`CanDisableTrueTuning()` with no `test al, al` between the `call` and the `je`.
-The callee returns a bool in AL via `mov al, [mem]`, which sets no flags, so the
-branch tested whatever the caller happened to leave behind and the override was
-applied arbitrarily. The reference was being computed and logged correctly the
-whole time — it simply never reached `ST(0)`. The earlier conclusion here was
-drawn from runs where the branch never took the path that does the `fld`.
+The old `DisableTrueTuning` hook is not part of this path. Disassembly showed
+that its LP address landed inside note-detection RMS/onset processing and that
+`[EBP+8]` was a sample count, not a cent offset. Both the hook and its offsets
+were removed rather than retained as a fallback.
 
-**The reference latches once, on entering the tuner.** Changing the pedal
-mid-song moves the audio only; detection keeps scoring against the value latched
-at entry, so the notes that score are still the ones under your fingers. Backing
-out to the menu and re-entering the tuner re-latches it.
-
-**Emulated bass works too. [proven]** The `cmp dword ptr [ebp+8], -1200` branch
-routes CentOffset == -1200 to the game's own true tuning path, bypassing the
-redirect. In practice that value is not seen in normal play: bass arrangements
-reach the `fld` branch and get the redirect exactly like guitar ones, confirmed
-by a bass drop tuning scoring correctly in-game.
-
-An earlier session concluded that bass detection was broken *by* this carve-out.
-That was wrong. Bass was failing for the same reason guitar was — the menu gate
-(since removed) closed during `SelectionListDialog` at song load, discarding the
-reference at the moment detection latched it. **[open]** What actually produces
-CentOffset == -1200, and whether the carve-out is still needed at all.
+The reference-builder address is known for Remastered September 2022. The LP
+December 2024 address is unresolved: live writes still keep in-song detection
+correct, but the pre-song tuner does not see the shifted load-time stamp.
 
 
 ---
@@ -500,21 +495,18 @@ CentOffset == -1200, and whether the carve-out is still needed at all.
 
 Recorded so they are not re-litigated.
 
-- **Redirecting the true tuning reference is a dead end (§7.8).** Wrong, and it
-  cost two sessions. The mechanism was right; the hook's branch was reading stale
-  flags because the `call` was not followed by `test al, al`. Marking a mechanism
-  dead requires a hook whose control flow has been verified in the disassembly,
-  not just a log line showing the value was set.
-- **Emulated bass is excluded from the redirect by the −1200 carve-out.** Wrong.
-  Bass detection was failing for the same reason guitar detection was — the menu
-  gate closing at song load — and works once that is removed. The carve-out
-  exists but is not reached in normal play.
-- **The menu crashes came from `CanDisableTrueTuning()` reading
-  `GameState::currentMenu`.** Wrong. That was a genuine data race and worth
-  fixing, but neither crash came from it. They were `SongTimer` dereferencing an
-  address `MemUtil::FindDMAAddy` returned without validating, and
-  `EnumerationThread` rebuilding `Settings::modSettings` at `GameLoaded` while
-  other threads read it. Both are upstream RSMods bugs, unrelated to the pedal.
+- **The old `DisableTrueTuning` patch site is the arrangement-reference
+  calculation (§7.8).** Wrong. Its LP address is inside RMS/onset processing,
+  and `[EBP+8]` is a sample count. The actual September 2022 reference builder
+  starts at `0x004DCCB0`.
+- **Changing the live reference alone updates every tuner consumer.** Wrong.
+  Note detection follows the live value, but the pre-song tuner snapshots the
+  load-time stamp. The builder detour is required for that snapshot.
+- **The menu crashes came from the tuning-reference hook.** Wrong. They were
+  `SongTimer` dereferencing an address `MemUtil::FindDMAAddy` returned without
+  validating, and `EnumerationThread` rebuilding `Settings::modSettings` at
+  `GameLoaded` while other threads read it. Both are upstream RSMods bugs,
+  unrelated to the pedal.
 
 - **`0x880003` in a stack snapshot is a code address.** Wrong — it is the packed
   plugin id of the pitch shifter (§1), passed down the construction chain. It sat
@@ -547,15 +539,14 @@ Recorded so they are not re-litigated.
   without building anything, so the remaining mechanism is routing, not
   instantiation.
 
-- **[resolved] How does note detection derive its expected pitch?** From the true
-  tuning reference at `0x004DCCF2` (§7.8). Redirecting it moves detection and the
-  tuner together. This was the last blocker for V1 and it is closed — audio and
-  scoring now agree.
+- **[resolved] How does note detection derive its expected pitch?** The builder
+  at `0x004DCCB0` stamps the arrangement reference at song load, and the
+  `ptr_trueTuning` chain reaches the live value (§7.8). The builder detour and
+  live writes keep the tuner, detection and MultiPitch audio aligned.
 
-- **[open] Song audio for the tuner feature.** `SetBusEffect` is dead, so the
-  game's own time-stretch / true-tuning machinery
-  (`ptr_timeStretchCalculations`, `ptr_disableTrueTuning` in `Offsets.hpp`) is
-  the remaining unexplored lead.
+- **[open] Output-side song-audio shifting.** `SetBusEffect` is dead. This is a
+  separate path from the Cable engine's input expectation and remains outside
+  the Wwise plugin work documented here.
 
 ---
 
@@ -620,8 +611,8 @@ A song at A435 is -19.8 cents, applied directly, no table.
 
 ## 10. Probe and testing discipline
 
-- **Hotkeys are reserved.** `F8` = mod toggle (easy to hit by accident),
-  `F9`/`F10` = pitch down/up. **Never** bind probes to nearby keys.
+- **Hotkeys are reserved.** `F7` = mod toggle, `F9`/`F10` = base tuning,
+  comma/period = pitch down/up. **Never** bind probes to these keys.
 - **Two-tone test.** Enter song → press `2` (has MultiPitch), wait ~10s →
   press `4` (no MultiPitch), wait ~10s → quit. The `-1200` line timestamps the
   first switch precisely, and the 10-second gap makes the second unambiguous.

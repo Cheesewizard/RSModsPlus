@@ -12,9 +12,14 @@
 // A pitch shifter moves the whole signal, so this covers uniform tunings such as
 // Eb or D standard. It cannot produce drop tunings, where only one string differs.
 //
-// See docs/wwise-plugin-internals.md for how this was found and what was ruled out.
 namespace DropPedal
 {
+	void LoadSettings();
+	bool IsConfiguredEnabled();
+	bool ShouldInstallInputHooks();
+	bool RequiresInputShifter();
+	void ReportInputShifterUnavailable();
+
 	void InstallHooks();
 	void Poll();
 
@@ -22,9 +27,8 @@ namespace DropPedal
 	// 250ms loop, and a key tap is shorter than that gap, so sampling there drops presses.
 	void PollHotkeys();
 
-	// The pitch shifter is downstream of note detection, so detection has to be told
-	// what the player's guitar is actually tuned to or every note reads wrong.
-	void HandleTuningInSong();
+	// Tracks the active arrangement's authored tuning reference through tuner and song.
+	void HandleArrangementTuning();
 	void ResetSongState();
 
 	bool IsEnabled();
@@ -32,9 +36,9 @@ namespace DropPedal
 	std::string GetTuningName();
 
 	// Selects which engine realises the pitch. With the ASIO input shifter active, the
-	// game-side MultiPitch driving and tuner reference changes are suppressed: the input
-	// itself is retuned, so detection hears shifted notes against a 440 reference. The
-	// hotkeys and overlay stay live either way; only the output stage switches.
+	// game-side MultiPitch driving is suppressed: the input itself is retuned, so audio
+	// and detection hear the same shifted notes while Rocksmith keeps the arrangement's
+	// authored tuning reference. The hotkeys and overlay stay live either way.
 	void SetInputShifterActive(bool active);
 	bool IsInputShifterActive();
 
