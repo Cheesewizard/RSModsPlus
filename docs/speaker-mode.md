@@ -82,6 +82,17 @@ Examples:
 | Eb | D | `Speaker: D -> Eb (+1)` | Song rises one semitone |
 | Eb | Eb | `Speaker: Eb` | No shift |
 | E, one octave above the chart | E | `Speaker: E -> E (+12)` | Song and note detection rise one octave |
+| Drop D (physically) | Drop Db | `Speaker: Drop Db -> Drop D (+1)` | Song rises one semitone |
+| Open A (physically) | Open G | `Speaker: Open G -> Open A (+2)` | Song rises two semitones |
+
+Non-uniform charts (drop tunings, open tunings, anything the game defines) are
+supported through the same principle: the physical guitar must match the chart's
+shape moved by the shift, and the pre-song tuner guides exactly that, because
+its per-string targets already carry the shift. A Drop Db chart with an
+E-standard base asks for D on the low string; an Open G chart asks for the Open
+A shape. The shift is chosen so the strings most of the chart shares stay at
+the physical base tuning -- a drop chart retunes one string, an open tuning a
+few more. Shapes are named from the game's tuning list when a name exists.
 
 This direction is deliberately opposite to Drop Pedal mode. `Drop: E -> Eb (-1)`
 moves the guitar down to the song; `Speaker: Eb -> E (+1)` moves the song up to
@@ -103,6 +114,10 @@ Wwise's exact song position, so Speaker Mode adds no rolling-window delay to the
 full song and does not change its duration. Riff Repeater reads already prepared
 positions immediately; an unusually early forward seek waits for its requested
 range rather than playing the wrong pitch.
+
+A song entered without a pre-song tuner frame (instant transitions) synchronizes
+at the start of gameplay instead: the live shift and detection correct within
+the first moments and the prepared audio takes over once ready.
 
 The first use of a song/pitch combination may briefly wait for the opening if the
 pre-song tuner did not provide enough preparation time. It does not wait for the
@@ -135,7 +150,7 @@ guitar tuning.
 | Pitch cannot be changed during a song | Expected; Speaker Mode locks it to preserve zero-added-delay synchronization |
 | Music stays unshifted | Temporary-audio preparation or identity resolution failed; quit and attach `RSMods_debug.txt` to a bug report |
 | Speaker Mode switches to Off | Preparation or processing failed; this prevents a silent wrong-pitch Speaker state. Quit and attach `RSMods_debug.txt` |
-| Speaker Mode switches to Off on a drop/custom tuning | The song is not a supported uniform tuning; one whole-song pitch interval cannot reproduce different per-string offsets |
+| Non-uniform chart plays but some strings read wrong | The guitar was not physically retuned to the shape the tuner showed; every string must match its tuner target |
 
 The debug log is `RSMods_debug.txt` next to `Rocksmith2014.exe`. It is overwritten
 on launch and locked while the game runs, so quit before copying it.

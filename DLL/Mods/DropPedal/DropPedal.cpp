@@ -14,15 +14,98 @@ namespace
 	constexpr int MAX_CHART_TUNING_SEMITONES = 24;
 	constexpr int SEMITONES_PER_OCTAVE = 12;
 
+	// Any chart shape is supported: the player physically tunes each string to
+	// chart + shift -- the pre-song tuner guides that, because its per-string
+	// targets carry the shift -- and the uniform song shift plus the global
+	// detection transpose then match every string by the same interval. A drop
+	// chart needs one string retuned, an open tuning a few more; that trade is
+	// the player's to make.
+	enum class ChartTuningShape
+	{
+		Uniform,
+		Drop,
+		Custom
+	};
+
 	std::string speakerTargetSongKey;
 	bool hasSynchronizedSpeakerTarget = false;
+	ChartTuningShape synchronizedChartShape = ChartTuningShape::Uniform;
+	int synchronizedChartOffsets[6] = {};
 	int synchronizedSpeakerTargetSemitones = 0;
 	int synchronizedSpeakerOctaveAdjustment = 0;
-	int pendingChartTuningSemitones = 0;
+	int pendingChartOffsets[6] = {};
 	bool hasPendingChartTuning = false;
-	bool isPendingChartTuningUniform = false;
 	unsigned long long speakerTargetReadAfterTick = 0;
 	unsigned long long synchronizedSpeakerModeTick = 0;
+
+	// The reference is the offset the most strings share, so the player's base
+	// maps onto it and the fewest strings need physical retuning. Ties resolve
+	// in favour of the upper strings, which keeps drop shapes anchored to the
+	// uniform five.
+	int GetChartReference(const int (&stringTunings)[6])
+	{
+		const int candidateOrder[6] = { 1, 2, 3, 4, 5, 0 };
+		int reference = stringTunings[1];
+		int referenceCount = 0;
+		for (const int candidate : candidateOrder)
+		{
+			int count = 0;
+			for (const int stringTuning : stringTunings)
+			{
+				if (stringTuning == stringTunings[candidate]) count++;
+			}
+			if (count > referenceCount)
+			{
+				referenceCount = count;
+				reference = stringTunings[candidate];
+			}
+		}
+		return reference;
+	}
+
+	ChartTuningShape ClassifyChartTuning(const int (&stringTunings)[6], int reference)
+	{
+		for (int string = 1; string < 6; string++)
+		{
+			if (stringTunings[string] != reference) return ChartTuningShape::Custom;
+		}
+
+		if (stringTunings[0] == reference) return ChartTuningShape::Uniform;
+		if (stringTunings[0] == reference - 2) return ChartTuningShape::Drop;
+		return ChartTuningShape::Custom;
+	}
+
+	bool IsSpeakerChartShapeActive()
+	{
+		return hasSynchronizedSpeakerTarget
+			&& DropPedalState::GetPitchMode() == DropPedal::PitchMode::SpeakerMode;
+	}
+
+	// Names a shape. Uniform names are computed; drop and custom shapes prefer the
+	// game's tuning list so conventional names appear (Drop D, Eb Drop Db, Open G),
+	// falling back to a computed drop name or a "custom" marker for unlisted shapes.
+	std::string NameChartShape(
+		ChartTuningShape shape,
+		const int (&offsets)[6],
+		int reference)
+	{
+		if (shape == ChartTuningShape::Uniform)
+		{
+			return DropPedalState::GetAbsoluteTuningName(reference);
+		}
+
+		std::array<int, 6> shapeOffsets;
+		for (int string = 0; string < 6; string++) shapeOffsets[string] = offsets[string];
+		std::string name;
+		if (SongTuning::TryGetTuningNameForOffsets(shapeOffsets, name)) return name;
+
+		if (shape == ChartTuningShape::Drop)
+		{
+			return "Drop " + DropPedalState::GetAbsoluteTuningName(reference - 2);
+		}
+
+		return DropPedalState::GetAbsoluteTuningName(reference) + " custom";
+	}
 
 	// The tuner UI's tuning text is authoritative while the pre-song tuner is up.
 	// Once it is gone (a guitar already in tune passes it in under a second), the
@@ -160,7 +243,7 @@ bool DropPedal::TrySynchronizeSpeakerTarget(const std::string& songKey)
 	if (!hasSynchronizedSpeakerTarget)
 	{
 		// The tuner populates its tuning data while the screen builds, so no single
-		// reading is trusted; the value is accepted once two consecutive reads agree.
+		// reading is trusted; the shape is accepted once two consecutive reads agree.
 		// Reads start immediately -- a fixed initial delay loses the race against a
 		// guitar that is already in tune and passes the tuner in under a second.
 		const auto now = GetTickCount64();
@@ -170,38 +253,40 @@ bool DropPedal::TrySynchronizeSpeakerTarget(const std::string& songKey)
 		int stringTunings[6];
 		if (!TryReadChartTuning(stringTunings)) return false;
 
-		if (stringTunings[0] < MIN_CHART_TUNING_SEMITONES
-			|| stringTunings[0] > MAX_CHART_TUNING_SEMITONES)
-		{
-			hasPendingChartTuning = false;
-			return false;
-		}
-
-		bool isUniform = true;
 		for (const int stringTuning : stringTunings)
 		{
-			isUniform = isUniform && stringTuning == stringTunings[0];
+			if (stringTuning < MIN_CHART_TUNING_SEMITONES
+				|| stringTuning > MAX_CHART_TUNING_SEMITONES)
+			{
+				hasPendingChartTuning = false;
+				return false;
+			}
 		}
 
-		if (!hasPendingChartTuning
-			|| pendingChartTuningSemitones != stringTunings[0]
-			|| isPendingChartTuningUniform != isUniform)
+		bool confirmsPending = hasPendingChartTuning;
+		for (int string = 0; string < 6; string++)
+		{
+			confirmsPending = confirmsPending
+				&& pendingChartOffsets[string] == stringTunings[string];
+		}
+
+		if (!confirmsPending)
 		{
 			hasPendingChartTuning = true;
-			pendingChartTuningSemitones = stringTunings[0];
-			isPendingChartTuningUniform = isUniform;
+			for (int string = 0; string < 6; string++)
+			{
+				pendingChartOffsets[string] = stringTunings[string];
+			}
 			return false;
 		}
 
-		if (!isUniform)
+		const int reference = GetChartReference(stringTunings);
+		synchronizedSpeakerTargetSemitones = reference;
+		synchronizedChartShape = ClassifyChartTuning(stringTunings, reference);
+		for (int string = 0; string < 6; string++)
 		{
-			LOG_ERROR("Speaker Mode requires a uniform chart tuning; selected song "
-				<< songKey << " is not uniform" << std::endl);
-			DisableSpeakerMode();
-			return false;
+			synchronizedChartOffsets[string] = stringTunings[string];
 		}
-
-		synchronizedSpeakerTargetSemitones = stringTunings[0];
 		DropPedalState::SetSpeakerTargetSynchronized(true);
 		const int chartShiftSemitones = synchronizedSpeakerTargetSemitones
 			- DropPedalState::GetBaseTuningSemitones(Player::One);
@@ -226,6 +311,8 @@ bool DropPedal::TrySynchronizeSpeakerTarget(const std::string& songKey)
 	{
 		LOG_INFO("Speaker Mode chart target synchronized to " << GetTargetTuningName()
 			<< " (chart " << synchronizedSpeakerTargetSemitones
+			<< (synchronizedChartShape == ChartTuningShape::Drop ? ", drop shape" : "")
+			<< (synchronizedChartShape == ChartTuningShape::Custom ? ", custom shape" : "")
 			<< ", octave adjustment " << synchronizedSpeakerOctaveAdjustment
 			<< ") for " << songKey << std::endl);
 	}
@@ -266,6 +353,7 @@ void DropPedal::ResetSongState()
 	speakerTargetSongKey.clear();
 	hasSynchronizedSpeakerTarget = false;
 	hasPendingChartTuning = false;
+	synchronizedChartShape = ChartTuningShape::Uniform;
 	synchronizedSpeakerTargetSemitones = 0;
 	synchronizedSpeakerOctaveAdjustment = 0;
 	speakerTargetReadAfterTick = 0;
@@ -315,12 +403,32 @@ std::string DropPedal::GetPitchRouteName()
 
 std::string DropPedal::GetPhysicalTuningName()
 {
-	return DropPedalState::GetAbsoluteTuningName(
-		DropPedalState::GetBaseTuningSemitones(Player::One));
+	const int baseSemitones = DropPedalState::GetBaseTuningSemitones(Player::One);
+	if (IsSpeakerChartShapeActive())
+	{
+		// The guitar's physical shape is the chart moved onto the player's base.
+		int physicalOffsets[6];
+		const int shapeShift = baseSemitones - synchronizedSpeakerTargetSemitones;
+		for (int string = 0; string < 6; string++)
+		{
+			physicalOffsets[string] = synchronizedChartOffsets[string] + shapeShift;
+		}
+		return NameChartShape(synchronizedChartShape, physicalOffsets, baseSemitones);
+	}
+
+	return DropPedalState::GetAbsoluteTuningName(baseSemitones);
 }
 
 std::string DropPedal::GetTargetTuningName()
 {
+	if (IsSpeakerChartShapeActive())
+	{
+		return NameChartShape(
+			synchronizedChartShape,
+			synchronizedChartOffsets,
+			synchronizedSpeakerTargetSemitones);
+	}
+
 	return DropPedalState::GetAbsoluteTuningName(
 		DropPedalState::GetBaseTuningSemitones(Player::One)
 		+ DropPedalState::GetTargetSemitones(Player::One));

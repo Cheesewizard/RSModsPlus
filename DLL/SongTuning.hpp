@@ -15,5 +15,7 @@ namespace SongTuning {
 	bool TryGetTrueTuning(float& trueTuning, uintptr_t& address);
 	int GetTrueTuning();
 	Tuning GetTuningAtTuner();
+	// Reverse lookup of the tuning list: name a shape from its per-string offsets.
+	bool TryGetTuningNameForOffsets(const std::array<int, 6>& offsets, std::string& name);
 	bool IsExtendedRangeTuner();
 };

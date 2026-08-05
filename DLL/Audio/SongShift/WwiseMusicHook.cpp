@@ -601,8 +601,11 @@ namespace
 		}
 		// The tuner arms the playback expectation; after it, the sync keeps polling
 		// through the load screen, because a guitar already in tune passes the tuner
-		// faster than the chart tuning can be confirmed there.
-		if (GameState::Menus::IsInPreSongTuner())
+		// faster than the chart tuning can be confirmed there. Gameplay arms it too:
+		// some transitions never show a tuner frame at all, and without this the song
+		// would keep the previous song's target with no synchronization or warning.
+		// A late sync corrects the live shift and detection within its first moments.
+		if (GameState::Menus::IsInPreSongTuner() || GameState::IsInSong())
 		{
 			InterlockedExchange(&isSelectedSongPlaybackExpected, 1);
 		}
