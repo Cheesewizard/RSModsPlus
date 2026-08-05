@@ -33,6 +33,8 @@ Speaker: Eb -> E (+1)
 
 The song is raised one semitone to E while the guitar remains untouched.
 
+![Speaker Mode raising an Eb song to an E-standard guitar](images/overlay-speaker-mode.png)
+
 In multiplayer the overlay still shows this one row: the shift applies to the
 shared song mix, so there is no per-player state for a Player 2 row to control.
 
@@ -42,7 +44,7 @@ shared song mix, so there is no per-player state for a Player 2 row to control.
 |---|---|
 | Select Off / Drop Pedal / Speaker Mode | `F7` |
 | Preview / Drop Pedal target down / up | `,` / `.` |
-| Physical guitar tuning down / up | `F9` / `F10` |
+| Physical guitar tuning (cycles E, Eb, D, ...) | `F9` |
 
 The session starts Off. `F7` cycles in this order:
 
@@ -61,7 +63,8 @@ chart. State is session-only and starts at E for both physical and target tuning
 
 ## Choosing the tunings
 
-Use `F9` and `F10` to tell the mod how the guitar is physically tuned. Comma and
+Use `F9` to tell the mod how the guitar is physically tuned; each press cycles
+down one name, wrapping back to E. Comma and
 period choose the target used for live song-list previews and Drop Pedal. When a
 Speaker Mode song reaches the pre-song tuner, Rocksmith's chart tuning replaces
 the pitch-class part of that preview target before the full-song render is
@@ -142,7 +145,7 @@ guitar tuning.
 |---|---|
 | `Pitch: Off` | Press `F7` twice from Off to reach Speaker Mode |
 | Readout has no arrow | Physical and target tunings match exactly, so the interval is zero |
-| Target keys do nothing in the pre-song tuner | Expected after chart synchronization; back out to select an octave offset, or use `F9` / `F10` to correct the physical tuning |
+| Target keys do nothing in the pre-song tuner | Expected after chart synchronization; back out to select an octave offset, or use `F9` to correct the physical tuning |
 | Keys do nothing | Rocksmith is not focused, the mode is Off, or Speaker Mode gameplay has locked pitch changes |
 | Menu clicks do not change pitch | Expected; bank-backed menu SFX are excluded |
 | Log says `RSMods.exe` or a decode tool is missing | Install the matching `RSMods` folder from the same build as `xinput1_3.dll` |

@@ -22,7 +22,7 @@ namespace DropPedalState
 	bool IsSpeakerTargetSynchronized();
 	bool AdjustTarget(DropPedal::Player player, int semitoneDelta);
 	bool SetTargetSemitones(DropPedal::Player player, int semitones);
-	bool AdjustBaseTuning(DropPedal::Player player, int semitoneDelta);
+	bool CycleBaseTuning(DropPedal::Player player);
 	int GetTargetSemitones(DropPedal::Player player);
 	int GetBaseTuningSemitones(DropPedal::Player player);
 	float GetTargetCents(DropPedal::Player player);

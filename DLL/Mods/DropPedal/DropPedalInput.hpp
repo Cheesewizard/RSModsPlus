@@ -4,6 +4,7 @@ namespace DropPedalInput
 {
 	void AdjustTarget(int semitoneDelta);
 	void ToggleEnabled();
-	void AdjustBaseTuning(int semitoneDelta);
+	// One key cycles the base tuning down a name per press, wrapping to E.
+	void CycleBaseTuning();
 	void PollPendingPitchPush();
 }

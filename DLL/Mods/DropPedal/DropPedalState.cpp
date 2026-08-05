@@ -6,8 +6,6 @@ namespace
 	constexpr float CENTS_PER_SEMITONE = 100.0f;
 	constexpr int MIN_TARGET_SEMITONES = -24;
 	constexpr int MAX_TARGET_SEMITONES = 24;
-	constexpr int MIN_BASE_TUNING_SEMITONES = -11;
-	constexpr int MAX_BASE_TUNING_SEMITONES = 11;
 	constexpr int SEMITONES_PER_OCTAVE = 12;
 
 	// Session state is written by WndProc key commands and read by Wwise, rendering and
@@ -201,7 +199,12 @@ bool DropPedalState::SetTargetSemitones(DropPedal::Player player, int semitones)
 	return true;
 }
 
-bool DropPedalState::AdjustBaseTuning(DropPedal::Player player, int semitoneDelta)
+/// <summary>
+/// Cycle the physical base tuning down one name per press, wrapping after F
+/// back to E. One octave reaches every tuning name; Speaker Mode's octave
+/// adjustment anchors the absolute octave to the selected target.
+/// </summary>
+bool DropPedalState::CycleBaseTuning(DropPedal::Player player)
 {
 	if (GetPitchMode() == DropPedal::PitchMode::Off || AreSpeakerControlsLocked())
 	{
@@ -209,13 +212,13 @@ bool DropPedalState::AdjustBaseTuning(DropPedal::Player player, int semitoneDelt
 	}
 
 	const size_t playerIndex = DropPedal::GetPlayerIndex(player);
-	const int adjusted = baseTuningSemitones[playerIndex].load(std::memory_order_relaxed) + semitoneDelta;
-	if (adjusted < MIN_BASE_TUNING_SEMITONES || adjusted > MAX_BASE_TUNING_SEMITONES)
+	int next = baseTuningSemitones[playerIndex].load(std::memory_order_relaxed) - 1;
+	if (next <= -SEMITONES_PER_OCTAVE)
 	{
-		return false;
+		next = 0;
 	}
 
-	baseTuningSemitones[playerIndex].store(adjusted, std::memory_order_relaxed);
+	baseTuningSemitones[playerIndex].store(next, std::memory_order_relaxed);
 	return true;
 }
 
