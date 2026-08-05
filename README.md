@@ -52,6 +52,8 @@ Shifts the **song** instead of the guitar. Intended for playing through
 speakers, where the acoustic guitar is audible in the room: the music comes to
 your tuning, and the guitar stays physically untouched.
 
+![Speaker Mode raising an Eb song to an E-standard guitar](docs/images/overlay-speaker-mode.png)
+
 - Requires no RS_ASIO, no audio interface, and no MultiPitch tone; a Real
   Tone cable alone is enough.
 - Gameplay audio carries **zero added latency**: the full song is
