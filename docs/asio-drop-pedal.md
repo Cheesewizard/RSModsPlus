@@ -58,7 +58,7 @@ and reference performance data are documented in
 | Action | Player 1 | Player 2 |
 |---|---|---|
 | Pitch down / up | `,` / `.` | `Control+,` / `Control+.` |
-| Base tuning down / up | `F9` / `F10` | `Control+F9` / `Control+F10` |
+| Base tuning (cycles E, Eb, D, ...) | `F9` | `Control+F9` |
 | Select Drop Pedal / Speaker Mode / Off (both players) | `F7` | `F7` |
 
 - Keys register only while Rocksmith is the focused window.
@@ -67,9 +67,8 @@ and reference performance data are documented in
 - While pitch processing is Off, every key except `F7` is ignored.
 - Keys are rebindable in the settings app (Tuning tab), or under `[Keybinds]`
   in `RSMods.ini` (`DropPedalPitchDownKey`, `DropPedalPitchUpKey`,
-  `DropPedalToggleKey`, `DropPedalBaseTuningDownKey`,
-  `DropPedalBaseTuningUpKey`). The table above shows the defaults. The same
-  modifier rule applies after rebinding.
+  `DropPedalToggleKey`, `DropPedalBaseTuningKey`). The table above shows the
+  defaults. The same modifier rule applies after rebinding.
 
 The overlay shows one line in single player. When Rocksmith activates
 multiplayer, Player 2 appears directly below Player 1; the rows are intentionally
@@ -87,11 +86,14 @@ no shift, base E standard, every launch.
 
 ### Base tuning
 
-`F9` / `F10` tell the mod what Player 1's instrument is physically tuned to;
-hold Control for Player 2. This changes how tunings are named, nothing else.
-Names are computed relative to that player's base, so with a base of D
-standard, one semitone down reads `D -> Db (-1)`. Leave it at E standard unless
-that physical instrument is tuned differently.
+`F9` cycles what Player 1's instrument is physically tuned to, one name per
+press: `E -> Eb -> D -> ... -> F -> E`. Hold Control for Player 2. This changes
+how tunings are named, nothing else. Names are computed relative to that
+player's base, so with a base of D standard, one semitone down reads
+`D -> Db (-1)`. Leave it at E standard unless that physical instrument is
+tuned differently.
+
+![Pedal at rest on an E-standard base](images/overlay-e-standard.png)
 
 ## Playing
 

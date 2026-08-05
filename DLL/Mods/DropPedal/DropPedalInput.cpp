@@ -86,14 +86,14 @@ void DropPedalInput::ToggleEnabled()
 		<< ", route " << DropPedal::GetPitchRouteName() << std::endl);
 }
 
-void DropPedalInput::AdjustBaseTuning(int semitoneDelta)
+void DropPedalInput::CycleBaseTuning()
 {
 	if (!DropPedalState::IsConfiguredEnabled()) return;
 
 	const DropPedal::Player player = GetCommandPlayer();
 	if (RejectUnavailablePlayerTwo(player)) return;
 
-	if (!DropPedalState::AdjustBaseTuning(player, semitoneDelta)) return;
+	if (!DropPedalState::CycleBaseTuning(player)) return;
 
 	LOG_INFO("Drop pedal " << GetPlayerName(player) << " base tuning now "
 		<< DropPedalState::GetBaseTuningName(player) << std::endl);

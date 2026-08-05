@@ -89,7 +89,7 @@ Constraints that follow from this design:
 |---|---|---|
 | Pitch down / up | `,` / `.` | `Control+,` / `Control+.` |
 | Select Drop Pedal / Speaker Mode / Off (both players) | `F7` | `F7` |
-| Base tuning down / up | `F9` / `F10` | `Control+F9` / `Control+F10` |
+| Base tuning (cycles E, Eb, D, ...) | `F9` | `Control+F9` |
 
 
 - Keys register only while Rocksmith is the focused window.
@@ -98,8 +98,8 @@ Constraints that follow from this design:
 - While pitch processing is Off, every key except `F7` is ignored.
 - Keys are rebindable in the settings app (Tuning tab), or under `[Keybinds]`
   in `RSMods.ini` (`DropPedalPitchDownKey`, `DropPedalPitchUpKey`,
-  `DropPedalToggleKey`, `DropPedalBaseTuningDownKey`,
-  `DropPedalBaseTuningUpKey`). The table above shows the defaults.
+  `DropPedalToggleKey`, `DropPedalBaseTuningKey`). The table above shows the
+  defaults.
 
 The overlay shows the current state: green for a downward shift, amber for an
 upward one.
@@ -124,10 +124,11 @@ base E standard, every launch.
 
 ### Base tuning
 
-`F9` / `F10` tell the mod what the guitar is physically tuned to. It changes
-how tunings are named, nothing else: names are computed relative to the base,
-so with a base of D standard, one semitone down reads `D -> Db (-1)`.
-Leave it at E standard unless the guitar really is tuned differently.
+`F9` cycles what the guitar is physically tuned to, one name per press:
+`E -> Eb -> D -> ... -> F -> E`. It changes how tunings are named, nothing
+else: names are computed relative to the base, so with a base of D standard,
+one semitone down reads `D -> Db (-1)`. Leave it at E standard unless the
+guitar really is tuned differently.
 
 ## Setup: build the tone
 
