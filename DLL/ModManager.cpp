@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "ModManager.hpp"
 #include "Mods/DropPedal/DropPedal.hpp"
+#include "Audio/SongShift/WwiseMusicHook.hpp"
 
 namespace ModManager {
 	void InitializeConfiguration() {
@@ -126,6 +127,11 @@ namespace ModManager {
 	/// </summary>
 	void ApplyStartupMods() 
 	{
+		if (DropPedal::IsConfiguredEnabled())
+		{
+			Audio::SongShift::WwiseMusicHook::Install();
+		}
+
 		// Runs before the game instantiates its ASIO driver, so the detour is in place
 		// when RS_ASIO loads the same module.
 		DropPedal::InstallInputHooks();
@@ -239,6 +245,11 @@ namespace ModManager {
 	/// Handles mods that run regardless of game state.
 	/// </summary>
 	void HandleAlwaysOnMods(GameLoopState& state) {
+
+		if (DropPedal::IsConfiguredEnabled())
+		{
+			Audio::SongShift::WwiseMusicHook::Poll();
+		}
 
 		DropPedal::Poll();
 
@@ -407,7 +418,7 @@ namespace ModManager {
 
 		if (GameState::Menus::IsInPreSongTuner())
 		{
-			DropPedal::HandleArrangementTuning();
+			DropPedal::HandleArrangementTuning(false);
 		}
 		else
 		{
@@ -618,7 +629,7 @@ namespace ModManager {
 		EnableRiffRepeaterFeatures();
 		HandleInSongVisualMods(state);
 		HandleMidiAutoTuningInSong();
-		DropPedal::HandleArrangementTuning();
+		DropPedal::HandleArrangementTuning(true);
 		HandleSongTimerDisplay(state);
 		HandleExtendedRangeInSong(state);
 	}

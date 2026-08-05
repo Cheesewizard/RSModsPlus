@@ -10,6 +10,12 @@ with `Engine = cable` while an ASIO interface supplies Rocksmith's input. In
 automatic mode a working RS_ASIO input uses the
 [ASIO Drop Pedal](asio-drop-pedal.md) instead, which needs no tone setup.
 
+If shifting the song instead of the guitar is acceptable, use
+[Speaker Mode](speaker-mode.md). It works with a Real Tone Cable without
+RS_ASIO and does not require a MultiPitch tone. A cable may also work through
+RS_ASIO using the experimental
+[ASIO4ALL route](asio-drop-pedal.md#real-tone-cable-through-asio4all-experimental).
+
 The engine is selected at launch and announced beside the pedal readout, then
 fades after a few seconds:
 
@@ -82,11 +88,14 @@ Constraints that follow from this design:
 | Action | Player 1 | Player 2 |
 |---|---|---|
 | Pitch down / up | `,` / `.` | `Control+,` / `Control+.` |
-| Toggle on / off (both players) | `F7` | `F7` |
+| Select Drop Pedal / Speaker Mode / Off (both players) | `F7` | `F7` |
 | Base tuning down / up | `F9` / `F10` | `Control+F9` / `Control+F10` |
 
+
 - Keys register only while Rocksmith is the focused window.
-- While the pedal is toggled off, every key except `F7` is ignored.
+- `F7` cycles `Drop Pedal -> Speaker Mode -> Off -> Drop Pedal`. This guide uses
+  the Drop Pedal state.
+- While pitch processing is Off, every key except `F7` is ignored.
 - Keys are rebindable in the settings app (Tuning tab), or under `[Keybinds]`
   in `RSMods.ini` (`DropPedalPitchDownKey`, `DropPedalPitchUpKey`,
   `DropPedalToggleKey`, `DropPedalBaseTuningDownKey`,
@@ -99,7 +108,7 @@ upward one.
 
 ![Upward shift applied](images/overlay-drop-tuning-up.png)
 
-`F7` toggles the pedal for the session, and the row reports it:
+`F7` selects the pitch mode for the session, and the row reports it:
 
 ![Pedal toggled off](images/overlay-pitch-off.png)
 
@@ -110,8 +119,8 @@ itself is kept and reapplies the moment a pedal tone loads:
 
 ![Loaded tone has no MultiPitch](images/overlay-no-pedal-in-tone.png)
 
-Nothing is saved between sessions: the pedal starts enabled, at no shift, base
-E standard, every launch.
+Nothing is saved between sessions: pitch processing starts Off, at no shift,
+base E standard, every launch.
 
 ### Base tuning
 
@@ -195,7 +204,7 @@ the tone's authored octave remains an audio effect.
 | Shifted notes do not register in-game | Target changed mid-song; the reference reapplies within a moment, or back out and re-enter the song |
 | Non-A440 song reads sharp or flat at target 0 | The authored reference is intentionally preserved; true-tune the guitar as Rocksmith requests |
 | Bass: audio is in the wrong octave | The bass tone's Pitch 1 is not `-12`, or the pedal target incorrectly includes the octave |
-| Pitch keys do nothing | Pedal toggled off (`F7`), or Rocksmith is not the focused window |
+| Pitch keys do nothing | Pitch processing is Off, Speaker Mode gameplay has locked the controls, or Rocksmith is not focused |
 
 Logging is opt-in: enable it from the settings app before reproducing the
 issue, or the log will not exist. The log is `RSMods_debug.txt`, next to

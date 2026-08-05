@@ -2,8 +2,8 @@
 
 #include "DropPedalPlayer.hpp"
 
-// Retunes a pitch shifter pedal in the player's tone chain, so a guitar in
-// standard tuning can be heard in the tuning a song was written for.
+// Owns the session pitch route shared by the Drop Pedal input engines and
+// Speaker Mode's Wwise music-output shifter.
 //
 // The player adds a MultiPitch pedal to their tone in the Tone Designer. The game
 // delivers that pedal's pitch through SetParam on the plugin's param object, in
@@ -16,6 +16,13 @@
 //
 namespace DropPedal
 {
+	enum class PitchMode
+	{
+		Off,
+		DropPedal,
+		SpeakerMode
+	};
+
 	void LoadSettings();
 	bool IsConfiguredEnabled();
 	bool ShouldInstallInputHooks();
@@ -28,12 +35,21 @@ namespace DropPedal
 	void Poll();
 
 	// Tracks the active arrangement's authored tuning reference through tuner and song.
-	void HandleArrangementTuning();
+	void HandleArrangementTuning(bool isGameplay);
 	void ResetSongState();
 
 	bool IsEnabled();
+	bool IsSpeakerModeEnabled();
+	void DisableSpeakerMode();
+	bool TrySynchronizeSpeakerTarget(const std::string& songKey);
+	PitchMode GetPitchMode();
+	std::string GetPitchModeName();
 	int GetTargetSemitones(Player player);
+	int GetShiftSemitones();
 	std::string GetTuningName(Player player);
+	std::string GetPitchRouteName();
+	std::string GetPhysicalTuningName();
+	std::string GetTargetTuningName();
 	bool TryGetAuthoredTrueTuning(float& trueTuning);
 
 	// Selects which engine realises the pitch. With the ASIO input shifter active, the

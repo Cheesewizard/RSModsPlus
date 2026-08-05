@@ -174,6 +174,21 @@ namespace
 		return playerIndex == 1 ? DropPedal::Player::Two : DropPedal::Player::One;
 	}
 
+	int GetDetectionShiftSemitones(DropPedal::Player player)
+	{
+		if (DropPedalState::IsSpeakerModeEnabled())
+		{
+			// Speaker Mode rides on Player One's route; Player Two detection stays authored.
+			return player == DropPedal::Player::One
+				? DropPedalState::GetTargetSemitones(DropPedal::Player::One)
+				: 0;
+		}
+
+		return CableOwnsPitch() && DropPedalState::IsEnabled()
+			? DropPedalState::GetTargetSemitones(player)
+			: 0;
+	}
+
 	void* LoadDeliveredParamObject(LONG index)
 	{
 		return InterlockedCompareExchangePointer(
@@ -630,13 +645,8 @@ namespace
 	/// </summary>
 	void UpdateReferenceCentsAdjustment()
 	{
-		const bool shouldTranspose = CableOwnsPitch() && DropPedalState::IsEnabled();
-		const int playerOneSemitones = shouldTranspose
-			? DropPedalState::GetTargetSemitones(DropPedal::Player::One)
-			: 0;
-		const int playerTwoSemitones = shouldTranspose
-			? DropPedalState::GetTargetSemitones(DropPedal::Player::Two)
-			: 0;
+		const int playerOneSemitones = GetDetectionShiftSemitones(DropPedal::Player::One);
+		const int playerTwoSemitones = GetDetectionShiftSemitones(DropPedal::Player::Two);
 
 		InterlockedExchange(&referenceCentsAdjustment, (LONG)(-playerOneSemitones * 100));
 		InterlockedExchange(&playerTwoReferenceCentsAdjustment, (LONG)(-playerTwoSemitones * 100));
@@ -935,10 +945,7 @@ namespace
 			return;
 		}
 
-		const bool shouldTransposeDetection = CableOwnsPitch() && DropPedalState::IsEnabled();
-		const int targetSemitones = shouldTransposeDetection
-			? DropPedalState::GetTargetSemitones(DropPedal::Player::One)
-			: 0;
+		const int targetSemitones = GetDetectionShiftSemitones(DropPedal::Player::One);
 		const float targetTrueTuning = authoredTrueTuning
 			* powf(2.0f, -(float)targetSemitones / SEMITONES_PER_OCTAVE);
 		const bool targetChanged = !AreTrueTuningValuesEqual(appliedTrueTuning, targetTrueTuning);
@@ -1190,8 +1197,8 @@ bool DropPedalHooks::TryGetAuthoredTrueTuning(float& trueTuning)
 		return true;
 	}
 
-	if (!CableOwnsPitch()
-		|| !DropPedalState::IsEnabled()
+	if ((!DropPedalState::IsSpeakerModeEnabled()
+			&& (!CableOwnsPitch() || !DropPedalState::IsEnabled()))
 		|| referenceBuilderTrampoline == nullptr
 		|| InterlockedCompareExchange(&hasAuthoredReferenceCents, 1, 1) != 1) return false;
 

@@ -59,10 +59,12 @@ and reference performance data are documented in
 |---|---|---|
 | Pitch down / up | `,` / `.` | `Control+,` / `Control+.` |
 | Base tuning down / up | `F9` / `F10` | `Control+F9` / `Control+F10` |
-| Toggle both players on / off | `F7` | `F7` |
+| Select Drop Pedal / Speaker Mode / Off (both players) | `F7` | `F7` |
 
 - Keys register only while Rocksmith is the focused window.
-- While the pedal is toggled off, every key except `F7` is ignored.
+- `F7` cycles `Drop Pedal -> Speaker Mode -> Off -> Drop Pedal`. This guide uses
+  the Drop Pedal state.
+- While pitch processing is Off, every key except `F7` is ignored.
 - Keys are rebindable in the settings app (Tuning tab), or under `[Keybinds]`
   in `RSMods.ini` (`DropPedalPitchDownKey`, `DropPedalPitchUpKey`,
   `DropPedalToggleKey`, `DropPedalBaseTuningDownKey`,
@@ -80,7 +82,7 @@ Drop: E
 
 Each shifted row turns green. Every row shows its own player's configured
 state, like a physical pedal: routes and signal levels do not change what is
-displayed. Nothing is saved between sessions: both players start enabled, at
+displayed. Nothing is saved between sessions: pitch processing starts Off, at
 no shift, base E standard, every launch.
 
 ### Base tuning
@@ -121,7 +123,7 @@ Changing Player 1 from Lead to Emulated Bass or Physical Bass keeps using
 | Engine notice reads `Cable Drop Pedal` | A configured ASIO route did not initialize. Check the driver and channel under both `[Asio.Input.0]` and `[Asio.Input.1]` |
 | Game reports "no audio output device" on launch | Another program changed the interface's sample rate (DAWs and amp sims do this silently). Set it back to 48000 Hz in the interface's control panel and relaunch |
 | Tuner reads a different tuning than the guitar is in | The shift, working as designed |
-| Pitch keys do nothing | Pedal toggled off (`F7`), or Rocksmith is not the focused window |
+| Pitch keys do nothing | Pitch processing is Off (`F7`), Speaker Mode gameplay has locked the controls, or Rocksmith is not the focused window |
 | Player 2 controls report that Input 1 is unavailable | `[Asio.Input.1]` is not configured; signal level is not part of this check |
 
 Logging is opt-in: enable it from the settings app before reproducing the

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <string>
+#include "DropPedal.hpp"
 
 struct ID3DXFont;
 struct Resolution;
@@ -17,7 +18,7 @@ namespace DropPedal
 
 	private:
 		std::array<bool, PLAYER_COUNT> hasCachedTuningState{};
-		std::array<bool, PLAYER_COUNT> cachedEnabled{};
+		std::array<PitchMode, PLAYER_COUNT> cachedPitchModes{};
 		std::array<bool, PLAYER_COUNT> cachedMissingPedalTone{};
 		std::array<int, PLAYER_COUNT> cachedTargetSemitones{};
 		std::array<int, PLAYER_COUNT> cachedBaseTuningSemitones{};

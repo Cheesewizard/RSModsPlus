@@ -65,34 +65,30 @@ void DropPedalInput::ToggleEnabled()
 {
 	if (!DropPedalState::IsConfiguredEnabled()) return;
 
-	const bool isEnabled = DropPedalState::ToggleEnabled();
+	DropPedal::PitchMode nextMode;
+	if (!DropPedalState::TryCyclePitchMode(nextMode))
+	{
+		LOG_INFO("Speaker Mode cannot be selected or disabled during gameplay" << std::endl);
+		return;
+	}
+
 	DropPedal::UpdateInputShifterPitch(DropPedal::Player::One);
 	DropPedal::UpdateInputShifterPitch(DropPedal::Player::Two);
 
-	// Both directions push immediately: enabling applies the shift, disabling
-	// restores each shifter's authored pitch, keeping audio and note detection
-	// in agreement without waiting for a tone load.
+	// A mode transition takes effect immediately. Entering Drop Pedal applies its
+	// interval; entering Speaker Mode or Off restores the tone's authored pitch.
 	if (!DropPedalHooks::IsInputShifterActive())
 	{
 		DropPedalHooks::PushPitchToLiveShifters();
 	}
 
-	if (isEnabled)
-	{
-		LOG_INFO("Drop pedal enabled, Player 1 target "
-			<< DropPedalState::GetTuningName(DropPedal::Player::One)
-			<< ", Player 2 target " << DropPedalState::GetTuningName(DropPedal::Player::Two)
-			<< std::endl);
-	}
-	else
-	{
-		LOG_INFO("Drop pedal disabled, tones restored to their authored pitch" << std::endl);
-	}
+	LOG_INFO("Pitch mode changed to " << DropPedal::GetPitchModeName()
+		<< ", route " << DropPedal::GetPitchRouteName() << std::endl);
 }
 
 void DropPedalInput::AdjustBaseTuning(int semitoneDelta)
 {
-	if (!DropPedalState::IsConfiguredEnabled() || !DropPedalState::IsEnabled()) return;
+	if (!DropPedalState::IsConfiguredEnabled()) return;
 
 	const DropPedal::Player player = GetCommandPlayer();
 	if (RejectUnavailablePlayerTwo(player)) return;

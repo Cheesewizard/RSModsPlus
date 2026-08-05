@@ -20,14 +20,17 @@ void DropPedal::Overlay::Render(ID3DXFont* font, const Resolution& windowSize)
 {
 	if (!DropPedal::IsConfiguredEnabled() || !font) return;
 
-	const bool isMultiplayer = GameState::IsMultiplayer();
+	// Speaker Mode shifts the one shared song mix, so Player 2 has nothing to
+	// control and only Player One's row renders.
+	const bool showsPlayerTwoRow = GameState::IsMultiplayer()
+		&& DropPedal::GetPitchMode() != PitchMode::SpeakerMode;
 	RenderTuning(font, windowSize, Player::One, 0);
-	if (isMultiplayer)
+	if (showsPlayerTwoRow)
 	{
 		RenderTuning(font, windowSize, Player::Two, 1);
 	}
 
-	RenderEngine(font, windowSize, isMultiplayer);
+	RenderEngine(font, windowSize, showsPlayerTwoRow);
 }
 
 void DropPedal::Overlay::RenderTuning(
@@ -57,6 +60,8 @@ void DropPedal::Overlay::RenderEngine(
 	const Resolution& windowSize,
 	bool isMultiplayer)
 {
+	if (GameState::currentMenu != "MainMenu") return;
+
 	const unsigned long long noticeTick = DropPedal::GetEngineNoticeTick();
 	if (noticeTick == 0) return;
 
@@ -99,7 +104,7 @@ void DropPedal::Overlay::RenderEngine(
 void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 {
 	const size_t playerIndex = GetPlayerIndex(player);
-	const bool isEnabled = DropPedal::IsEnabled();
+	const auto pitchMode = DropPedal::GetPitchMode();
 	const bool isCableOwned = !DropPedal::IsInputShifterActive();
 	const int targetSemitones = DropPedal::GetTargetSemitones(player);
 	const int baseTuningSemitones = DropPedal::GetBaseTuningSemitones(player);
@@ -108,11 +113,11 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 	// exception is Cable's tone dependency: the game reloads tones every song,
 	// so the row flags a tone the pedal cannot act on.
 	const bool isMissingPedalTone = isCableOwned
-		&& isEnabled
+		&& pitchMode == PitchMode::DropPedal
 		&& !DropPedal::HasLivePedalTone(player);
 
 	if (hasCachedTuningState[playerIndex]
-		&& isEnabled == cachedEnabled[playerIndex]
+		&& pitchMode == cachedPitchModes[playerIndex]
 		&& isMissingPedalTone == cachedMissingPedalTone[playerIndex]
 		&& targetSemitones == cachedTargetSemitones[playerIndex]
 		&& baseTuningSemitones == cachedBaseTuningSemitones[playerIndex]
@@ -121,11 +126,17 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 		return;
 	}
 
+	// Speaker Mode moves the one song mix along Player One's route; it renders as
+	// a single global row, so only Player One's cache ever sees that mode.
 	std::string& tuningLine = tuningLines[playerIndex];
 	unsigned int& tuningTextColor = tuningTextColors[playerIndex];
-	if (!isEnabled)
+	if (pitchMode == PitchMode::Off)
 	{
 		tuningLine = "Pitch: Off";
+	}
+	else if (pitchMode == PitchMode::SpeakerMode)
+	{
+		tuningLine = "Speaker: " + DropPedal::GetPitchRouteName();
 	}
 	else if (isMissingPedalTone)
 	{
@@ -137,7 +148,7 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 	}
 	tuningTextColor = DROP_PEDAL_DISABLED_TEXT;
 
-	if (isEnabled && !isMissingPedalTone)
+	if (pitchMode != PitchMode::Off && !isMissingPedalTone)
 	{
 		const int direction = DropPedal::GetShiftDirection(player);
 		tuningTextColor = direction < 0
@@ -145,7 +156,7 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 			: (direction > 0 ? DROP_PEDAL_UP_TEXT : WHITE_TEXT);
 	}
 
-	cachedEnabled[playerIndex] = isEnabled;
+	cachedPitchModes[playerIndex] = pitchMode;
 	cachedMissingPedalTone[playerIndex] = isMissingPedalTone;
 	cachedTargetSemitones[playerIndex] = targetSemitones;
 	cachedBaseTuningSemitones[playerIndex] = baseTuningSemitones;
