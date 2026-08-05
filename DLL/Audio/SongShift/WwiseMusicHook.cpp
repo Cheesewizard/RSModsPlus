@@ -32,7 +32,6 @@ namespace
 
 	enum class ProcessEventKind
 	{
-		Started,
 		FailedMissingSource,
 		FailedCacheCopy,
 		FailedLiveShifter
@@ -331,15 +330,6 @@ namespace
 				return;
 			}
 
-			if (InterlockedCompareExchange(&sourceState->failureReported, 2, 0) == 0)
-			{
-				CaptureProcessEvent(
-					sourceState,
-					source,
-					ProcessEventKind::Started,
-					sampleRate,
-					sourceState->generationSemitones);
-			}
 			return;
 		}
 
@@ -563,17 +553,13 @@ namespace
 			const double requiredSeconds = probe.sampleRate == 0
 				? 0.0
 				: static_cast<double>(probe.lastRequiredFrame) / probe.sampleRate;
-			const double readyBeforeSeconds = probe.sampleRate == 0
+			const double readySeconds = probe.sampleRate == 0
 				? 0.0
 				: static_cast<double>(probe.lastReadyFrameBeforeWait) / probe.sampleRate;
-			const double readyAfterSeconds = probe.sampleRate == 0
-				? 0.0
-				: static_cast<double>(probe.lastReadyFrameAfterWait) / probe.sampleRate;
-			LOG_WARNING("Speaker Mode probe: render under-run " << probe.underflowWaitCount
-				<< ", required " << requiredSeconds << " s, ready " << readyBeforeSeconds
-				<< " -> " << readyAfterSeconds << " s, audio callback waited "
-				<< probe.lastUnderflowWaitMilliseconds << " ms, maximum "
-				<< probe.maximumUnderflowWaitMilliseconds << " ms" << std::endl);
+			LOG_WARNING("Speaker Mode render under-run " << probe.underflowWaitCount
+				<< ": playback needs " << requiredSeconds << " s, rendered "
+				<< readySeconds << " s; returning silence until the render catches up"
+				<< std::endl);
 		}
 
 		if (!hasLoggedFailureProbe
@@ -678,6 +664,15 @@ void Audio::SongShift::WwiseMusicHook::Poll()
 {
 	LogHookStatus();
 	LogProcessEvents();
+
+	// The cache pass walks a pointer chain, builds strings and takes the registry
+	// mutex; none of that needs frame rate, and the chart sync throttles its own
+	// reads to 250 ms anyway.
+	static uint64_t nextCachePassTick = 0;
+	const uint64_t currentTick = GetTickCount64();
+	if (currentTick < nextCachePassTick) return;
+	nextCachePassTick = currentTick + 250;
+
 	UpdateFullSongCaches();
 	LogCacheProbes();
 	Audio::SongShift::PreRenderedPitchCache::Maintain();

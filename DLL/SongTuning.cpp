@@ -97,12 +97,19 @@ Tuning SongTuning::GetTuningAtTuner() {
 	// In the JSON, tunings have no whitespaces, so get rid of them
 	tuningText.erase(std::remove_if(tuningText.begin(), tuningText.end(), isspace), tuningText.end());
 
-	// Parse RSMods unpacked tuning definition file.
-	std::ifstream jsonFile(pathToTuningList);
-	nlohmann::json tuningJson;
-	jsonFile >> tuningJson;
-	jsonFile.close();
-	tuningJson = tuningJson["Static"]["TuningDefinitions"]; // Skip directly to the part we are interested in
+	// Parse RSMods unpacked tuning definition file once; it is static for the
+	// session and this lookup can run several times a second at the tuner.
+	static nlohmann::json cachedTuningDefinitions;
+	static bool hasCachedTuningDefinitions = false;
+	if (!hasCachedTuningDefinitions) {
+		std::ifstream jsonFile(pathToTuningList);
+		nlohmann::json parsed;
+		jsonFile >> parsed;
+		jsonFile.close();
+		cachedTuningDefinitions = parsed["Static"]["TuningDefinitions"]; // Skip directly to the part we are interested in
+		hasCachedTuningDefinitions = true;
+	}
+	nlohmann::json tuningJson = cachedTuningDefinitions;
 
 	// Unfortunately we can't use json.contains due to difference in formatting
 	for (auto const& tuning : tuningJson.items()) {

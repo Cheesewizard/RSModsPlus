@@ -1112,6 +1112,11 @@ void DropPedalHooks::PushPitchToLiveShifters()
 	ApplyCapturedTrueTuning();
 }
 
+void DropPedalHooks::QueuePitchRestore()
+{
+	QueuePitchPush();
+}
+
 void DropPedalHooks::SetInputShifterActive(bool active)
 {
 	// A forced engine wins over runtime arbitration: cable never hands pitch to the

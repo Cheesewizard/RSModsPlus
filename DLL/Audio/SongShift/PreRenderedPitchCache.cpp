@@ -524,9 +524,6 @@ namespace Audio::SongShift
 		volatile LONG lastPlaybackFrame = 0;
 		__declspec(align(8)) volatile LONG64 lastRequiredFrame = 0;
 		__declspec(align(8)) volatile LONG64 lastReadyFrameBeforeWait = 0;
-		__declspec(align(8)) volatile LONG64 lastReadyFrameAfterWait = 0;
-		__declspec(align(8)) volatile LONG64 lastUnderflowWaitMilliseconds = 0;
-		__declspec(align(8)) volatile LONG64 maximumUnderflowWaitMilliseconds = 0;
 	};
 }
 
@@ -1053,9 +1050,6 @@ bool Audio::SongShift::PreRenderedPitchCache::GetProbeSnapshot(
 		0));
 	snapshot.lastRequiredFrame = readValue(&cache->lastRequiredFrame);
 	snapshot.lastReadyFrameBeforeWait = readValue(&cache->lastReadyFrameBeforeWait);
-	snapshot.lastReadyFrameAfterWait = readValue(&cache->lastReadyFrameAfterWait);
-	snapshot.lastUnderflowWaitMilliseconds = readValue(&cache->lastUnderflowWaitMilliseconds);
-	snapshot.maximumUnderflowWaitMilliseconds = readValue(&cache->maximumUnderflowWaitMilliseconds);
 
 	return true;
 }
@@ -1113,53 +1107,29 @@ bool Audio::SongShift::PreRenderedPitchCache::CopyFrames(
 		0));
 	if (frameEnd > readyFrames)
 	{
-		const DWORD startedTick = GetTickCount();
+		const LONG state = InterlockedCompareExchange(
+			const_cast<volatile LONG*>(&cache->state),
+			0,
+			0);
+		if (state == CACHE_FAILED || state == CACHE_CANCELLED) return false;
+
+		// The request is beyond the rendered frontier -- a seek, such as Riff
+		// Repeater picking a late section or a skip. The render is sequential, so
+		// waiting here would stall Wwise decode for however long the catch-up
+		// takes; hand back silence instead and resume the real audio once the
+		// render reaches this position.
 		InterlockedExchange64(
 			const_cast<volatile LONG64*>(&cache->lastRequiredFrame),
 			static_cast<LONG64>(frameEnd));
 		InterlockedExchange64(
 			const_cast<volatile LONG64*>(&cache->lastReadyFrameBeforeWait),
 			static_cast<LONG64>(readyFrames));
-		bool cacheBecameUnavailable = false;
-		while (frameEnd > readyFrames && GetTickCount() - startedTick < 30000)
-		{
-			const LONG state = InterlockedCompareExchange(
-				const_cast<volatile LONG*>(&cache->state),
-				0,
-				0);
-			if (state == CACHE_FAILED || state == CACHE_CANCELLED)
-			{
-				cacheBecameUnavailable = true;
-				break;
-			}
-			WaitForSingleObject(cache->completedEvent, 1);
-			readyFrames = static_cast<uint64_t>(InterlockedCompareExchange64(
-				const_cast<volatile LONG64*>(&cache->contiguousFramesReady),
-				0,
-				0));
-		}
-		const LONG64 waitMilliseconds = static_cast<LONG64>(GetTickCount() - startedTick);
-		InterlockedExchange64(
-			const_cast<volatile LONG64*>(&cache->lastReadyFrameAfterWait),
-			static_cast<LONG64>(readyFrames));
-		InterlockedExchange64(
-			const_cast<volatile LONG64*>(&cache->lastUnderflowWaitMilliseconds),
-			waitMilliseconds);
-		LONG64 previousMaximum = InterlockedCompareExchange64(
-			const_cast<volatile LONG64*>(&cache->maximumUnderflowWaitMilliseconds),
-			0,
-			0);
-		while (waitMilliseconds > previousMaximum)
-		{
-			const LONG64 observedMaximum = InterlockedCompareExchange64(
-				const_cast<volatile LONG64*>(&cache->maximumUnderflowWaitMilliseconds),
-				waitMilliseconds,
-				previousMaximum);
-			if (observedMaximum == previousMaximum) break;
-			previousMaximum = observedMaximum;
-		}
 		InterlockedIncrement64(const_cast<volatile LONG64*>(&cache->underflowWaitCount));
-		if (cacheBecameUnavailable || frameEnd > readyFrames) return false;
+		memset(
+			destination,
+			0,
+			static_cast<size_t>(frameCount) * CACHE_CHANNELS * sizeof(int16_t));
+		return true;
 	}
 
 	const int16_t* source = cache->mappedData;

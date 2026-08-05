@@ -135,7 +135,10 @@ void DropPedal::DisableSpeakerMode()
 {
 	if (!DropPedalState::DisableSpeakerMode()) return;
 
-	DropPedalHooks::PushPitchToLiveShifters();
+	// Runs on Wwise decoder threads as well as the game loop, so only queue the
+	// restore here: taking trueTuningMutex or logging would stall audio decode.
+	// The in-song arrangement pass reapplies the detection reference within a frame.
+	DropPedalHooks::QueuePitchRestore();
 }
 
 bool DropPedal::TrySynchronizeSpeakerTarget(const std::string& songKey)

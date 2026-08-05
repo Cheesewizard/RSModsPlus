@@ -33,9 +33,6 @@ namespace Audio::SongShift
 		uint64_t lastPlaybackFrame = 0;
 		uint64_t lastRequiredFrame = 0;
 		uint64_t lastReadyFrameBeforeWait = 0;
-		uint64_t lastReadyFrameAfterWait = 0;
-		uint64_t lastUnderflowWaitMilliseconds = 0;
-		uint64_t maximumUnderflowWaitMilliseconds = 0;
 	};
 
 	namespace PreRenderedPitchCache
