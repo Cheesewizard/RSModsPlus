@@ -3,26 +3,24 @@
 Speaker Mode shifts the song instead of the guitar. It is intended for playing
 through speakers, where the acoustic guitar is audible in the room.
 
-It does not require RS_ASIO, an audio interface, or a MultiPitch tone. Real Tone
-Cable users can select Speaker Mode directly; the mod processes the song rather
-than the cable input or the current in-game tone. This is the simplest option
-for cable players who are happy to transpose the song instead of the guitar.
-The matching `RSMods` settings-app folder must be installed because its helper,
+Speaker Mode processes the song rather than the guitar input or the current
+in-game tone, so it works identically with any input setup: a Real Tone Cable
+or an ASIO interface through RS_ASIO. It requires no MultiPitch tone. The
+matching `RSMods` settings-app folder must be installed because its helper,
 PSARC library, and Wwise decode tools prepare temporary full-song audio.
 
-Enable the feature in `RSMods.ini`. The input engine setting controls only Drop
-Pedal mode; Speaker Mode always uses the game's Wwise music output and never
-routes through ASIO:
+Enable the feature in `RSMods.ini`:
 
 ```ini
 [Drop Pedal]
 EnableDropPedal = on
-Engine = cable
 ```
 
-`Engine = cable` is therefore the right explicit choice for a Real Tone Cable.
-It prevents the Drop Pedal input path from installing or switching to ASIO while
-leaving Speaker Mode fully available.
+The `Engine` setting in the same section applies only to Drop Pedal mode's
+input path and has no effect on Speaker Mode, which always uses the game's
+Wwise music output. Leave `Engine` at its default (`automatic`) or set it for
+your Drop Pedal setup as described in the
+[ASIO](asio-drop-pedal.md) and [Cable](cable-drop-pedal.md) Drop Pedal guides.
 
 For example, if the guitar is physically in E and the selected song is in Eb,
 the overlay reads:
