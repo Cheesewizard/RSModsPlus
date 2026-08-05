@@ -5,6 +5,7 @@
 #include "DropPedalHooks.hpp"
 #include "DropPedalInput.hpp"
 #include "DropPedalState.hpp"
+#include "../../GameState.hpp"
 #include "../../SongTuning.hpp"
 
 namespace
@@ -17,8 +18,41 @@ namespace
 	bool hasSynchronizedSpeakerTarget = false;
 	int synchronizedSpeakerTargetSemitones = 0;
 	int synchronizedSpeakerOctaveAdjustment = 0;
+	int pendingChartTuningSemitones = 0;
+	bool hasPendingChartTuning = false;
+	bool isPendingChartTuningUniform = false;
 	unsigned long long speakerTargetReadAfterTick = 0;
 	unsigned long long synchronizedSpeakerModeTick = 0;
+
+	// The tuner UI's tuning text is authoritative while the pre-song tuner is up.
+	// Once it is gone (a guitar already in tune passes it in under a second), the
+	// loaded arrangement tuning stands in so a quick tuner cannot starve the sync.
+	// Failed reads are detectable either way: GetTuningAtTuner's failure value (69
+	// per string) falls outside the chart range, and TryGetCurrentTuning reports
+	// an unresolved pointer explicitly.
+	bool TryReadChartTuning(int (&stringTunings)[6])
+	{
+		if (GameState::Menus::IsInPreSongTuner())
+		{
+			const auto tuning = SongTuning::GetTuningAtTuner();
+			stringTunings[0] = static_cast<int>(static_cast<signed char>(tuning.lowE));
+			stringTunings[1] = static_cast<int>(static_cast<signed char>(tuning.strA));
+			stringTunings[2] = static_cast<int>(static_cast<signed char>(tuning.strD));
+			stringTunings[3] = static_cast<int>(static_cast<signed char>(tuning.strG));
+			stringTunings[4] = static_cast<int>(static_cast<signed char>(tuning.strB));
+			stringTunings[5] = static_cast<int>(static_cast<signed char>(tuning.highE));
+			return true;
+		}
+
+		std::array<byte, 6> arrangementTuning{};
+		if (!SongTuning::TryGetCurrentTuning(arrangementTuning)) return false;
+
+		for (int i = 0; i < 6; i++)
+		{
+			stringTunings[i] = static_cast<int>(static_cast<signed char>(arrangementTuning[i]));
+		}
+		return true;
+	}
 
 	int GetClosestOctaveAdjustment(int selectedShiftSemitones, int chartShiftSemitones)
 	{
@@ -115,46 +149,56 @@ bool DropPedal::TrySynchronizeSpeakerTarget(const std::string& songKey)
 		speakerTargetSongKey = songKey;
 		synchronizedSpeakerModeTick = modeTick;
 		hasSynchronizedSpeakerTarget = false;
+		hasPendingChartTuning = false;
 		DropPedalState::SetSpeakerTargetSynchronized(false);
-		speakerTargetReadAfterTick = GetTickCount64() + 1500;
-	}
-
-	if (!hasSynchronizedSpeakerTarget && GetTickCount64() < speakerTargetReadAfterTick)
-	{
-		return false;
+		speakerTargetReadAfterTick = 0;
 	}
 
 	if (!hasSynchronizedSpeakerTarget)
 	{
-		speakerTargetReadAfterTick = GetTickCount64() + 500;
-		const auto tuning = SongTuning::GetTuningAtTuner();
-		const int stringTunings[] =
-		{
-			static_cast<int>(static_cast<signed char>(tuning.lowE)),
-			static_cast<int>(static_cast<signed char>(tuning.strA)),
-			static_cast<int>(static_cast<signed char>(tuning.strD)),
-			static_cast<int>(static_cast<signed char>(tuning.strG)),
-			static_cast<int>(static_cast<signed char>(tuning.strB)),
-			static_cast<int>(static_cast<signed char>(tuning.highE))
-		};
+		// The tuner populates its tuning data while the screen builds, so no single
+		// reading is trusted; the value is accepted once two consecutive reads agree.
+		// Reads start immediately -- a fixed initial delay loses the race against a
+		// guitar that is already in tune and passes the tuner in under a second.
+		const auto now = GetTickCount64();
+		if (now < speakerTargetReadAfterTick) return false;
+		speakerTargetReadAfterTick = now + 250;
 
-		synchronizedSpeakerTargetSemitones = stringTunings[0];
-		if (synchronizedSpeakerTargetSemitones < MIN_CHART_TUNING_SEMITONES
-			|| synchronizedSpeakerTargetSemitones > MAX_CHART_TUNING_SEMITONES)
+		int stringTunings[6];
+		if (!TryReadChartTuning(stringTunings)) return false;
+
+		if (stringTunings[0] < MIN_CHART_TUNING_SEMITONES
+			|| stringTunings[0] > MAX_CHART_TUNING_SEMITONES)
 		{
+			hasPendingChartTuning = false;
 			return false;
 		}
 
+		bool isUniform = true;
 		for (const int stringTuning : stringTunings)
 		{
-			if (stringTuning == synchronizedSpeakerTargetSemitones) continue;
+			isUniform = isUniform && stringTuning == stringTunings[0];
+		}
 
+		if (!hasPendingChartTuning
+			|| pendingChartTuningSemitones != stringTunings[0]
+			|| isPendingChartTuningUniform != isUniform)
+		{
+			hasPendingChartTuning = true;
+			pendingChartTuningSemitones = stringTunings[0];
+			isPendingChartTuningUniform = isUniform;
+			return false;
+		}
+
+		if (!isUniform)
+		{
 			LOG_ERROR("Speaker Mode requires a uniform chart tuning; selected song "
 				<< songKey << " is not uniform" << std::endl);
 			DisableSpeakerMode();
 			return false;
 		}
 
+		synchronizedSpeakerTargetSemitones = stringTunings[0];
 		DropPedalState::SetSpeakerTargetSynchronized(true);
 		const int chartShiftSemitones = synchronizedSpeakerTargetSemitones
 			- DropPedalState::GetBaseTuningSemitones(Player::One);
@@ -218,6 +262,7 @@ void DropPedal::ResetSongState()
 	DropPedalState::SetSpeakerTargetSynchronized(false);
 	speakerTargetSongKey.clear();
 	hasSynchronizedSpeakerTarget = false;
+	hasPendingChartTuning = false;
 	synchronizedSpeakerTargetSemitones = 0;
 	synchronizedSpeakerOctaveAdjustment = 0;
 	speakerTargetReadAfterTick = 0;

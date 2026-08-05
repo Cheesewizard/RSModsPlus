@@ -613,8 +613,17 @@ namespace
 			InterlockedExchange(&isSelectedSongPlaybackExpected, 0);
 			return;
 		}
-		if (!GameState::Menus::IsInPreSongTuner()) return;
-		InterlockedExchange(&isSelectedSongPlaybackExpected, 1);
+		// The tuner arms the playback expectation; after it, the sync keeps polling
+		// through the load screen, because a guitar already in tune passes the tuner
+		// faster than the chart tuning can be confirmed there.
+		if (GameState::Menus::IsInPreSongTuner())
+		{
+			InterlockedExchange(&isSelectedSongPlaybackExpected, 1);
+		}
+		else if (InterlockedCompareExchange(&isSelectedSongPlaybackExpected, 0, 0) == 0)
+		{
+			return;
+		}
 		if (!DropPedal::TrySynchronizeSpeakerTarget(songKey)) return;
 		InterlockedExchange(&isSelectedSongTuningSynchronized, 1);
 

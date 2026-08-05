@@ -8,25 +8,13 @@
 /// <param name="verbose"> - Should we show the tuning in the console **DEBUG BUILD ONLY**</param>
 /// <returns>Current Tuning in a Byte[6] array.</returns>
 std::array<byte, 6> SongTuning::GetCurrentTuning(bool verbose) {
-	uintptr_t addrTuning = MemUtil::FindDMAAddy(Offsets::baseHandle + Offsets::ptr_tuning, Offsets::ptr_tuningOffsets, true);
-
-	if (!addrTuning) {
+	std::array<byte, 6> allTunings{};
+	if (!TryGetCurrentTuning(allTunings)) {
 		return {};
 	}
 
-	auto tuningData = reinterpret_cast<Tuning*>(addrTuning);
-
-	std::array<byte, 6> allTunings = {
-		tuningData->lowE,
-		tuningData->strA,
-		tuningData->strD,
-		tuningData->strG,
-		tuningData->strB,
-		tuningData->highE
-	};
-
 	// Print tuning to console. **DEBUG BUILD ONLY**
-	if (verbose) 
+	if (verbose)
 	{
 		for (int i = 0; i < 6; i++)
 		{
@@ -35,6 +23,26 @@ std::array<byte, 6> SongTuning::GetCurrentTuning(bool verbose) {
 	}
 
 	return allTunings;
+}
+
+bool SongTuning::TryGetCurrentTuning(std::array<byte, 6>& tuning) {
+	uintptr_t addrTuning = MemUtil::FindDMAAddy(Offsets::baseHandle + Offsets::ptr_tuning, Offsets::ptr_tuningOffsets, true);
+
+	if (!addrTuning) {
+		return false;
+	}
+
+	auto tuningData = reinterpret_cast<Tuning*>(addrTuning);
+	tuning = {
+		tuningData->lowE,
+		tuningData->strA,
+		tuningData->strD,
+		tuningData->strG,
+		tuningData->strB,
+		tuningData->highE
+	};
+
+	return true;
 }
 
 /// <summary>
