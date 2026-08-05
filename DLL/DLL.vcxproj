@@ -587,6 +587,9 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <BuildArchiveDir>$(SolutionDir)BuildArchive\$([System.DateTime]::Now.ToString('yyyyMMdd-HHmmss'))</BuildArchiveDir>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
     <TargetName>xinput1_3</TargetName>
@@ -637,10 +640,16 @@
       <AdditionalDependencies>winmm.lib;Imagehlp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>
       </ImageHasSafeExceptionHandlers>
+      <GenerateMapFile>true</GenerateMapFile>
+      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
     </Link>
     <PostBuildEvent>
       <Command>
-IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"</Command>
+IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
+if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
+copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
+copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
+if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(BuildArchiveDir)\"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Copying to RS2014 folder...</Message>
@@ -671,10 +680,16 @@ IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ModuleDefinitionFile>xinput1_3.def</ModuleDefinitionFile>
       <AdditionalDependencies>winmm.lib;Imagehlp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateMapFile>true</GenerateMapFile>
+      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
     </Link>
     <PostBuildEvent>
       <Command>
-IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"</Command>
+IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
+if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
+copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
+copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
+if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(BuildArchiveDir)\"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Copying to RS2014 folder...</Message>
@@ -706,10 +721,16 @@ IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "
       <AdditionalLibraryDirectories>SDK Path\Lib</AdditionalLibraryDirectories>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <AdditionalDependencies>winmm.lib;Imagehlp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateMapFile>true</GenerateMapFile>
+      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
     </Link>
     <PostBuildEvent>
-      <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\D3DX9_42.dll"</Command>
-      <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014"</Command>
+      <Command>
+IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
+if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
+copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
+copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
+if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(BuildArchiveDir)\"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Copying to solution directory...</Message>
@@ -740,10 +761,16 @@ IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "
       <AdditionalLibraryDirectories>SDK Path\Lib</AdditionalLibraryDirectories>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <AdditionalDependencies>winmm.lib;Imagehlp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateMapFile>true</GenerateMapFile>
+      <MapFileName>$(OutDir)$(TargetName).map</MapFileName>
     </Link>
     <PostBuildEvent>
-      <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\D3DX9_42.dll"</Command>
-      <Command>IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014"</Command>
+      <Command>
+IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
+if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
+copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
+copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
+if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(BuildArchiveDir)\"</Command>
     </PostBuildEvent>
     <PostBuildEvent>
       <Message>Copying to solution directory...</Message>
