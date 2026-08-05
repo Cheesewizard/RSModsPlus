@@ -1,6 +1,48 @@
 #include "stdafx.h"
 #include "GameState.hpp"
 
+namespace
+{
+	constexpr size_t MAX_SONG_EVENT_LENGTH = 50;
+	constexpr std::string_view SONG_EVENT_PREFIX = "Play_";
+	constexpr std::string_view PREVIEW_EVENT_SUFFIX = "_Preview";
+	constexpr std::string_view INVALID_EVENT_SUFFIX = "_Invalid";
+
+	std::mutex songKeyMutex;
+	std::string lastSongKey;
+
+	bool HasSuffix(std::string_view text, std::string_view suffix)
+	{
+		return text.size() >= suffix.size()
+			&& text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+	}
+
+	bool TryReadSongKey(const char* eventName, std::string& songKey)
+	{
+		if (eventName == nullptr || MemUtil::IsBadReadPtr((void*)eventName)) return false;
+
+		const size_t eventLength = strnlen_s(eventName, MAX_SONG_EVENT_LENGTH + 1);
+		if (eventLength <= SONG_EVENT_PREFIX.size() + PREVIEW_EVENT_SUFFIX.size()
+			|| eventLength > MAX_SONG_EVENT_LENGTH)
+		{
+			return false;
+		}
+
+		const std::string_view event(eventName, eventLength);
+		if (!event._Starts_with(SONG_EVENT_PREFIX)) return false;
+
+		const bool isPreview = HasSuffix(event, PREVIEW_EVENT_SUFFIX);
+		const bool isInvalidPreview = HasSuffix(event, INVALID_EVENT_SUFFIX);
+		if (!isPreview && !isInvalidPreview) return false;
+
+		const size_t songKeyLength = eventLength
+			- SONG_EVENT_PREFIX.size()
+			- PREVIEW_EVENT_SUFFIX.size();
+		songKey.assign(event.data() + SONG_EVENT_PREFIX.size(), songKeyLength);
+		return true;
+	}
+}
+
 /// <summary>
 /// Are we in a song?
 /// </summary>
@@ -18,7 +60,12 @@ bool GameState::IsInSong() {
 /// </summary>
 /// <returns>Is the user in multiplayer</returns>
 bool GameState::IsMultiplayer() {
-	return *(int*)MemUtil::FindDMAAddy(Offsets::baseHandle + Offsets::ptr_multiplayer, Offsets::ptr_multiplayerOffsets); // No need to null check because if it's null, then we assume it's singleplayer (which is zero).
+	const uintptr_t address = MemUtil::FindDMAAddy(
+		Offsets::baseHandle + Offsets::ptr_multiplayer,
+		Offsets::ptr_multiplayerOffsets);
+	if (address == 0 || MemUtil::IsBadReadPtr(reinterpret_cast<void*>(address))) return false;
+
+	return *reinterpret_cast<int*>(address) != 0;
 }
 
 /// <summary>
@@ -46,50 +93,20 @@ std::string GameState::CurrentSelectedUser() {
 	return std::string((const char*)badValue);
 }
 
-bool IsSongKeyStringValid(const char* str, size_t max_len)
-{
-	if (!str)
-		return false;
-
-	if (MemUtil::IsBadReadPtr((void*)str))
-		return false;
-
-	size_t strLen = strlen(str);
-	if (strLen <= 13 || strLen > max_len)
-		return false;
-
-	std::string_view sv(str, strLen);
-
-	constexpr std::string_view prefix = "Play_";
-	return sv.size() >= prefix.size() && sv.substr(0, prefix.size()) == prefix;
-}
-
 /// <summary>
 /// Gets the SongKey of the current playing song, based on the initial preview.
 /// </summary>
 /// <returns>Last played Song Key</returns>
 std::string GameState::GetSongKey() {
-	uintptr_t previewEventPtr = MemUtil::FindDMAAddy(Offsets::baseHandle + Offsets::ptr_previewName, Offsets::ptr_previewNameOffsets);
+	const uintptr_t previewEventAddress = MemUtil::FindDMAAddy(
+		Offsets::baseHandle + Offsets::ptr_previewName,
+		Offsets::ptr_previewNameOffsets);
+	std::string currentSongKey;
+	const bool hasCurrentSongKey = previewEventAddress != 0
+		&& TryReadSongKey(reinterpret_cast<const char*>(previewEventAddress), currentSongKey);
 
-	if (previewEventPtr) {
-		const char* previewEvent = (char*)previewEventPtr;
-
-		// Check if it's null terminated within a reasonable number of bytes
-		if (IsSongKeyStringValid(previewEvent, 50))
-		{
-			auto previewName = std::string(previewEvent);
-
-			// If the preview name contains "Play_", which is required by Wwise.
-			if (previewName.length() > 13 && previewName._Starts_with("Play_")) {
-
-				// Verify that we are working with a "_Preview" audio.
-				// "_Invalid" is used when the user turns off their song previews.
-				if (previewName.compare(previewName.length() - 9, 9, "_Preview") || previewName.compare(previewName.length() - 9, 9, "_Invalid")) {
-					lastSongKey = previewName.substr(5, previewName.length() - 13);
-				}
-			}
-		}
-	}
+	std::lock_guard<std::mutex> lock(songKeyMutex);
+	if (hasCurrentSongKey) lastSongKey = std::move(currentSongKey);
 	return lastSongKey;
 }
 

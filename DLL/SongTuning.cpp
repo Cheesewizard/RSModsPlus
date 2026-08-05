@@ -1,5 +1,28 @@
 #include "stdafx.h"
 #include "SongTuning.hpp"
+#include "Mods/DropPedal/DropPedal.hpp"
+
+namespace {
+	// Parsed once; the file is static for the session and lookups can run several
+	// times a second at the tuner.
+	const nlohmann::json* GetCachedTuningDefinitions() {
+		static nlohmann::json cachedTuningDefinitions;
+		static bool hasAttemptedLoad = false;
+		static bool isLoaded = false;
+		if (!hasAttemptedLoad) {
+			hasAttemptedLoad = true;
+			const std::string pathToTuningList = "RSMods/CustomMods/tuning.database.json";
+			if (std::filesystem::exists(pathToTuningList)) {
+				std::ifstream jsonFile(pathToTuningList);
+				nlohmann::json parsed;
+				jsonFile >> parsed;
+				cachedTuningDefinitions = parsed["Static"]["TuningDefinitions"]; // Skip directly to the part we are interested in
+				isLoaded = true;
+			}
+		}
+		return isLoaded ? &cachedTuningDefinitions : nullptr;
+	}
+}
 
 /// <summary>
 /// Get Tuning of all 6 strings (even on bass)
@@ -7,25 +30,13 @@
 /// <param name="verbose"> - Should we show the tuning in the console **DEBUG BUILD ONLY**</param>
 /// <returns>Current Tuning in a Byte[6] array.</returns>
 std::array<byte, 6> SongTuning::GetCurrentTuning(bool verbose) {
-	uintptr_t addrTuning = MemUtil::FindDMAAddy(Offsets::baseHandle + Offsets::ptr_tuning, Offsets::ptr_tuningOffsets, true);
-
-	if (!addrTuning) {
+	std::array<byte, 6> allTunings{};
+	if (!TryGetCurrentTuning(allTunings)) {
 		return {};
 	}
 
-	auto tuningData = reinterpret_cast<Tuning*>(addrTuning);
-
-	std::array<byte, 6> allTunings = {
-		tuningData->lowE,
-		tuningData->strA,
-		tuningData->strD,
-		tuningData->strG,
-		tuningData->strB,
-		tuningData->highE
-	};
-
 	// Print tuning to console. **DEBUG BUILD ONLY**
-	if (verbose) 
+	if (verbose)
 	{
 		for (int i = 0; i < 6; i++)
 		{
@@ -34,6 +45,26 @@ std::array<byte, 6> SongTuning::GetCurrentTuning(bool verbose) {
 	}
 
 	return allTunings;
+}
+
+bool SongTuning::TryGetCurrentTuning(std::array<byte, 6>& tuning) {
+	uintptr_t addrTuning = MemUtil::FindDMAAddy(Offsets::baseHandle + Offsets::ptr_tuning, Offsets::ptr_tuningOffsets, true);
+
+	if (!addrTuning) {
+		return false;
+	}
+
+	auto tuningData = reinterpret_cast<Tuning*>(addrTuning);
+	tuning = {
+		tuningData->lowE,
+		tuningData->strA,
+		tuningData->strD,
+		tuningData->strG,
+		tuningData->strB,
+		tuningData->highE
+	};
+
+	return true;
 }
 
 /// <summary>
@@ -88,27 +119,70 @@ Tuning SongTuning::GetTuningAtTuner() {
 	// In the JSON, tunings have no whitespaces, so get rid of them
 	tuningText.erase(std::remove_if(tuningText.begin(), tuningText.end(), isspace), tuningText.end());
 
-	// Parse RSMods unpacked tuning definition file.
-	std::ifstream jsonFile(pathToTuningList);
-	nlohmann::json tuningJson;
-	jsonFile >> tuningJson;
-	jsonFile.close();
-	tuningJson = tuningJson["Static"]["TuningDefinitions"]; // Skip directly to the part we are interested in
+	const nlohmann::json* tuningDefinitions = GetCachedTuningDefinitions();
+	if (tuningDefinitions == nullptr) {
+		LOG_ERROR("Invalid File: GetTuningAtTuner - Path To Tuning File Doesn't Exist." << std::endl);
+		return Tuning();
+	}
+	const nlohmann::json& tuningJson = *tuningDefinitions;
 
 	// Unfortunately we can't use json.contains due to difference in formatting
 	for (auto const& tuning : tuningJson.items()) {
 		std::string jsonKeyUpper = tuning.key();
-		std::string jsonKeyOriginal = tuning.key(); // Also you can't just make a separate copy of the uppercase string, so we keep both 
+		std::string jsonKeyOriginal = tuning.key(); // Also you can't just make a separate copy of the uppercase string, so we keep both
 		std::transform(jsonKeyUpper.begin(), jsonKeyUpper.end(), jsonKeyUpper.begin(), ::toupper);
 
 		if (jsonKeyOriginal == tuningText || jsonKeyUpper == tuningText) { // If the tuning is all uppercase or if standard-case matches
-			tuningJson = tuningJson[jsonKeyOriginal]["Strings"];
-			return Tuning(tuningJson["string0"], tuningJson["string1"], tuningJson["string2"], tuningJson["string3"], tuningJson["string4"], tuningJson["string5"]);
+			const nlohmann::json& strings = tuningJson[jsonKeyOriginal]["Strings"];
+			return Tuning(strings["string0"], strings["string1"], strings["string2"], strings["string3"], strings["string4"], strings["string5"]);
 		}
 	}
 
 	LOG_WARNING("Invalid Tuning: Tuning doesn't exist in RSMods tuning list" << std::endl);
 	return Tuning();
+}
+
+/// <summary>
+/// Reverse lookup: name a tuning from its per-string semitone offsets, so shifted
+/// chart shapes can be shown by their conventional names (Eb Drop Db, Open G, ...).
+/// The display name comes from the entry's UIName, which carries a "$[id]" prefix
+/// ahead of the text; the key is the space-less fallback.
+/// </summary>
+/// <returns>True when the shape has a named entry in the tuning list.</returns>
+bool SongTuning::TryGetTuningNameForOffsets(const std::array<int, 6>& offsets, std::string& name) {
+	const nlohmann::json* tuningDefinitions = GetCachedTuningDefinitions();
+	if (tuningDefinitions == nullptr) return false;
+
+	for (auto const& tuning : tuningDefinitions->items()) {
+		const auto strings = tuning.value().find("Strings");
+		if (strings == tuning.value().end()) continue;
+
+		bool matches = true;
+		for (int string = 0; string < 6 && matches; string++) {
+			const auto entry = strings->find("string" + std::to_string(string));
+			matches = entry != strings->end() && entry->get<int>() == offsets[string];
+		}
+
+		if (!matches) continue;
+
+		const auto uiName = tuning.value().find("UIName");
+		if (uiName != tuning.value().end() && uiName->is_string()) {
+			std::string displayName = uiName->get<std::string>();
+			const size_t prefixEnd = displayName.find(']');
+			if (displayName.rfind("$[", 0) == 0 && prefixEnd != std::string::npos) {
+				displayName = displayName.substr(prefixEnd + 1);
+			}
+			if (!displayName.empty()) {
+				name = displayName;
+				return true;
+			}
+		}
+
+		name = tuning.key();
+		return true;
+	}
+
+	return false;
 }
 
 /// <returns>Should we Display The Extended Range Colors?</returns>
@@ -383,6 +457,11 @@ bool SongTuning::TryGetTrueTuning(float& trueTuning, uintptr_t& address)
 int SongTuning::GetTrueTuning()
 {
 	float rawTuningValue = 0.0f;
+	if (DropPedal::TryGetAuthoredTrueTuning(rawTuningValue))
+	{
+		return static_cast<int>(floor(rawTuningValue));
+	}
+
 	uintptr_t address = 0;
 	if (!TryGetTrueTuning(rawTuningValue, address))
 	{

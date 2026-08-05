@@ -10,6 +10,12 @@ with `Engine = cable` while an ASIO interface supplies Rocksmith's input. In
 automatic mode a working RS_ASIO input uses the
 [ASIO Drop Pedal](asio-drop-pedal.md) instead, which needs no tone setup.
 
+If shifting the song instead of the guitar is acceptable, use
+[Speaker Mode](speaker-mode.md). It works with a Real Tone Cable without
+RS_ASIO and does not require a MultiPitch tone. A cable may also work through
+RS_ASIO using the experimental
+[ASIO4ALL route](asio-drop-pedal.md#real-tone-cable-through-asio4all-experimental).
+
 The engine is selected at launch and announced beside the pedal readout, then
 fades after a few seconds:
 
@@ -18,6 +24,22 @@ fades after a few seconds:
 The same line is written to the debug log (`Drop pedal engine: ...`). In
 automatic mode Cable owns the pitch until a working ASIO input chain becomes
 available.
+
+In multiplayer each player has an independent target and base tuning, exactly
+like the ASIO engine: every tone's pitch shifter and every player's detection
+reference follow the player owning it, so a song with different arrangement
+tunings stays playable for both. Player 2 uses `Control` plus the Player 1
+keys. The overlay always shows each player's own pedal state, like hardware.
+
+Multiplayer tone setup:
+
+- Tones live on the player profile, so **each profile needs its own drop pedal
+  tone** built per the setup below; one profile's tones are not visible to the
+  other player.
+- In multiplayer the keyboard maps both players' tone slots: keys `1`-`4` load
+  Player 1's tone slots and keys `5`-`8` load Player 2's tone slots `1`-`4`.
+
+![Independent targets on a song with different arrangement tunings](images/overlay-multiplayer-tunings.png)
 
 ## How it works
 
@@ -39,46 +61,72 @@ stamped value. Because the adjustment is applied to the authored cents rather
 than replacing them, non-A440 arrangements and the `-1200` emulated-bass offset
 compose correctly.
 
-The old `DisableTrueTuning` code hook and its offsets remain removed:
-disassembly identified its LP-version patch site as RMS/onset calculation. The
-reference-builder address is currently known for Remastered September 2022
-only; on LP December 2024 the live writes still keep in-song detection correct,
-but the pre-song tuner does not follow the shift — skip it with `DELETE`.
+The pre-existing `DisableTrueTuning` mod remains available unchanged and is
+independent of the Drop Pedal. The Drop Pedal does not call or modify it; it
+uses its own reference-builder hook and live reference writes. Builder
+addresses are defined for Remastered September 2022 and Learn & Play December
+2024.
 
 Constraints that follow from this design:
 
 - A tone containing a MultiPitch pedal is required; stock tones do not work.
 - Uniform tunings only.
-- Single player only. The tuning-reference adjustment is global, so a second
-  player's notes would be scored against the first player's shifted reference.
 - Tones reset per song, so the tone slot key is pressed each time.
 - Set the target before launching the song, so the load-time stamp already
-  carries the shift when the tuner reads it.
+  carries the shift when the tuner reads it. This includes Non-Stop Play: the
+  target applies per song at load, so set it before starting the playlist, or
+  during the between-song countdown when songs need different offsets. A change
+  that lands after a song has loaded corrects in-song detection within a
+  moment, but that song's tuner snapshot stays stale.
+- The full pedal range of -24 to +24 semitones renders (verified in game on a
+  Pitch 1 = 0 tone). The tone's authored Pitch 1 adds to the pedal target in
+  the one MultiPitch instance, so an octave-down bass tone shifts its audible
+  result by that authored offset on top of the pedal value.
 
 ## Controls
 
-| Action | Key |
-|---|---|
-| Pitch down / up | `,` / `.` |
-| Toggle on / off | `F7` |
-| Base tuning down / up | `F9` / `F10` |
+| Action | Player 1 | Player 2 |
+|---|---|---|
+| Pitch down / up | `,` / `.` | `Control+,` / `Control+.` |
+| Select Drop Pedal / Speaker Mode / Off (both players) | `F7` | `F7` |
+| Base tuning down / up | `F9` / `F10` | `Control+F9` / `Control+F10` |
+
 
 - Keys register only while Rocksmith is the focused window.
-- While the pedal is toggled off, every key except `F7` is ignored.
+- `F7` cycles `Drop Pedal -> Speaker Mode -> Off -> Drop Pedal`. This guide uses
+  the Drop Pedal state.
+- While pitch processing is Off, every key except `F7` is ignored.
 - Keys are rebindable in the settings app (Tuning tab), or under `[Keybinds]`
   in `RSMods.ini` (`DropPedalPitchDownKey`, `DropPedalPitchUpKey`,
   `DropPedalToggleKey`, `DropPedalBaseTuningDownKey`,
   `DropPedalBaseTuningUpKey`). The table above shows the defaults.
 
-The overlay shows the current state and turns green whenever a shift is
-applied. Nothing is saved between sessions: the pedal starts enabled, at no
-shift, base E standard, every launch.
+The overlay shows the current state: green for a downward shift, amber for an
+upward one.
+
+![Downward shift applied](images/overlay-drop-tuning-down.png)
+
+![Upward shift applied](images/overlay-drop-tuning-up.png)
+
+`F7` selects the pitch mode for the session, and the row reports it:
+
+![Pedal toggled off](images/overlay-pitch-off.png)
+
+When the loaded tone has no MultiPitch the pedal cannot act, so the row says so
+instead of showing a target that is not being applied — the game reloads tones
+every song, so this is the first thing to check when nothing shifts. The target
+itself is kept and reapplies the moment a pedal tone loads:
+
+![Loaded tone has no MultiPitch](images/overlay-no-pedal-in-tone.png)
+
+Nothing is saved between sessions: pitch processing starts Off, at no shift,
+base E standard, every launch.
 
 ### Base tuning
 
 `F9` / `F10` tell the mod what the guitar is physically tuned to. It changes
 how tunings are named, nothing else: names are computed relative to the base,
-so with a base of D standard, one semitone down reads `Db standard (-1)`.
+so with a base of D standard, one semitone down reads `D -> Db (-1)`.
 Leave it at E standard unless the guitar really is tuned differently.
 
 ## Setup: build the tone
@@ -124,13 +172,11 @@ the guitar to be true-tuned to A428.71. Applying a pedal shift scales that
 authored reference instead of replacing it with A440.
 
 The pre-song tuner captures its expected pitches from the reference stamped at
-song load. With the reference builder hooked (Remastered September 2022), that
-stamp already carries the shift, so the tuner accepts the physically tuned
-guitar as the shifted tuning. On versions without a builder address (LP
-December 2024) the stamp stays authored and the tuner judges strings against
-the untransposed tuning; skip it with `DELETE` there. Do not follow the
-tuner's needle when it disagrees with your physical tuning — that would retune
-the guitar and then double the shift once the pedal engages.
+song load. The hooked reference builder stamps the shifted value before the
+tuner reads it, so the tuner accepts the physically tuned guitar as the shifted
+tuning on both supported game versions. Do not follow the tuner's needle when
+it disagrees with your physical tuning — that would retune the guitar and then
+double the shift once the pedal engages.
 
 ## Emulated bass
 
@@ -154,12 +200,11 @@ the tone's authored octave remains an audio effect.
 | Pedal changes nothing at all | Current tone has no MultiPitch; press the slot key |
 | Audio shifts but sounds thin or silent | MultiPitch **Mix** is not at 100 |
 | Everything sounds an octave down at 0 semitones | Tone's **Pitch 1** is not 0 |
-| Pre-song tuner rejects strings that register fine in-song | Target was set after the song started loading (back out and relaunch the song), or the game version has no reference-builder address (LP December 2024) — skip the tuner with `DELETE` |
+| Pre-song tuner rejects strings that register fine in-song | Target was set after the song started loading; back out and relaunch the song |
 | Shifted notes do not register in-game | Target changed mid-song; the reference reapplies within a moment, or back out and re-enter the song |
 | Non-A440 song reads sharp or flat at target 0 | The authored reference is intentionally preserved; true-tune the guitar as Rocksmith requests |
 | Bass: audio is in the wrong octave | The bass tone's Pitch 1 is not `-12`, or the pedal target incorrectly includes the octave |
-| Pitch keys do nothing | Pedal toggled off (`F7`), or Rocksmith is not the focused window |
-| Multiplayer: player 2's notes do not register | The tuning-reference adjustment is global; use single player with the Cable engine |
+| Pitch keys do nothing | Pitch processing is Off, Speaker Mode gameplay has locked the controls, or Rocksmith is not focused |
 
 Logging is opt-in: enable it from the settings app before reproducing the
 issue, or the log will not exist. The log is `RSMods_debug.txt`, next to

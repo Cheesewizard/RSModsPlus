@@ -1,42 +1,30 @@
-# Shifter Harness
+# Speaker Mode harnesses
 
-Standalone console harness for `DelayLinePitchShifter`. Feeds synthetic guitar-like
-signals through the shifter and reports, per case:
-
-- pop/click events: single-sample discontinuities far above the local envelope,
-  with input-attack events subtracted so only shifter artifacts are counted
-- pitch accuracy: dominant output frequency vs expected shifted frequency, in cents
-- harmonic purity: output energy at expected shifted harmonics vs off-harmonic
-  probe bins, in dB (higher is cleaner)
-
-Cases cover held notes with vibrato across all six strings, Karplus-Strong plucks,
-bends, double stops (fifth/fourth/third), staccato palm-mute repeats, mid-note
-retunes (engage/disengage/slam), light playing over a noise floor, silence, and
-pure noise.
+Standalone tools for measuring the Signalsmith processing paths used by Speaker
+Mode. They are diagnostics and benchmarks; they do not establish in-game hook,
+routing, prepared-audio alignment, seek, or end-of-song correctness.
 
 ## Build and run
 
-From a Developer Command Prompt in Tests\ShifterHarness:
+From a Developer Command Prompt in `Tests\ShifterHarness`:
 
-    build.bat
-    harness.exe
-    harness.exe live_input_HHMMSS.wav
+```bat
+build.bat
+speaker_latency.exe
+speaker_pipeline_benchmark.exe song.wav
+```
 
-Or with any C++17 compiler:
+`speaker_latency.exe` compares algorithmic latency, processing cost, and pitch
+accuracy at the game's observed 48 kHz sample rate and 128-frame decoder
+callbacks. It also exercises the fixed-length `outputSeek` and flush sequence
+used to remove full-song playback delay.
 
-    g++ -O2 -std=c++17 -I ../../DLL -I ../../DLL/Audio -o harness harness.cpp ../../DLL/Audio/DelayLinePitchShifter.cpp
+`speaker_pipeline_benchmark.exe` times continuous progressive rendering and the
+direct render into delete-on-close mapped PCM used during a Speaker Mode session.
+It verifies frame counts, deterministic output, mapped-output accuracy, and
+continuity across streaming call boundaries.
 
-## Reading results
-
-Running `harness.exe` with no arguments runs the synthetic battery. Running it
-with a WAV path runs the recorded-take regression at the default -2 semitone
-shift and writes `shifted_<input>.wav`. Use `harness.exe input.wav -4 out.wav`
-when testing a different shift amount.
-
-A healthy run shows output pop counts at or below input pop counts (inputs contain
-real attack transients that the detector legitimately flags), pitch within a few
-cents, and purity above roughly +40dB on held notes. Any `POP at ...` line is a
-shifter artifact: it lists time, magnitude, local envelope, and the ratio between
-them. Use these before and after any shifter change; the splice-commit glitch,
-the integer-jump buzz, and the chord/staccato pops were all found and verified
-fixed with this harness.
+`speaker_extractor_benchmark.cs` isolates PSARC discovery, WEM extraction, and
+the external decode stages. Build it beside `GUI\Lib\Rocksmith2014PsarcLib.dll`.
+`speaker_extractor_integration_test.cs` drives the same command-line extraction
+entry point exposed by `RSMods.exe`.

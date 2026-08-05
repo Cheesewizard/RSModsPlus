@@ -67,6 +67,9 @@
     <Filter Include="Audio">
       <UniqueIdentifier>{e37e455d-2b9b-42b4-82a0-593b38e4fe23}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Audio\SongShift">
+      <UniqueIdentifier>{7248a52a-53ac-47d1-b185-3f2083e8fd6b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -189,6 +192,9 @@
     <ClCompile Include="Mods\Midi.cpp">
       <Filter>Mods</Filter>
     </ClCompile>
+    <ClCompile Include="Mods\TrueTuning.cpp">
+      <Filter>Mods</Filter>
+    </ClCompile>
     <ClCompile Include="Lib\Midi\RtMidi.cpp">
       <Filter>Main Headers\Midi</Filter>
     </ClCompile>
@@ -309,6 +315,9 @@
     <ClCompile Include="Mods\DropPedal\DropPedalInput.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Mods\DropPedal\DropPedalOverlay.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Mods\DropPedal\DropPedalState.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -317,6 +326,15 @@
     </ClCompile>
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Audio\SongShift\WwiseMusicHook.cpp">
+      <Filter>Audio\SongShift</Filter>
+    </ClCompile>
+    <ClCompile Include="Audio\SongShift\PreRenderedPitchCache.cpp">
+      <Filter>Audio\SongShift</Filter>
+    </ClCompile>
+    <ClCompile Include="Audio\SongShift\StreamingPitchShifter.cpp">
+      <Filter>Audio\SongShift</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -477,6 +495,9 @@
       <Filter>CrowdControl\Headers</Filter>
     </ClInclude>
     <ClInclude Include="Mods\Midi.hpp">
+      <Filter>Mods\Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Mods\TrueTuning.hpp">
       <Filter>Mods\Headers</Filter>
     </ClInclude>
     <ClInclude Include="Lib\Midi\RtMidi.h">
@@ -641,6 +662,12 @@
     <ClInclude Include="Mods\DropPedal\DropPedalInput.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
+    <ClInclude Include="Mods\DropPedal\DropPedalOverlay.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Mods\DropPedal\DropPedalPlayer.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
     <ClInclude Include="Mods\DropPedal\DropPedalState.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
@@ -658,6 +685,24 @@
     </ClInclude>
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp">
       <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\SongShift\WwiseMusicHook.hpp">
+      <Filter>Audio\SongShift</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\SongShift\PreRenderedPitchCache.hpp">
+      <Filter>Audio\SongShift</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\SongShift\StreamingPitchShifter.hpp">
+      <Filter>Audio\SongShift</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\ThirdParty\SignalsmithStretch\signalsmith-stretch.h">
+      <Filter>Audio\SongShift</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\ThirdParty\SignalsmithStretch\signalsmith-linear\fft.h">
+      <Filter>Audio\SongShift</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\ThirdParty\SignalsmithStretch\signalsmith-linear\stft.h">
+      <Filter>Audio\SongShift</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

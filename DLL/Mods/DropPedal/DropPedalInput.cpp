@@ -1,4 +1,5 @@
 #include "../../stdafx.h"
+#include "DropPedal.hpp"
 #include "DropPedalHooks.hpp"
 #include "DropPedalInput.hpp"
 #include "DropPedalState.hpp"
@@ -6,139 +7,111 @@
 namespace
 {
 	constexpr ULONGLONG PITCH_PUSH_DELAY_MILLISECONDS = 150;
+	std::atomic<ULONGLONG> pushDeadlineTick{ 0 };
 
-	// Defaults, replaced from [Keybinds] in RSMods.ini by LoadKeybinds.
-	int pitchDownKey = VK_OEM_COMMA;
-	int pitchUpKey = VK_OEM_PERIOD;
-	int toggleKey = VK_F7;
-	int baseTuningDownKey = VK_F9;
-	int baseTuningUpKey = VK_F10;
-
-	bool wasLowerKeyDown = false;
-	bool wasRaiseKeyDown = false;
-	bool wasToggleKeyDown = false;
-	bool wasBaseDownKeyDown = false;
-	bool wasBaseUpKeyDown = false;
-	bool isPitchPushPending = false;
-	ULONGLONG lastTargetChangeTime = 0;
-
-	void AdjustTarget(int semitoneDelta)
+	DropPedal::Player GetCommandPlayer()
 	{
-		if (!DropPedalState::AdjustTarget(semitoneDelta))
-		{
-			return;
-		}
-
-		isPitchPushPending = true;
-		lastTargetChangeTime = GetTickCount64();
+		return (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
+			? DropPedal::Player::Two
+			: DropPedal::Player::One;
 	}
 
-	void ToggleEnabled()
+	const char* GetPlayerName(DropPedal::Player player)
 	{
-		const bool isEnabled = DropPedalState::ToggleEnabled();
-
-		// Both directions push immediately: enabling applies the shift, disabling
-		// restores each shifter's authored pitch, keeping audio and note detection
-		// in agreement without waiting for a tone load.
-		if (!DropPedalHooks::IsInputShifterActive())
-		{
-			DropPedalHooks::PushPitchToLiveShifters();
-		}
-
-		if (isEnabled)
-		{
-			LOG_INFO("Drop pedal enabled, target " << DropPedalState::GetTuningName() << std::endl);
-		}
-		else
-		{
-			LOG_INFO("Drop pedal disabled, tones restored to their authored pitch" << std::endl);
-		}
+		return player == DropPedal::Player::One ? "Player 1" : "Player 2";
 	}
 
-	void AdjustBaseTuning(int semitoneDelta)
+	bool RejectUnavailablePlayerTwo(DropPedal::Player player)
 	{
-		if (!DropPedalState::AdjustBaseTuning(semitoneDelta))
+		if (player != DropPedal::Player::Two) return false;
+		if (DropPedal::IsPlayerShiftAvailable(DropPedal::Player::Two)) return false;
+
+		if (!DropPedal::IsInputShifterActive())
 		{
-			return;
+			LOG_ERROR("Drop pedal Player 2 is not addressable on this game version's Cable "
+				"engine; Player 2 follows Player 1." << std::endl);
+			return true;
 		}
 
-		LOG_INFO("Drop pedal base tuning now " << DropPedalState::GetBaseTuningName() << std::endl);
+		LOG_ERROR("Drop pedal Player 2 controls require a configured [Asio.Input.1]." << std::endl);
+		return true;
 	}
 }
 
-void DropPedalInput::LoadKeybinds()
+void DropPedalInput::AdjustTarget(int semitoneDelta)
 {
-	pitchDownKey = Settings::GetKeyBind("DropPedalPitchDownKey");
-	pitchUpKey = Settings::GetKeyBind("DropPedalPitchUpKey");
-	toggleKey = Settings::GetKeyBind("DropPedalToggleKey");
-	baseTuningDownKey = Settings::GetKeyBind("DropPedalBaseTuningDownKey");
-	baseTuningUpKey = Settings::GetKeyBind("DropPedalBaseTuningUpKey");
+	if (!DropPedalState::IsConfiguredEnabled()) return;
+
+	const DropPedal::Player player = GetCommandPlayer();
+	if (RejectUnavailablePlayerTwo(player)) return;
+
+	if (!DropPedalState::AdjustTarget(player, semitoneDelta)) return;
+
+	DropPedal::UpdateInputShifterPitch(player);
+
+	LOG_INFO("Drop pedal " << GetPlayerName(player) << " target now "
+		<< DropPedalState::GetTuningName(player) << std::endl);
+
+	// Under ASIO the processor retune above is the whole change for Player 2;
+	// under Cable every player's shift needs the debounced game-side push.
+	if (player == DropPedal::Player::Two && DropPedal::IsInputShifterActive()) return;
+
+	pushDeadlineTick.store(
+		GetTickCount64() + PITCH_PUSH_DELAY_MILLISECONDS,
+		std::memory_order_release);
 }
 
-void DropPedalInput::PollHotkeys()
+void DropPedalInput::ToggleEnabled()
 {
-	// GetAsyncKeyState reads global keyboard state, so without this guard the pedal
-	// retunes while the player is typing in another window.
-	DWORD foregroundProcessId = 0;
-	GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcessId);
-	if (foregroundProcessId != GetCurrentProcessId()) return;
+	if (!DropPedalState::IsConfiguredEnabled()) return;
 
-	const bool isToggleKeyDown = (GetAsyncKeyState(toggleKey) & 0x8000) != 0;
-
-	if (isToggleKeyDown && !wasToggleKeyDown)
+	DropPedal::PitchMode nextMode;
+	if (!DropPedalState::TryCyclePitchMode(nextMode))
 	{
-		ToggleEnabled();
+		LOG_INFO("Speaker Mode cannot be selected or disabled during gameplay" << std::endl);
+		return;
 	}
 
-	wasToggleKeyDown = isToggleKeyDown;
+	DropPedal::UpdateInputShifterPitch(DropPedal::Player::One);
+	DropPedal::UpdateInputShifterPitch(DropPedal::Player::Two);
 
-	// Disabled means disabled: the game ignores the pedal's output, so no key besides
-	// the toggle may change its state either. The latches still update below so a key
-	// held across re-enabling does not fire on the first enabled poll.
-	const bool acceptAdjustments = DropPedalState::IsEnabled();
-
-	const bool isBaseDownKeyDown = (GetAsyncKeyState(baseTuningDownKey) & 0x8000) != 0;
-	const bool isBaseUpKeyDown = (GetAsyncKeyState(baseTuningUpKey) & 0x8000) != 0;
-
-	if (acceptAdjustments && isBaseDownKeyDown && !wasBaseDownKeyDown)
+	// A mode transition takes effect immediately. Entering Drop Pedal applies its
+	// interval; entering Speaker Mode or Off restores the tone's authored pitch.
+	if (!DropPedalHooks::IsInputShifterActive())
 	{
-		AdjustBaseTuning(-1);
+		DropPedalHooks::PushPitchToLiveShifters();
 	}
 
-	if (acceptAdjustments && isBaseUpKeyDown && !wasBaseUpKeyDown)
-	{
-		AdjustBaseTuning(1);
-	}
+	LOG_INFO("Pitch mode changed to " << DropPedal::GetPitchModeName()
+		<< ", route " << DropPedal::GetPitchRouteName() << std::endl);
+}
 
-	wasBaseDownKeyDown = isBaseDownKeyDown;
-	wasBaseUpKeyDown = isBaseUpKeyDown;
+void DropPedalInput::AdjustBaseTuning(int semitoneDelta)
+{
+	if (!DropPedalState::IsConfiguredEnabled()) return;
 
-	const bool isLowerKeyDown = (GetAsyncKeyState(pitchDownKey) & 0x8000) != 0;
-	const bool isRaiseKeyDown = (GetAsyncKeyState(pitchUpKey) & 0x8000) != 0;
+	const DropPedal::Player player = GetCommandPlayer();
+	if (RejectUnavailablePlayerTwo(player)) return;
 
-	if (acceptAdjustments && isLowerKeyDown && !wasLowerKeyDown)
-	{
-		AdjustTarget(-1);
-	}
+	if (!DropPedalState::AdjustBaseTuning(player, semitoneDelta)) return;
 
-	if (acceptAdjustments && isRaiseKeyDown && !wasRaiseKeyDown)
-	{
-		AdjustTarget(1);
-	}
-
-	wasLowerKeyDown = isLowerKeyDown;
-	wasRaiseKeyDown = isRaiseKeyDown;
+	LOG_INFO("Drop pedal " << GetPlayerName(player) << " base tuning now "
+		<< DropPedalState::GetBaseTuningName(player) << std::endl);
 }
 
 void DropPedalInput::PollPendingPitchPush()
 {
-	if (!isPitchPushPending || GetTickCount64() - lastTargetChangeTime < PITCH_PUSH_DELAY_MILLISECONDS)
+	ULONGLONG deadline = pushDeadlineTick.load(std::memory_order_acquire);
+	if (deadline == 0 || GetTickCount64() < deadline)
 	{
 		return;
 	}
 
-	isPitchPushPending = false;
-	DropPedalHooks::PushPitchToLiveShifters();
+	if (!pushDeadlineTick.compare_exchange_strong(
+		deadline,
+		0,
+		std::memory_order_acq_rel,
+		std::memory_order_acquire)) return;
 
-	LOG_INFO("Drop pedal target now " << DropPedalState::GetTuningName() << std::endl);
+	DropPedalHooks::PushPitchToLiveShifters();
 }

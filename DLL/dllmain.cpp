@@ -14,7 +14,7 @@ bool wwiseLogging = false;
 #endif
 
 #ifndef _RSMODS_VERSION
-#define _RSMODS_VERSION "RSModsPlus 2.1 (based on RSMods 1.2.8.2). DEBUG: " << std::boolalpha << debug << ". Wwise Logs: " << std::boolalpha << wwiseLogging << "."
+#define _RSMODS_VERSION "RSModsPlus 3.0 (based on RSMods 1.2.8.2). DEBUG: " << std::boolalpha << debug << ". Wwise Logs: " << std::boolalpha << wwiseLogging << "."
 #endif
 
 /// <summary>
@@ -219,18 +219,6 @@ unsigned WINAPI HandleEffectQueueThread() {
 }
 
 /// <summary>
-/// Samples the drop pedal hotkeys. Separate from MainThread because its 250ms loop is
-/// longer than a key tap, so presses landed between polls and were lost.
-/// </summary>
-unsigned WINAPI DropPedalHotkeyThread() {
-	while (!GameState::GameClosing) {
-		ModManager::PollDropPedalHotkeys();
-		Sleep(15);
-	}
-	return 0;
-}
-
-/// <summary>
 /// Main Thread where we trigger the mods to startup.
 /// </summary>
 /// <returns>NULL. Loops while game is open.</returns>
@@ -272,7 +260,6 @@ void Initialize() {
 	Settings::ReadModSettings();
 
 	std::thread(MainThread).detach(); // Mod Toggle based on menus
-	std::thread(DropPedalHotkeyThread).detach(); // Drop pedal keys, faster than MainThread's loop
 	std::thread(EnumerationThread).detach(); // Force Enumeration
 	std::thread(HandleEffectQueueThread).detach(); // Twitch Effects
 	std::thread(MidiThread).detach(); // MIDI Auto Tuning / True Tuning
@@ -280,8 +267,11 @@ void Initialize() {
 }
 
 void SetupLogging() {
-	FILE* streamRead = nullptr;
-	FILE* streamConsole = nullptr;
+	bool debugLogPresent = std::ifstream("RSMods_debug.txt").good();
+	auto clearDebugLog = std::ofstream("RSMods_debug.txt");
+
+	FILE* streamRead;
+	FILE* streamConsole;
 
 	if (debug) {
 		AllocConsole();
@@ -293,9 +283,13 @@ void SetupLogging() {
 
 	// Create log file to both help with debugging release builds,
 	// and allow the user to examine their debug logs after a crash.
-	FILE* debugLog = nullptr;
-	if (freopen_s(&debugLog, "RSMods_debug.txt", "w", stderr) == 0 && debugLog != nullptr) {
-		setvbuf(stderr, nullptr, _IONBF, 0);
+	if (debugLogPresent) {
+		// Clear log so it isn't full of junk from the last launch
+		clearDebugLog.open("RSMods_debug.txt", std::ofstream::out | std::ofstream::trunc);
+		clearDebugLog.close();
+
+		FILE* debugLog;
+		freopen_s(&debugLog, "RSMods_debug.txt", "w", stderr);
 	}
 }
 

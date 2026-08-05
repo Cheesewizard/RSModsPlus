@@ -10,26 +10,28 @@ namespace
 	constexpr int MAX_BASE_TUNING_SEMITONES = 11;
 	constexpr int SEMITONES_PER_OCTAVE = 12;
 
-	// Session state is written by the hotkey thread and read by Wwise, rendering and
+	// Session state is written by WndProc key commands and read by Wwise, rendering and
 	// game-loop threads.
-	std::atomic<int> targetSemitones{ 0 };
+	std::atomic<int> targetSemitones[DropPedal::PLAYER_COUNT] = {};
 
 	// From [Drop Pedal] in RSMods.ini, read once at startup. Values follow the ini's
 	// lowercase convention (on / off / automatic).
 	bool isConfiguredEnabled = false;
 	std::string engineSetting = "automatic";
 
-	// Enabled state lives in the session rather than in the settings map, because
-	// the settings reload during boot and would wipe it. Starts on, so a session
-	// never silently begins with the pedal off; the toggle key still turns it off
-	// for the session. Read by SetParam on other threads.
-	std::atomic<bool> isEnabledSession{ true };
+	// Pitch mode lives in the session rather than in the settings map, because the
+	// settings reload during boot and would otherwise wipe a hotkey transition.
+	// Pitch processing starts Off so the player chooses the route explicitly.
+	std::atomic<DropPedal::PitchMode> pitchMode{ DropPedal::PitchMode::Off };
+	std::atomic<bool> isGameplayInProgress{ false };
+	std::atomic<bool> isSpeakerTargetSynchronized{ false };
+	std::atomic<unsigned long long> modeNoticeTick{ 0 };
 
 	// The tuning the player's guitar is physically in, as semitones from E standard.
 	// Everything the mod shows is relative to this, so a player who lives in Eb sees
 	// tunings named from Eb rather than being told to do the arithmetic themselves.
 	// Session state like the shift itself: a player in Eb sets it once per launch.
-	std::atomic<int> baseTuningSemitones{ 0 };
+	std::atomic<int> baseTuningSemitones[DropPedal::PLAYER_COUNT] = {};
 
 	const char* GetTuningNameAtIndex(int index)
 	{
@@ -40,6 +42,17 @@ namespace
 
 		return tuningNames[index];
 	}
+
+	const char* GetTuningNameForSemitones(int semitonesFromE)
+	{
+		int stepsBelowE = (-semitonesFromE) % SEMITONES_PER_OCTAVE;
+		if (stepsBelowE < 0)
+		{
+			stepsBelowE += SEMITONES_PER_OCTAVE;
+		}
+
+		return GetTuningNameAtIndex(stepsBelowE);
+	}
 }
 
 void DropPedalState::Configure(const std::string& enabledSetting, const std::string& selectedEngine)
@@ -49,11 +62,18 @@ void DropPedalState::Configure(const std::string& enabledSetting, const std::str
 	if (selectedEngine == "automatic" || selectedEngine == "asio" || selectedEngine == "cable")
 	{
 		engineSetting = selectedEngine;
+		if (!isConfiguredEnabled)
+		{
+			pitchMode.store(DropPedal::PitchMode::Off, std::memory_order_relaxed);
+			isSpeakerTargetSynchronized.store(false, std::memory_order_relaxed);
+		}
 		return;
 	}
 
 	engineSetting.clear();
 	isConfiguredEnabled = false;
+	pitchMode.store(DropPedal::PitchMode::Off, std::memory_order_relaxed);
+	isSpeakerTargetSynchronized.store(false, std::memory_order_relaxed);
 	LOG_ERROR("Drop pedal disabled because [Drop Pedal] Engine is invalid: "
 		<< selectedEngine << ". Expected automatic, asio or cable." << std::endl);
 }
@@ -75,15 +95,81 @@ bool DropPedalState::IsCableEngine()
 
 bool DropPedalState::IsEnabled()
 {
-	return isEnabledSession.load(std::memory_order_relaxed);
+	return GetPitchMode() == DropPedal::PitchMode::DropPedal;
 }
 
-bool DropPedalState::ToggleEnabled()
+bool DropPedalState::IsSpeakerModeEnabled()
 {
-	// Only the hotkey thread writes this, so a plain load-flip-store is race-free.
-	const bool next = !isEnabledSession.load(std::memory_order_relaxed);
-	isEnabledSession.store(next, std::memory_order_relaxed);
-	return next;
+	return GetPitchMode() == DropPedal::PitchMode::SpeakerMode;
+}
+
+DropPedal::PitchMode DropPedalState::GetPitchMode()
+{
+	return pitchMode.load(std::memory_order_relaxed);
+}
+
+bool DropPedalState::TryCyclePitchMode(DropPedal::PitchMode& nextMode)
+{
+	const auto currentMode = GetPitchMode();
+	if (isGameplayInProgress.load(std::memory_order_relaxed)
+		&& currentMode != DropPedal::PitchMode::Off)
+	{
+		nextMode = currentMode;
+		return false;
+	}
+
+	switch (currentMode)
+	{
+		case DropPedal::PitchMode::DropPedal:
+			nextMode = DropPedal::PitchMode::SpeakerMode;
+			break;
+		case DropPedal::PitchMode::SpeakerMode:
+			nextMode = DropPedal::PitchMode::Off;
+			break;
+		case DropPedal::PitchMode::Off:
+		default:
+			nextMode = DropPedal::PitchMode::DropPedal;
+			break;
+	}
+
+	pitchMode.store(nextMode, std::memory_order_relaxed);
+	isSpeakerTargetSynchronized.store(false, std::memory_order_relaxed);
+	modeNoticeTick.store(GetTickCount64(), std::memory_order_relaxed);
+	return true;
+}
+
+bool DropPedalState::DisableSpeakerMode()
+{
+	auto expectedMode = DropPedal::PitchMode::SpeakerMode;
+	if (!pitchMode.compare_exchange_strong(
+		expectedMode,
+		DropPedal::PitchMode::Off,
+		std::memory_order_relaxed)) return false;
+
+	modeNoticeTick.store(GetTickCount64(), std::memory_order_relaxed);
+	isSpeakerTargetSynchronized.store(false, std::memory_order_relaxed);
+	return true;
+}
+
+void DropPedalState::SetGameplayInProgress(bool isGameplay)
+{
+	isGameplayInProgress.store(isGameplay, std::memory_order_relaxed);
+}
+
+bool DropPedalState::AreSpeakerControlsLocked()
+{
+	return isGameplayInProgress.load(std::memory_order_relaxed)
+		&& IsSpeakerModeEnabled();
+}
+
+void DropPedalState::SetSpeakerTargetSynchronized(bool isSynchronized)
+{
+	isSpeakerTargetSynchronized.store(isSynchronized, std::memory_order_relaxed);
+}
+
+bool DropPedalState::IsSpeakerTargetSynchronized()
+{
+	return isSpeakerTargetSynchronized.load(std::memory_order_relaxed);
 }
 
 /// <summary>
@@ -91,66 +177,82 @@ bool DropPedalState::ToggleEnabled()
 /// presses without lag. Does nothing while the mod is off, so the pitch keys are
 /// inert until toggled on.
 /// </summary>
-bool DropPedalState::AdjustTarget(int semitoneDelta)
+bool DropPedalState::AdjustTarget(DropPedal::Player player, int semitoneDelta)
 {
-	if (!IsEnabled())
+	if (GetPitchMode() == DropPedal::PitchMode::Off
+		|| AreSpeakerControlsLocked()
+		|| (IsSpeakerModeEnabled() && IsSpeakerTargetSynchronized()))
 	{
 		return false;
 	}
 
-	const int adjusted = GetTargetSemitones() + semitoneDelta;
-	if (adjusted < MIN_TARGET_SEMITONES || adjusted > MAX_TARGET_SEMITONES)
+	const int adjusted = DropPedalState::GetTargetSemitones(player) + semitoneDelta;
+	return SetTargetSemitones(player, adjusted);
+}
+
+bool DropPedalState::SetTargetSemitones(DropPedal::Player player, int semitones)
+{
+	if (semitones < MIN_TARGET_SEMITONES || semitones > MAX_TARGET_SEMITONES)
 	{
 		return false;
 	}
 
-	targetSemitones.store(adjusted, std::memory_order_relaxed);
+	targetSemitones[DropPedal::GetPlayerIndex(player)].store(semitones, std::memory_order_relaxed);
 	return true;
 }
 
-bool DropPedalState::AdjustBaseTuning(int semitoneDelta)
+bool DropPedalState::AdjustBaseTuning(DropPedal::Player player, int semitoneDelta)
 {
-	const int adjusted = baseTuningSemitones.load(std::memory_order_relaxed) + semitoneDelta;
+	if (GetPitchMode() == DropPedal::PitchMode::Off || AreSpeakerControlsLocked())
+	{
+		return false;
+	}
+
+	const size_t playerIndex = DropPedal::GetPlayerIndex(player);
+	const int adjusted = baseTuningSemitones[playerIndex].load(std::memory_order_relaxed) + semitoneDelta;
 	if (adjusted < MIN_BASE_TUNING_SEMITONES || adjusted > MAX_BASE_TUNING_SEMITONES)
 	{
 		return false;
 	}
 
-	baseTuningSemitones.store(adjusted, std::memory_order_relaxed);
+	baseTuningSemitones[playerIndex].store(adjusted, std::memory_order_relaxed);
 	return true;
 }
 
-int DropPedalState::GetTargetSemitones()
+int DropPedalState::GetTargetSemitones(DropPedal::Player player)
 {
-	return targetSemitones.load(std::memory_order_relaxed);
+	return targetSemitones[DropPedal::GetPlayerIndex(player)].load(std::memory_order_relaxed);
 }
 
-float DropPedalState::GetTargetCents()
+int DropPedalState::GetBaseTuningSemitones(DropPedal::Player player)
 {
-	return (float)GetTargetSemitones() * CENTS_PER_SEMITONE;
+	return baseTuningSemitones[DropPedal::GetPlayerIndex(player)].load(std::memory_order_relaxed);
+}
+
+float DropPedalState::GetTargetCents(DropPedal::Player player)
+{
+	return static_cast<float>(DropPedalState::GetTargetSemitones(player)) * CENTS_PER_SEMITONE;
 }
 
 /// <summary>
 /// Name the tuning the player's guitar is heard in: their physical tuning moved by
 /// the current shift, in the form a tuner would show it.
 /// </summary>
-std::string DropPedalState::GetTuningName()
+std::string DropPedalState::GetTuningName(DropPedal::Player player)
 {
-	const int semitones = GetTargetSemitones();
-
-	const int baseSemitones = baseTuningSemitones.load(std::memory_order_relaxed);
-	int stepsBelowE = (-(baseSemitones + semitones)) % SEMITONES_PER_OCTAVE;
-	if (stepsBelowE < 0)
-	{
-		stepsBelowE += SEMITONES_PER_OCTAVE;
-	}
+	const int semitones = DropPedalState::GetTargetSemitones(player);
+	const int baseSemitones = DropPedalState::GetBaseTuningSemitones(player);
+	const char* baseName = GetTuningNameForSemitones(baseSemitones);
 
 	std::ostringstream name;
-	name << GetTuningNameAtIndex(stepsBelowE) << " standard";
-
-	if (semitones != 0)
+	if (semitones == 0)
 	{
-		name << " (" << (semitones > 0 ? "+" : "") << semitones << ")";
+		name << baseName;
+	}
+	else
+	{
+		name << baseName << " -> " << GetTuningNameForSemitones(baseSemitones + semitones)
+			<< " (" << (semitones > 0 ? "+" : "") << semitones << ")";
 	}
 
 	return name.str();
@@ -159,25 +261,28 @@ std::string DropPedalState::GetTuningName()
 /// <summary>
 /// Name the tuning the player's guitar is physically in, with no shift applied.
 /// </summary>
-std::string DropPedalState::GetBaseTuningName()
+std::string DropPedalState::GetBaseTuningName(DropPedal::Player player)
 {
-	const int baseSemitones = baseTuningSemitones.load(std::memory_order_relaxed);
-	int stepsBelowE = (-baseSemitones) % SEMITONES_PER_OCTAVE;
-	if (stepsBelowE < 0)
-	{
-		stepsBelowE += SEMITONES_PER_OCTAVE;
-	}
-
-	return std::string(GetTuningNameAtIndex(stepsBelowE)) + " standard";
+	return GetAbsoluteTuningName(DropPedalState::GetBaseTuningSemitones(player)) + " standard";
 }
 
-int DropPedalState::GetShiftDirection()
+std::string DropPedalState::GetAbsoluteTuningName(int semitonesFromE)
 {
-	const int semitones = GetTargetSemitones();
+	return GetTuningNameForSemitones(semitonesFromE);
+}
+
+int DropPedalState::GetShiftDirection(DropPedal::Player player)
+{
+	const int semitones = DropPedalState::GetTargetSemitones(player);
 	if (semitones < 0)
 	{
 		return -1;
 	}
 
 	return semitones > 0 ? 1 : 0;
+}
+
+unsigned long long DropPedalState::GetModeNoticeTick()
+{
+	return modeNoticeTick.load(std::memory_order_relaxed);
 }

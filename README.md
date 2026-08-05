@@ -4,48 +4,88 @@
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="180">
 </a>
 
-A fork of [RSMods](https://github.com/Lovrom8/RSMods) that adds a drop pedal to
-Rocksmith 2014.
+A fork of [RSMods](https://github.com/Lovrom8/RSMods) that adds pitch routing
+to Rocksmith 2014: a **Drop Pedal** that shifts the guitar to the song, and a
+**Speaker Mode** that shifts the song to the guitar.
 
-RSModsPlus pitch-shifts the guitar signal before Rocksmith scores it. With the
-ASIO engine, the shift is applied to the raw input before Rocksmith receives it.
-With the Cable engine, the shift is applied through an in-game MultiPitch tone
-and the tuning reference used by note detection is adjusted to match. Range is
--24 to +24 semitones.
+`F7` cycles between the two modes and Off. Range is -24 to +24 semitones.
+Supported game versions: Rocksmith 2014 Remastered (September 2022 update),
+fully playable including multiplayer, and the Learn & Play (December 2024)
+update, supported with partial multiplayer functionality currently.
 
-![The drop pedal set to Eb standard](docs/images/overlay-eb-standard.png)
+---
 
-To play an Eb song on a guitar in E standard, set the pedal to -1. Works for
-guitar and for emulated bass.
+## Drop Pedal
 
-Multiplayer is limited: the ASIO engine shifts only player 1's
-`[Asio.Input.0]` channel, so player 2 remains unshifted. The Cable engine is
-single-player only because its tuning-reference redirect is global and makes a
-second player's notes score against the wrong tuning.
+Shifts the **guitar** so a song in any uniform tuning can be played without
+touching a tuning peg. To play an Eb song on an E-standard guitar, set the
+pedal to -1. Audio and note detection move together, so the tuner and scoring
+follow the shift.
 
-**Setup and usage:** with RS_ASIO and an ASIO interface, follow the
-**[ASIO Drop Pedal guide](docs/asio-drop-pedal.md)**. With a Real Tone cable and
-no RS_ASIO, follow the
-**[Cable Drop Pedal guide](docs/cable-drop-pedal.md)**.
+![Downward shift applied](docs/images/overlay-drop-tuning-down.png)
+
+Two engines realise the shift, selected at launch and announced on screen:
+
+- **ASIO engine**: with [RS_ASIO](https://github.com/mdias/rs_asio), the raw
+  input is shifted before Rocksmith receives it. No tone setup: every tone,
+  stock or custom, receives the shifted signal.
+- **Cable engine**: without RS_ASIO, such as a plain Real Tone cable, the
+  shift is applied through a MultiPitch pedal in the tone and the game's
+  tuning reference is transposed to match.
+
+Multiplayer is supported by both engines: each player has an independent
+target and base tuning (`Control` + the pedal keys addresses Player 2), with
+`[Asio.Input.0]` as Player 1 and `[Asio.Input.1]` as Player 2 under ASIO.
+
+![Independent targets in multiplayer](docs/images/overlay-multiplayer-tunings.png)
+
+**Setup and usage:** the **[ASIO Drop Pedal guide](docs/asio-drop-pedal.md)**
+for RS_ASIO interfaces, or the
+**[Cable Drop Pedal guide](docs/cable-drop-pedal.md)** for Real Tone cable
+setups.
+
+---
+
+## Speaker Mode
+
+Shifts the **song** instead of the guitar. Intended for playing through
+speakers, where the acoustic guitar is audible in the room: the music comes to
+your tuning, and the guitar stays physically untouched.
+
+- Requires no RS_ASIO, no audio interface, and no MultiPitch tone; a Real
+  Tone cable alone is enough.
+- Gameplay audio carries **zero added latency**: the full song is
+  pitch-rendered ahead of playback into temporary audio and read by exact song
+  position.
+- The chart tuning is read automatically at the pre-song tuner, and **any
+  chart shape works**: uniform, drop and open tunings. For non-uniform
+  shapes, the tuner guides the physical retune string by string (a Drop Db
+  chart with an E-standard guitar asks for one string down to D, then raises
+  the song a semitone: `Speaker: Eb Drop Db -> Drop D (+1)`).
+- Prepared audio is session-temporary and deleted on close; nothing persists
+  between launches.
+
+**Setup and usage:** the **[Speaker Mode guide](docs/speaker-mode.md)**.
 
 ---
 
 ## What this fork adds
 
-- A drop pedal, -24 to +24 semitones. With RS_ASIO, the shift is applied before
-  Rocksmith processes the input, so stock tones, custom tones, the tuner and
-  note detection all receive the shifted signal.
-- A fallback engine, the Cable Drop Pedal, for setups without RS_ASIO, such as
-  a Real Tone cable with nothing else in the chain.
-- A base tuning setting, so the pedal offsets from whatever your guitar is
+- The Drop Pedal, -24 to +24 semitones, with ASIO and Cable engines and full
+  multiplayer support: independent per-player targets, base tunings and
+  overlay rows.
+- Speaker Mode, temporary full-song pitch rendering with zero added gameplay
+  latency and automatic chart synchronization for any tuning shape.
+- A base tuning setting, so shifts are named from whatever the guitar is
   physically in rather than from E.
-- An on-screen readout of the current state, named relative to the base tuning.
+- An on-screen readout of the current mode, route and per-player state, plus
+  settings and rebindable keys in the settings app (Tuning tab).
 
-Everything else comes from RSMods 1.2.8.2 and behaves as upstream documents it:
-extended range mode, custom song list titles, toggle loft, force re-enumeration,
-GuitarSpeak, and the rest. See
-[upstream's README](https://github.com/Lovrom8/RSMods#readme) for that list and
-for the full `RSMods.ini` reference.
+Everything else comes from RSMods 1.2.8.2 and behaves as upstream documents
+it: extended range mode, custom song list titles, toggle loft, force
+re-enumeration, GuitarSpeak, and the rest. See
+[upstream's README](https://github.com/Lovrom8/RSMods#readme) for that list
+and for the full `RSMods.ini` reference.
 
 ---
 
@@ -60,81 +100,51 @@ first.** Copy it somewhere outside the game folder, or rename it. That copy is
 how you get back to plain RSMods later.
 
 Then download `xinput1_3.dll` from the
-[latest release](https://github.com/Cheesewizard/RSModsPlus/releases) and put it
-in your Rocksmith 2014 folder, next to `Rocksmith2014.exe`, overwriting the file
-that is already there.
+[latest release](https://github.com/Cheesewizard/RSModsPlus/releases) and put
+it in your Rocksmith 2014 folder, next to `Rocksmith2014.exe`, overwriting the
+file that is already there.
 
-Your `RSMods` folder, the settings app and `RSMods.ini` are untouched and carry
-on working, since this is the same 1.2.8.2 codebase with the drop pedal added.
+Your `RSMods` folder, the settings app and `RSMods.ini` are untouched and
+carry on working. Speaker Mode additionally requires the matching `RSMods`
+folder from the same release, because its helper and decode tools prepare the
+temporary full-song audio.
 
 To uninstall, put your backup back. If you had no RSMods before this, deleting
 the file is enough.
 
-Requirements are upstream's: Steam Rocksmith 2014 Remastered on Windows, and the
-MS Visual C++ 2015-2019 redistributable. The ASIO engine additionally needs
-[RS_ASIO](https://github.com/mdias/rs_asio) and an ASIO audio interface, which
-is the setup most interface players already have.
-
-With RS_ASIO there is no in-game setup at all: the pedal works on every tone.
-Without it, the Cable Drop Pedal needs a tone containing a MultiPitch pedal,
-covered in [its guide](docs/cable-drop-pedal.md).
+Requirements are upstream's: Steam Rocksmith 2014 Remastered on Windows, and
+the MS Visual C++ 2015-2019 redistributable. The ASIO engine additionally
+needs [RS_ASIO](https://github.com/mdias/rs_asio) and an ASIO audio interface;
+the Cable engine and Speaker Mode need neither.
 
 ---
 
 ## How it works
 
-RSModsPlus selects one drop pedal engine at launch. Both engines use the same
-hotkeys and overlay readout. The active engine is shown on screen beside the
-pedal readout and written to the debug log using the format
-`Drop pedal engine: ...`.
+**ASIO Drop Pedal.** With RS_ASIO installed, the mod hooks the ASIO driver
+below RS_ASIO and gives each configured Rocksmith input its own persistent
+pitch shifter, so note detection, the tuner and tone processing all consume
+the same shifted signal. The shifter uses period-synchronous splicing.
+Additional processing latency is bounded by one pitch period of the note being
+played, roughly 1-13 ms, on top of the interface's normal round trip. Input
+formats `Float32`, `Int32`, `Int24` and `Int16` and buffer sizes from 1 to
+4096 frames are accepted, so common interfaces work out of the box.
 
-**ASIO Drop Pedal.** With RS_ASIO installed, the mod hooks the ASIO driver below
-RS_ASIO and shifts the raw guitar input before Rocksmith receives it. The
-shifter uses period-synchronous splicing, so note detection, the tuner and tone
-processing all consume the same shifted input signal. No tuning-reference
-redirect is required, and stock tones work as well as custom tones.
+**Cable Drop Pedal.** Without RS_ASIO, detection reads the raw signal upstream
+of the tone chain, so the mod shifts inside the game instead: it retunes a
+MultiPitch pedal in the player's tone and transposes the reference frequency
+the game derives its expected pitch from. In multiplayer, each tone's pitch
+pedal and each player's detection reference are attributed to their owning
+player. This engine needs the MultiPitch pedal in the tone and covers uniform
+tunings.
 
-Additional processing latency is bounded by one detected pitch period of the
-note being played, roughly 1-13 ms depending on pitch. This is added to the
-normal RS_ASIO round trip, about 15 ms on a typical interface at a 256-frame
-buffer.
-
-For guitar-to-bass with ASIO, the lowest-latency path is to tell Rocksmith you
-are playing bass and include the octave in the pedal value, such as `-12` for
-E-standard bass from an E-standard guitar. That shifts before the game hears the
-signal and avoids Rocksmith's emulated-bass post-processing path.
-
-In multiplayer, only player 1 is shifted. Player 2's `[Asio.Input.1]` channel
-plays unshifted, with detection unaffected.
-
-**Cable Drop Pedal.** Without RS_ASIO, detection reads the raw signal
-upstream of the tone chain, so the mod shifts inside the game instead: it
-retunes a MultiPitch pedal in the player's tone and redirects the reference
-frequency the game derives its expected pitch from. This is the same value CDLC
-charters set as an arrangement's tuning pitch. Shift the audio down a semitone,
-move the expectation up one, and the two agree. This engine needs the
-MultiPitch pedal in the tone and covers uniform tunings only.
-
-This engine is single-player only. The tuning-reference redirect is global, so
-with a shift applied a second player's notes are scored against the wrong
-expectation.
-
-Reverse-engineering notes, including everything that was ruled out along the
-way, are in [docs/wwise-plugin-internals.md](docs/wwise-plugin-internals.md).
-
----
-
-## Roadmap
-
-V2 shifts the guitar input below RS_ASIO, so every tone receives the shifted
-signal without tone setup. The Cable Drop Pedal stays as the fallback for chains
-without RS_ASIO.
-
-Next:
-
-- Shifting the song's tuning instead of the guitar, so playing without
-  headphones works: the guitar's acoustic sound and the game would be in the
-  same tuning instead of a semitone apart in the room.
+**Speaker Mode.** The mod hooks the game's Wwise music decoding. Menu previews
+are shifted live; for gameplay, the selected song is decoded and pitch-rendered
+in full into a temporary delete-on-close file, which playback reads by exact
+song position, with zero added latency and no change to the song's duration. The
+chart tuning is synchronized automatically, the game's tuning reference is
+adjusted so the chart is playable in the physical tuning, and any preparation
+failure turns the mode off rather than play at a wrong pitch.
 
 ---
 
@@ -142,9 +152,13 @@ Next:
 
 | Document | Covers |
 |---|---|
-| [docs/asio-drop-pedal.md](docs/asio-drop-pedal.md) | ASIO Drop Pedal: requirements, controls, playing, bass, troubleshooting |
-| [docs/cable-drop-pedal.md](docs/cable-drop-pedal.md) | Cable Drop Pedal: tone setup, constraints, bass, troubleshooting |
-| [docs/wwise-plugin-internals.md](docs/wwise-plugin-internals.md) | How the Wwise pitch shifter is reached, and what was ruled out |
+| [docs/asio-drop-pedal.md](docs/asio-drop-pedal.md) | ASIO Drop Pedal: requirements, controls, multiplayer, bass, troubleshooting |
+| [docs/cable-drop-pedal.md](docs/cable-drop-pedal.md) | Cable Drop Pedal: tone setup, constraints, multiplayer, troubleshooting |
+| [docs/speaker-mode.md](docs/speaker-mode.md) | Speaker Mode: setup, choosing tunings, chart shapes, troubleshooting |
+| [docs/drop-pedal-multiplayer-design.md](docs/drop-pedal-multiplayer-design.md) | ASIO multiplayer architecture, lifecycle and performance data |
+| [docs/drop-pedal-multiplayer-findings.md](docs/drop-pedal-multiplayer-findings.md) | Technical findings behind multiplayer pitch processing |
+| [docs/speaker-mode-engine.md](docs/speaker-mode-engine.md) | Speaker Mode engine internals |
+| [docs/speaker-mode-investigation.md](docs/speaker-mode-investigation.md) | The investigation that led to the Speaker Mode design |
 
 ---
 
@@ -161,9 +175,9 @@ RSModsPlus is free. If it helped you and you want to support the work, you can
 
 ## Issues
 
-Drop pedal problems go
+Drop Pedal and Speaker Mode problems go
 [on this repository](https://github.com/Cheesewizard/RSModsPlus/issues), not on
-upstream's tracker. This feature isn't theirs to support.
+upstream's tracker. These features aren't theirs to support.
 
 A bug in an inherited RSMods feature that reproduces on a stock upstream build
 belongs [upstream](https://github.com/Lovrom8/RSMods/issues).
@@ -177,12 +191,15 @@ copying it. Attaching it makes a bug report far easier to act on.
 ## Credits
 
 RSMods is the work of **Lovrom8** and **ffio1**, with contributions from
-ZagatoZee, Kokolihapihvi and L0fka. This fork is the drop pedal on top of their
-project. If you find the rest of the mod suite useful, thank them.
+ZagatoZee, Kokolihapihvi and L0fka. This fork is the pitch routing on top of
+their project. If you find the rest of the mod suite useful, thank them.
 
-[RS_ASIO](https://github.com/mdias/rs_asio) by **mdias** is what makes the ASIO
-engine possible; the ASIO Drop Pedal lives underneath it.
+[RS_ASIO](https://github.com/mdias/rs_asio) by **mdias** is what makes the
+ASIO engine possible; the ASIO Drop Pedal lives underneath it.
+
+[Signalsmith Stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch)
+by **Signalsmith Audio** performs Speaker Mode's pitch shifting.
 
 The reference-frequency technique the Cable Drop Pedal relies on is the same
-one CDLC charters have long used to move a chart's expected notes by setting an
-arrangement's tuning pitch.
+one CDLC charters have long used to move a chart's expected notes by setting
+an arrangement's tuning pitch.

@@ -92,6 +92,20 @@ namespace Audio
 		candidateVotes = 0;
 	}
 
+	void DelayLinePitchShifter::StoreInputSample(float sample)
+	{
+		ring[writePosition] = sample;
+
+		decimationAccumulator += sample;
+		if (++decimationPhase == DECIMATION)
+		{
+			decimated[decimatedPosition] = decimationAccumulator * (1.0f / DECIMATION);
+			decimatedPosition = (decimatedPosition + 1) & (DECIMATED_RING - 1);
+			decimationAccumulator = 0.0f;
+			decimationPhase = 0;
+		}
+	}
+
 	float DelayLinePitchShifter::ReadTap(double delay) const
 	{
 		// Clamped, not asserted: extreme pitch ratios can walk a fading tap past either
@@ -294,7 +308,8 @@ namespace Audio
 	{
 		// AMDF: for each candidate lag, average |x[n] - x[n-lag]| over the window. The
 		// true period gives the deepest valley. Runs on the audio thread, so it is fixed
-		// work over preallocated buffers, roughly 29k adds per call.
+		// work over preallocated buffers: 329 lags by 256 samples, or roughly 84k
+		// absolute-difference accumulations per call.
 		float best[MAX_LAG + 1];
 
 		const uint32_t newest = decimatedPosition;	// one past the last written sample
@@ -406,23 +421,30 @@ namespace Audio
 		if (ring.empty()) return;
 
 		const float pitchRatio = ratio.load(std::memory_order_relaxed);
+		if (pitchRatio == 1.0f)
+		{
+			for (uint32_t i = 0; i < frameCount; ++i)
+			{
+				StoreInputSample(samples[i]);
+				if (++writePosition == RING_SAMPLES) writePosition = 0;
+			}
+
+			readDelay = 130.0;
+			fadeFromDelay = readDelay;
+			fadeRemaining = 0;
+			spliceHoldoff = 0;
+			samplesSinceDetect = DETECT_INTERVAL_SAMPLES - 1;
+			candidateVotes = 0;
+			return;
+		}
+
 		const double drift = 1.0 - (double)pitchRatio;
 
 		for (uint32_t i = 0; i < frameCount; ++i)
 		{
 			const float incoming = samples[i];
 
-			ring[writePosition] = incoming;
-
-			// Feed the detector a 4x-decimated copy.
-			decimationAccumulator += incoming;
-			if (++decimationPhase == DECIMATION)
-			{
-				decimated[decimatedPosition] = decimationAccumulator * (1.0f / DECIMATION);
-				decimatedPosition = (decimatedPosition + 1) & (DECIMATED_RING - 1);
-				decimationAccumulator = 0.0f;
-				decimationPhase = 0;
-			}
+			StoreInputSample(incoming);
 
 			if (++samplesSinceDetect >= DETECT_INTERVAL_SAMPLES)
 			{
@@ -556,6 +578,8 @@ namespace Audio
 
 	uint32_t DelayLinePitchShifter::GetLatencyFrames() const
 	{
+		if (ratio.load(std::memory_order_relaxed) == 1.0f) return 0;
+
 		// The tap trails by up to one detected period, so real latency varies with the
 		// note, like a hardware drop pedal. Report a mid-range fixed figure.
 		return 480;

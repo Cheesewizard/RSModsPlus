@@ -15,8 +15,6 @@ namespace GameState {
 	std::string CurrentSelectedUser();
 	std::string GetSongKey();
 
-	inline std::string lastSongKey = "";
-
 	std::string GetCurrentMenu(bool GameNotLoaded = false);
 	void ToggleCB(bool enabled);
 
