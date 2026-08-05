@@ -34,6 +34,14 @@ namespace
 	constexpr float INT16_NORMALIZER = 1.0f / 32768.0f;
 	constexpr float INT16_SCALE = 32768.0f;
 
+	// The song is never mapped whole: a 32-bit process cannot afford 100+ MiB
+	// contiguous reservations, and fragmentation would eventually fail them.
+	// Rendering and playback each hold one sliding window instead.
+	constexpr uint64_t MAP_WINDOW_BYTES = 16ULL * 1024ULL * 1024ULL;
+	constexpr uint64_t MAP_ALIGNMENT = 64ULL * 1024ULL; // MapViewOfFile offset granularity.
+	static_assert(MAP_WINDOW_BYTES % MAP_ALIGNMENT == 0,
+		"map windows must start on an allocation-granularity boundary");
+
 	constexpr LONG CACHE_PREPARING = 0;
 	constexpr LONG CACHE_READY = 1;
 	constexpr LONG CACHE_FAILED = 2;
@@ -187,6 +195,69 @@ namespace
 		return static_cast<int16_t>(std::lround(clipped));
 	}
 
+	void* MapWindow(HANDLE mappingHandle, uint64_t startByte, uint64_t sizeBytes, bool writable)
+	{
+		ULARGE_INTEGER offset;
+		offset.QuadPart = startByte;
+		return MapViewOfFile(
+			mappingHandle,
+			writable ? FILE_MAP_WRITE : FILE_MAP_READ,
+			offset.HighPart,
+			offset.LowPart,
+			static_cast<SIZE_T>(sizeBytes));
+	}
+
+	// Sequential writer over the cache's file mapping. The render only moves
+	// forward, so a single sliding window is remapped as it advances.
+	class WindowedCacheWriter final
+	{
+	public:
+		WindowedCacheWriter(HANDLE mappingHandle, uint64_t totalFrames)
+			: mappingHandle(mappingHandle),
+			totalBytes(totalFrames * CACHE_CHANNELS * sizeof(int16_t))
+		{
+		}
+
+		~WindowedCacheWriter()
+		{
+			if (view != nullptr) UnmapViewOfFile(view);
+		}
+
+		// A pointer valid for frameCount frames starting at frameIndex, or null.
+		int16_t* Acquire(uint64_t frameIndex, uint32_t frameCount)
+		{
+			const uint64_t startByte = frameIndex * CACHE_CHANNELS * sizeof(int16_t);
+			const uint64_t endByte = startByte
+				+ static_cast<uint64_t>(frameCount) * CACHE_CHANNELS * sizeof(int16_t);
+			if (endByte > totalBytes) return nullptr;
+
+			if (view == nullptr || startByte < windowStartByte
+				|| endByte > windowStartByte + windowBytes)
+			{
+				if (view != nullptr)
+				{
+					UnmapViewOfFile(view);
+					view = nullptr;
+				}
+				windowStartByte = startByte & ~(MAP_ALIGNMENT - 1);
+				windowBytes = std::min(MAP_WINDOW_BYTES, totalBytes - windowStartByte);
+				if (endByte > windowStartByte + windowBytes) return nullptr;
+				view = MapWindow(mappingHandle, windowStartByte, windowBytes, true);
+				if (view == nullptr) return nullptr;
+			}
+
+			return reinterpret_cast<int16_t*>(
+				static_cast<char*>(view) + (startByte - windowStartByte));
+		}
+
+	private:
+		HANDLE mappingHandle;
+		uint64_t totalBytes;
+		void* view = nullptr;
+		uint64_t windowStartByte = 0;
+		uint64_t windowBytes = 0;
+	};
+
 	WaveSource OpenWaveSource(const std::filesystem::path& path)
 	{
 		WaveSource source;
@@ -252,7 +323,7 @@ namespace
 	}
 
 	void WriteProcessedFrames(
-		int16_t* destination,
+		WindowedCacheWriter& writer,
 		const std::vector<float>& left,
 		const std::vector<float>& right,
 		uint32_t frameCount,
@@ -268,11 +339,16 @@ namespace
 			totalFrames - framesWritten));
 		if (writeCount == 0) return;
 
+		int16_t* destination = writer.Acquire(framesWritten, writeCount);
+		if (destination == nullptr)
+		{
+			throw std::runtime_error("could not map the Speaker Mode render window");
+		}
+
 		for (uint32_t frame = 0; frame < writeCount; frame++)
 		{
-			const auto destinationFrame = framesWritten + frame;
-			destination[destinationFrame * 2] = FloatToInt16(left[skip + frame]);
-			destination[destinationFrame * 2 + 1] = FloatToInt16(right[skip + frame]);
+			destination[frame * 2] = FloatToInt16(left[skip + frame]);
+			destination[frame * 2 + 1] = FloatToInt16(right[skip + frame]);
 		}
 		framesWritten += writeCount;
 	}
@@ -280,13 +356,14 @@ namespace
 	void RenderPitchCache(
 		const std::filesystem::path& wavePath,
 		int semitones,
-		int16_t* renderedSamples,
+		HANDLE mappingHandle,
 		volatile LONG64* contiguousFramesReady,
 		volatile LONG64* openingReadyTick,
 		const volatile LONG* cancellationRequested)
 	{
 		ThrowIfCancelled(cancellationRequested);
 		auto source = OpenWaveSource(wavePath);
+		WindowedCacheWriter writer(mappingHandle, source.totalFrames);
 		signalsmith::stretch::SignalsmithStretch<float> stretch(0);
 		stretch.presetDefault(CACHE_CHANNELS, static_cast<float>(source.sampleRate));
 		stretch.setTransposeSemitones(static_cast<float>(semitones));
@@ -346,7 +423,7 @@ namespace
 			float* outputChannels[] = { outputLeft.data(), outputRight.data() };
 			stretch.process(inputChannels, frameCount, outputChannels, frameCount);
 			WriteProcessedFrames(
-				renderedSamples,
+				writer,
 				outputLeft,
 				outputRight,
 				frameCount,
@@ -374,7 +451,7 @@ namespace
 		float* flushChannels[] = { outputLeft.data(), outputRight.data() };
 		stretch.flush(flushChannels, flushFrames, 1.0f);
 		WriteProcessedFrames(
-			renderedSamples,
+			writer,
 			outputLeft,
 			outputRight,
 			flushFrames,
@@ -488,7 +565,7 @@ namespace Audio::SongShift
 
 		~PreparedPitchCache()
 		{
-			if (mappedView != nullptr) UnmapViewOfFile(mappedView);
+			if (readWindowView != nullptr) UnmapViewOfFile(readWindowView);
 			if (mappingHandle != nullptr) CloseHandle(mappingHandle);
 			if (fileHandle != INVALID_HANDLE_VALUE) CloseHandle(fileHandle);
 			if (completedEvent != nullptr) CloseHandle(completedEvent);
@@ -509,8 +586,13 @@ namespace Audio::SongShift
 		HANDLE completedEvent = nullptr;
 		HANDLE fileHandle = INVALID_HANDLE_VALUE;
 		HANDLE mappingHandle = nullptr;
-		void* mappedView = nullptr;
-		int16_t* mappedData = nullptr;
+
+		// Playback's sliding view of the mapped song. Guarded by readWindowLock;
+		// eviction never runs concurrently because readers hold activeReaders.
+		SRWLOCK readWindowLock = SRWLOCK_INIT;
+		void* readWindowView = nullptr;
+		uint64_t readWindowStartByte = 0;
+		uint64_t readWindowBytes = 0;
 		__declspec(align(8)) volatile LONG64 retiredTick = 0;
 		__declspec(align(8)) volatile LONG64 requestTick = 0;
 		__declspec(align(8)) volatile LONG64 extractionStartedTick = 0;
@@ -602,23 +684,8 @@ namespace
 			throw std::runtime_error("could not map temporary Speaker Mode audio");
 		}
 
-		auto* mappedView = MapViewOfFile(
-			mappingHandle,
-			FILE_MAP_READ | FILE_MAP_WRITE,
-			0,
-			0,
-			0);
-		if (mappedView == nullptr)
-		{
-			CloseHandle(mappingHandle);
-			CloseHandle(fileHandle);
-			throw std::runtime_error("could not view temporary Speaker Mode audio");
-		}
-
 		cache.fileHandle = fileHandle;
 		cache.mappingHandle = mappingHandle;
-		cache.mappedView = mappedView;
-		cache.mappedData = static_cast<int16_t*>(mappedView);
 		cache.sampleRate = sampleRate;
 		cache.totalFrames = totalFrames;
 		InterlockedExchange64(&cache.storageBytes, static_cast<LONG64>(fileSize));
@@ -639,17 +706,18 @@ namespace
 		InterlockedExchange64(&cache.contiguousFramesReady, 0);
 		MemoryBarrier();
 
-		auto* mappedView = cache.mappedView;
+		auto* readWindowView = cache.readWindowView;
 		const HANDLE mappingHandle = cache.mappingHandle;
 		const HANDLE fileHandle = cache.fileHandle;
-		cache.mappedData = nullptr;
-		cache.mappedView = nullptr;
+		cache.readWindowView = nullptr;
+		cache.readWindowStartByte = 0;
+		cache.readWindowBytes = 0;
 		cache.mappingHandle = nullptr;
 		cache.fileHandle = INVALID_HANDLE_VALUE;
 		InterlockedExchange64(&cache.storageBytes, 0);
 		InterlockedExchange(&cache.state, CACHE_EVICTED);
 
-		if (mappedView != nullptr) UnmapViewOfFile(mappedView);
+		if (readWindowView != nullptr) UnmapViewOfFile(readWindowView);
 		if (mappingHandle != nullptr) CloseHandle(mappingHandle);
 		if (fileHandle != INVALID_HANDLE_VALUE) CloseHandle(fileHandle);
 		return true;
@@ -700,7 +768,7 @@ namespace
 			RenderPitchCache(
 				wavePath,
 				cache->semitones,
-				cache->mappedData,
+				cache->mappingHandle,
 				&cache->contiguousFramesReady,
 				&cache->openingReadyTick,
 				&cache->cancellationRequested);
@@ -1132,12 +1200,53 @@ bool Audio::SongShift::PreRenderedPitchCache::CopyFrames(
 		return true;
 	}
 
-	const int16_t* source = cache->mappedData;
-	if (source == nullptr) return false;
+	// Serve the copy through the cache's sliding read window, remapping when the
+	// request leaves it. Sequential playback remaps every ~95 seconds of audio;
+	// a seek remaps once. The active-reader guard keeps eviction from closing the
+	// mapping underneath this.
+	auto* mutableCache = const_cast<PreparedPitchCache*>(cache);
+	const uint64_t startByte = static_cast<uint64_t>(positionStart)
+		* CACHE_CHANNELS * sizeof(int16_t);
+	const uint64_t endByte = frameEnd * CACHE_CHANNELS * sizeof(int16_t);
 
-	memcpy(
-		destination,
-		source + static_cast<uint64_t>(positionStart) * CACHE_CHANNELS,
-		static_cast<size_t>(frameCount) * CACHE_CHANNELS * sizeof(int16_t));
-	return true;
+	AcquireSRWLockExclusive(&mutableCache->readWindowLock);
+	if (mutableCache->readWindowView == nullptr
+		|| startByte < mutableCache->readWindowStartByte
+		|| endByte > mutableCache->readWindowStartByte + mutableCache->readWindowBytes)
+	{
+		if (mutableCache->readWindowView != nullptr)
+		{
+			UnmapViewOfFile(mutableCache->readWindowView);
+			mutableCache->readWindowView = nullptr;
+			mutableCache->readWindowStartByte = 0;
+			mutableCache->readWindowBytes = 0;
+		}
+
+		const uint64_t totalBytes = cache->totalFrames * CACHE_CHANNELS * sizeof(int16_t);
+		const uint64_t windowStart = startByte & ~(MAP_ALIGNMENT - 1);
+		const uint64_t windowBytes = std::min(MAP_WINDOW_BYTES, totalBytes - windowStart);
+		if (endByte <= windowStart + windowBytes && cache->mappingHandle != nullptr)
+		{
+			auto* view = MapWindow(cache->mappingHandle, windowStart, windowBytes, false);
+			if (view != nullptr)
+			{
+				mutableCache->readWindowView = view;
+				mutableCache->readWindowStartByte = windowStart;
+				mutableCache->readWindowBytes = windowBytes;
+			}
+		}
+	}
+
+	bool copied = false;
+	if (mutableCache->readWindowView != nullptr)
+	{
+		memcpy(
+			destination,
+			static_cast<const char*>(mutableCache->readWindowView)
+				+ (startByte - mutableCache->readWindowStartByte),
+			static_cast<size_t>(frameCount) * CACHE_CHANNELS * sizeof(int16_t));
+		copied = true;
+	}
+	ReleaseSRWLockExclusive(&mutableCache->readWindowLock);
+	return copied;
 }
