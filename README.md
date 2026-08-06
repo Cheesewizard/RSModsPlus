@@ -13,6 +13,8 @@ Supported game versions: Rocksmith 2014 Remastered (September 2022 update),
 fully playable including multiplayer, and the Learn & Play (December 2024)
 update, supported with partial multiplayer functionality currently.
 
+https://github.com/user-attachments/assets/0f22e6ac-f9f4-41e7-9ea2-37256eb73056
+
 ---
 
 ## Drop Pedal
