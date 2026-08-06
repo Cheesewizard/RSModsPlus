@@ -16,14 +16,17 @@ nothing, one of the steps below was skipped.
 
 ## 2. Enable the pedal
 
-The feature is off by default. In `RSMods.ini` next to `Rocksmith2014.exe`:
+The feature is off by default. In `RSMods.ini` next to `Rocksmith2014.exe`,
+add both lines exactly as shown (add the `Engine` line too if your file does
+not have one):
 
 ```ini
 [Drop Pedal]
 EnableDropPedal = on
+Engine = automatic
 ```
 
-Leave `Engine = automatic`. With RS_ASIO installed the pedal promotes itself
+With RS_ASIO installed the pedal promotes itself
 to the ASIO engine; without it the Cable engine is used. See the
 [ASIO](asio-drop-pedal.md) and [Cable](cable-drop-pedal.md) guides for the
 input-side setup each engine needs.
