@@ -15,6 +15,22 @@ update, supported with partial multiplayer functionality currently.
 
 https://github.com/user-attachments/assets/c8951c94-e760-4830-a8f5-6b383dbb05da
 
+## Quick start
+
+The pedal is **off by default**. Enable it once in `RSMods.ini` next to
+`Rocksmith2014.exe`:
+
+```ini
+[Drop Pedal]
+EnableDropPedal = on
+Engine = automatic
+```
+
+Then in game press `F7` to select a mode; every session starts at
+`Pitch: Off`. If the keys do nothing or the mod seems missing, the
+[Quick Start guide](docs/quick-start.md) walks through the install gotchas
+and how to read the log.
+
 ---
 
 ## Drop Pedal
