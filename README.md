@@ -13,7 +13,7 @@ Supported game versions: Rocksmith 2014 Remastered (September 2022 update),
 fully playable including multiplayer, and the Learn & Play (December 2024)
 update, supported with partial multiplayer functionality currently.
 
-Uploading RSModsPlus-demo.mp4…
+https://github.com/user-attachments/assets/c8951c94-e760-4830-a8f5-6b383dbb05da
 
 ---
 
