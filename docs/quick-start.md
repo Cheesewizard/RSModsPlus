@@ -1,9 +1,7 @@
 # Quick Start
 
-Two defaults catch most new users: the pedal feature is **off** until it is
-enabled in `RSMods.ini`, and every game session starts with the pitch mode
-**Off** until `F7` selects one. If you installed the mod and the pedal keys do
-nothing, one of the steps below was skipped.
+The Drop Pedal is off after installation. Follow these steps to enable and use
+it.
 
 ## 1. Install the files
 
@@ -16,9 +14,7 @@ nothing, one of the steps below was skipped.
 
 ## 2. Enable the pedal
 
-The feature is off by default. In `RSMods.ini` next to `Rocksmith2014.exe`,
-add both lines exactly as shown (add the `Engine` line too if your file does
-not have one):
+Make sure this is in `RSMods.ini` next to `Rocksmith2014.exe`:
 
 ```ini
 [Drop Pedal]
@@ -26,33 +22,34 @@ EnableDropPedal = on
 Engine = automatic
 ```
 
-With RS_ASIO installed the pedal promotes itself
-to the ASIO engine; without it the Cable engine is used. See the
-[ASIO](asio-drop-pedal.md) and [Cable](cable-drop-pedal.md) guides for the
-input-side setup each engine needs.
+With RS_ASIO installed, `automatic` uses the ASIO engine. Without RS_ASIO, it
+uses the Cable engine.
 
-ASIO routing is automatic. If the debug log says the shifter selected the
-wrong hardware input, pin its zero-based channel in the same section:
+## 3. Use Drop Pedal in game
 
-```ini
-Player1AsioChannel = 1
-Player2AsioChannel = -1
-```
+Every launch starts at `Pitch: Off`, regardless of the previous session.
 
-Leave both values at `-1` unless the automatic route is wrong.
+1. With Rocksmith focused, press `F7` once. The top-left readout changes to
+   `Drop: E`.
+2. Press `,` to move the guitar down one semitone or `.` to move it up one
+   semitone.
+3. Match the target note in the readout to the song's tuning. For an Eb song
+   with a guitar physically tuned to E standard, press `,` once. The readout
+   becomes `Drop: E -> Eb (-1)`.
 
-## 3. Select a mode in game
+The mod shifts the guitar sound and Rocksmith's note detection together.
 
-The session always starts at `Pitch: Off`. With Rocksmith focused:
+Controls:
 
 | Action | Player 1 | Player 2 |
 |---|---|---|
-| Cycle Drop Pedal / Speaker Mode / Off | `F7` | `F7` |
-| Pitch target down / up | `,` / `.` | `Control+,` / `Control+.` |
-| Physical guitar tuning | `F9` | `Control+F9` |
+| Cycle Drop Pedal / Speaker Mode / Off for everyone | `F7` | - |
+| Move the target down / up | `,` / `.` | `Control+,` / `Control+.` |
+| Tell the mod the guitar's physical tuning | `F9` | `Control+F9` |
 
-The overlay in the top-left corner shows the current mode. The pitch keys do
-nothing while the mode is Off or the game window is not focused.
+If the guitar is not in E standard, press `F9` until its tuning appears first
+in the readout. Hold `Control` with the tuning keys to change Player 2. Press
+`F7` again for Speaker Mode, which shifts the song instead of the guitar.
 
 ## Confirm it loaded
 
@@ -61,7 +58,7 @@ After starting the game, the top of the log tells the whole story:
 
 | Log line | Meaning |
 |---|---|
-| `RSModsPlus 3.0 ...` | The mod DLL loaded. The `(based on RSMods 1.2.8.2)` part is the upstream base version, not the installed version. |
+| `RSModsPlus 3.1 ...` | The mod DLL loaded. The `(based on RSMods 1.2.8.2)` part is the upstream base version, not the installed version. |
 | `Drop pedal engine: ASIO Drop Pedal` or `Cable Drop Pedal` | The pedal is enabled and which engine owns it. |
 | No `Drop pedal engine` line at all | `EnableDropPedal` is still `off` in `RSMods.ini`. |
 | Old version number at the top | The old DLL is still loading: the replacement went to the wrong folder, the copy was blocked, or antivirus interfered. |

@@ -1,7 +1,7 @@
 # RSModsPlus
 
 <a href="https://buymeacoffee.com/cheesewizard">
-  <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20beer&amp;emoji=%F0%9F%8D%BA&amp;slug=cheesewizard&amp;button_colour=FFDD00&amp;font_colour=000000&amp;font_family=Lato&amp;outline_colour=000000&amp;coffee_colour=ffffff" alt="Buy me a beer" width="180">
+  <img src="docs/images/buy-me-a-beer-alt-amplifier-v2.png" alt="Buy me a beer" width="240">
 </a>
 
 A fork of [RSMods](https://github.com/Lovrom8/RSMods) that adds pitch routing
@@ -17,36 +17,33 @@ https://github.com/user-attachments/assets/c8951c94-e760-4830-a8f5-6b383dbb05da
 
 ## Quick start
 
-The pedal is **off by default**. Enable it once in `RSMods.ini` next to
-`Rocksmith2014.exe`:
+1. Make sure this is in `RSMods.ini` next to `Rocksmith2014.exe`:
 
-```ini
-[Drop Pedal]
-EnableDropPedal = on
-Engine = automatic
-```
+   ```ini
+   [Drop Pedal]
+   EnableDropPedal = on
+   Engine = automatic
+   ```
 
-Then use these controls while Rocksmith is focused:
+2. Start Rocksmith and press `F7` once. The top-left readout changes from
+   `Pitch: Off` to `Drop: E`.
+
+3. Match the readout to the song. Press `,` to move down one semitone or `.`
+   to move up one semitone. For example, with a guitar in E standard and an Eb
+   song, press `,` once until the readout says `Drop: E -> Eb (-1)`.
+
+Other controls:
 
 | Action | Player 1 | Player 2 |
 |---|---|---|
-| Cycle Drop Pedal / Speaker Mode / Off | `F7` | `F7` |
-| Pitch target down / up | `,` / `.` | `Control+,` / `Control+.` |
-| Physical guitar tuning | `F9` | `Control+F9` |
+| Cycle Drop Pedal / Speaker Mode / Off for everyone | `F7` | - |
+| Move the target down / up | `,` / `.` | `Control+,` / `Control+.` |
+| Tell the mod the guitar's physical tuning | `F9` | `Control+F9` |
 
-Every session starts at `Pitch: Off`, so press `F7` before using the pitch
-keys. ASIO routing is automatic. If the launch log says the shifter selected
-the wrong hardware input, pin its zero-based ASIO channel in the same section:
-
-```ini
-Player1AsioChannel = 1
-Player2AsioChannel = -1
-```
-
-Leave both values at `-1` unless the automatic route is wrong. If the keys do
-nothing or the mod seems missing, the
+Settings are read when the game starts, and every session starts at
+`Pitch: Off`. If the keys do nothing or the mod seems missing, the
 [Quick Start guide](docs/quick-start.md) walks through the install gotchas
-and how to read the log.
+and the extra controls.
 
 ---
 
@@ -214,7 +211,7 @@ RSModsPlus is free. If it helped you and you want to support the work, you can
 [buy me a beer](https://buymeacoffee.com/cheesewizard):
 
 <a href="https://buymeacoffee.com/cheesewizard">
-  <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20beer&amp;emoji=%F0%9F%8D%BA&amp;slug=cheesewizard&amp;button_colour=FFDD00&amp;font_colour=000000&amp;font_family=Lato&amp;outline_colour=000000&amp;coffee_colour=ffffff" alt="Buy me a beer" width="180">
+  <img src="docs/images/buy-me-a-beer-alt-amplifier-v2.png" alt="Buy me a beer" width="240">
 </a>
 
 ---
