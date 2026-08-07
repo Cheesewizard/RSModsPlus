@@ -162,10 +162,19 @@ the Cable engine and Speaker Mode need neither.
 below RS_ASIO and gives each configured Rocksmith input its own persistent
 pitch shifter, so note detection, the tuner and tone processing all consume
 the same shifted signal. The shifter uses period-synchronous splicing.
-Additional processing latency is bounded by one pitch period of the note being
-played, roughly 1-13 ms, on top of the interface's normal round trip. Input
-formats `Float32`, `Int32`, `Int24` and `Int16` and buffer sizes from 1 to
-4096 frames are accepted, so common interfaces work out of the box.
+At 48 kHz with 128-frame callbacks, the production-shifter harness measures
+roughly 6-20 ms of observable content delay depending on the note and shift.
+This is added to the interface's normal round-trip latency. For comparison,
+DigiTech does not publish a latency specification for its well-regarded Drop
+pedal, but independent waveform tests report roughly
+[12-17 ms](https://www.thefretboard.co.uk/discussion/107282/digitech-drop-tune/p2),
+including a detailed burst test measuring about
+[16 ms](https://www.reddit.com/r/audioengineering/comments/r3mecr/analyzing_the_digitech_drop_pedal/). The methods are not identical,
+but they put this mod's measured delay in the same broad range as dedicated
+hardware. End-to-end feel also depends on the interface's round trip, so a low
+ASIO buffer remains important. Input formats `Float32`, `Int32`, `Int24` and
+`Int16` and buffer sizes from 1 to 4096 frames are accepted, so common
+interfaces work out of the box.
 
 **Cable Drop Pedal.** Without RS_ASIO, detection reads the raw signal upstream
 of the tone chain, so the mod shifts inside the game instead: it retunes a
