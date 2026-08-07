@@ -1,32 +1,26 @@
 # ASIO Drop Pedal
 
-Shifts the guitar's pitch before the game receives it, so songs in any tuning
-can be played without touching a tuning peg. Range is -24 to +24 semitones. To
-play an Eb song on an E-standard instrument, set that player to -1. It supports
-guitar, emulated bass, physical bass and two-player arrangements.
+Shifts the guitar's pitch before the game receives it, so songs in another
+tuning can be played without touching a tuning peg. For example, to play an Eb
+song with a guitar in E standard, select Drop Pedal and press `,` once. The
+readout becomes `Drop: E -> Eb (-1)`.
+
+It supports guitar, emulated bass, physical bass and two-player arrangements.
 
 This guide covers the ASIO engine. For setups without RS_ASIO, see the
 [Cable Drop Pedal guide](cable-drop-pedal.md).
 
-## Requirements
+## Before you start
 
-- [RS_ASIO](https://github.com/mdias/rs_asio) with an ASIO audio interface.
-- Input formats `ASIOSTFloat32LSB`, `ASIOSTInt32LSB`, `ASIOSTInt24LSB` and
-  `ASIOSTInt16LSB` are supported.
-- No in-game tone setup. The pedal operates on every tone, stock or custom.
-- `[Asio.Input.0]` is Player 1 and `[Asio.Input.1]` is Player 2. Both inputs
-  must use the same ASIO driver; they may use different channels.
-- If only `[Asio.Input.1]` names a driver, that section is the single active
-  player and Player 1's shifter follows its channel. This covers interfaces
-  where the guitar sits on the second input, such as a Scarlett with a
-  microphone in input 1 and the guitar in input 2.
-- The resolved routing is written to the debug log at launch, including which
-  ini section each player's channel came from. To pin a channel manually, set
-  `Player1AsioChannel` or `Player2AsioChannel` under `[Drop Pedal]` in
-  `RSMods.ini`. `-1` (the default) means automatic.
-- A silent second hardware jack is still ready. Availability is determined by
-  the configured ASIO route, buffer and format, not by whether a guitar is
-  producing a signal.
+- Set up [RS_ASIO](https://github.com/mdias/rs_asio) first and confirm that the
+  unshifted guitar works in Rocksmith.
+- Enable the feature using the [Quick Start](quick-start.md). There is no
+  special in-game tone to install; the pedal works with stock and custom
+  tones.
+- Input selection is automatic. A single-player setup needs no extra channel
+  settings in `RSMods.ini`.
+- For two players, configure both Rocksmith inputs in `RS_ASIO.ini` as normal.
+  Both inputs must use the same audio interface.
 
 The engine is selected at launch and announced beside the pedal readout, then
 fades after a few seconds:
@@ -144,11 +138,19 @@ Changing Player 1 from Lead to Emulated Bass or Physical Bass keeps using
 | Symptom | Cause |
 |---|---|
 | Engine notice reads `Cable Drop Pedal` | A configured ASIO route did not initialize. Check the driver and channel under both `[Asio.Input.0]` and `[Asio.Input.1]` |
-| Pedal engages but the guitar's pitch never changes | The shifter is processing the wrong ASIO channel, typically a microphone. Check the `shifter will process ASIO channel` lines in the debug log, then set `Player1AsioChannel` under `[Drop Pedal]` in `RSMods.ini` to the guitar's channel |
+| Pedal engages but the guitar's pitch never changes | The automatic route may have selected another input, such as a microphone. Follow [Wrong ASIO input selected](#wrong-asio-input-selected) below |
 | Game reports "no audio output device" on launch | Another program changed the interface's sample rate (DAWs and amp sims do this silently). Set it back to 48000 Hz in the interface's control panel and relaunch |
 | Tuner reads a different tuning than the guitar is in | The shift, working as designed |
 | Pitch keys do nothing | Pitch processing is Off (`F7`), Speaker Mode gameplay has locked the controls, or Rocksmith is not the focused window |
 | Player 2 controls report that Input 1 is unavailable | `[Asio.Input.1]` is not configured; signal level is not part of this check |
+
+### Wrong ASIO input selected
+
+Check the `shifter will process ASIO channel` line in `RSMods_debug.txt`. If it
+does not match the guitar's `Channel =` value in `RS_ASIO.ini`, copy that number
+to `Player1AsioChannel` under `[Drop Pedal]` in `RSMods.ini`, then restart the
+game. Use `Player2AsioChannel` for Player 2. Removing the setting returns to
+automatic routing.
 
 Logging is opt-in: enable it from the settings app before reproducing the
 issue, or the log will not exist. The log is `RSMods_debug.txt`, next to
