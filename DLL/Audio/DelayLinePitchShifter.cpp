@@ -54,7 +54,7 @@ namespace Audio
 		constexpr float DEFER_QUALITY = 0.5f;
 		constexpr float EXTEND_QUALITY = 0.25f;
 		constexpr int HOLDOFF_SAMPLES = 64;
-		constexpr double DEFER_MARGIN = 512.0;
+		constexpr double MAX_DEFERRED_SAMPLES = 512.0;
 
 		float SemitonesToRatio(int semitones)
 		{
@@ -491,9 +491,9 @@ namespace Audio
 				// Down-shifts drift behind; up-shifts catch the write head. A down-shift
 				// jump is capped so the widened search can never carry the tap past the
 				// write head and pin it on the ReadTap clamp. Splices with no acceptable
-				// alignment are deferred (holdoff throttles the re-check so the search
-				// does not run every sample) until content improves or headroom runs out,
-				// then commit with a longer fade so the tear smears instead of popping.
+				// alignment are deferred briefly (holdoff throttles the re-check so the
+				// search does not run every sample). The bounded deferral prevents a poor
+				// match from turning most of the ring into player-visible latency.
 				if (spliceHoldoff > 0)
 				{
 					--spliceHoldoff;
@@ -501,7 +501,7 @@ namespace Audio
 				else if (readDelay > upperBound)
 				{
 					const AlignedJump aligned = AlignJump(readDelay - nominalJump, nominalJump, readDelay - 8.0);
-					const bool canDefer = readDelay < RING_SAMPLES - DEFER_MARGIN;
+					const bool canDefer = readDelay < upperBound + MAX_DEFERRED_SAMPLES;
 
 					if (canDefer && aligned.quality > DEFER_QUALITY)
 					{

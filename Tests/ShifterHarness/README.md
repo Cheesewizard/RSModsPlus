@@ -10,9 +10,22 @@ From a Developer Command Prompt in `Tests\ShifterHarness`:
 
 ```bat
 build.bat
+drop_pedal_latency.exe
 speaker_latency.exe
 speaker_pipeline_benchmark.exe song.wav
 ```
+
+`drop_pedal_latency.exe` measures the observable content delay added by the
+production ASIO Drop Pedal shifter. It aligns deterministic input and output
+amplitude-envelope transitions across three marker sequences for guitar and
+bass notes at 48 kHz with 128-frame callbacks, then reports median,
+95th-percentile and maximum delay. The zero-semitone cases validate the
+measurement baseline. It also reports average, 95th-percentile,
+99th-percentile, and maximum wall-clock processing time per callback against
+the 2.67 ms real-time deadline. Maximum wall-clock time includes operating
+system scheduling interruptions. When launched by double-clicking, it waits
+for Enter before closing and also writes `drop_pedal_latency_results.txt`
+beside the executable.
 
 `speaker_latency.exe` compares algorithmic latency, processing cost, and pitch
 accuracy at the game's observed 48 kHz sample rate and 128-frame decoder

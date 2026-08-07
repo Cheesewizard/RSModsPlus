@@ -29,8 +29,8 @@ namespace Audio
 	// but the detector only sizes and centers each jump. The committed splice offset comes
 	// from a phase-alignment search on the ring content itself (AlignJump), the Eventide
 	// H949 de-glitcher approach, so splices do not inherit detector error. When no good
-	// alignment exists the splice is deferred while ring headroom lasts and crossfades
-	// lengthen, so chords and transients degrade to softness rather than pops.
+	// alignment exists the splice is deferred for a bounded interval and crossfades
+	// lengthen, so chords and transients degrade to softness without unbounded delay.
 	class DelayLinePitchShifter final : public IInputProcessor
 	{
 	public:

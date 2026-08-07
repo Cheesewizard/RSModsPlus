@@ -1,7 +1,7 @@
 # RSModsPlus
 
 <a href="https://buymeacoffee.com/cheesewizard">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="180">
+  <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20beer&amp;emoji=%F0%9F%8D%BA&amp;slug=cheesewizard&amp;button_colour=FFDD00&amp;font_colour=000000&amp;font_family=Lato&amp;outline_colour=000000&amp;coffee_colour=ffffff" alt="Buy me a beer" width="180">
 </a>
 
 A fork of [RSMods](https://github.com/Lovrom8/RSMods) that adds pitch routing
@@ -26,8 +26,25 @@ EnableDropPedal = on
 Engine = automatic
 ```
 
-Then in game press `F7` to select a mode; every session starts at
-`Pitch: Off`. If the keys do nothing or the mod seems missing, the
+Then use these controls while Rocksmith is focused:
+
+| Action | Player 1 | Player 2 |
+|---|---|---|
+| Cycle Drop Pedal / Speaker Mode / Off | `F7` | `F7` |
+| Pitch target down / up | `,` / `.` | `Control+,` / `Control+.` |
+| Physical guitar tuning | `F9` | `Control+F9` |
+
+Every session starts at `Pitch: Off`, so press `F7` before using the pitch
+keys. ASIO routing is automatic. If the launch log says the shifter selected
+the wrong hardware input, pin its zero-based ASIO channel in the same section:
+
+```ini
+Player1AsioChannel = 1
+Player2AsioChannel = -1
+```
+
+Leave both values at `-1` unless the automatic route is wrong. If the keys do
+nothing or the mod seems missing, the
 [Quick Start guide](docs/quick-start.md) walks through the install gotchas
 and how to read the log.
 
@@ -185,10 +202,10 @@ failure turns the mode off rather than play at a wrong pitch.
 ## Support
 
 RSModsPlus is free. If it helped you and you want to support the work, you can
-[buy me a coffee](https://buymeacoffee.com/cheesewizard):
+[buy me a beer](https://buymeacoffee.com/cheesewizard):
 
 <a href="https://buymeacoffee.com/cheesewizard">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="180">
+  <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20beer&amp;emoji=%F0%9F%8D%BA&amp;slug=cheesewizard&amp;button_colour=FFDD00&amp;font_colour=000000&amp;font_family=Lato&amp;outline_colour=000000&amp;coffee_colour=ffffff" alt="Buy me a beer" width="180">
 </a>
 
 ---
