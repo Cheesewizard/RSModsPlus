@@ -1,8 +1,9 @@
-# Speaker Mode harnesses
+# Audio shifter harnesses
 
-Standalone tools for measuring the Signalsmith processing paths used by Speaker
-Mode. They are diagnostics and benchmarks; they do not establish in-game hook,
-routing, prepared-audio alignment, seek, or end-of-song correctness.
+Standalone tools for measuring the production Drop Pedal shifter and the
+Signalsmith processing paths used by Speaker Mode. They are diagnostics and
+benchmarks; they do not establish in-game hook, routing, prepared-audio
+alignment, seek, or end-of-song correctness.
 
 ## Build and run
 
@@ -11,6 +12,7 @@ From a Developer Command Prompt in `Tests\ShifterHarness`:
 ```bat
 build.bat
 drop_pedal_latency.exe
+harness.exe 128
 speaker_latency.exe
 speaker_pipeline_benchmark.exe song.wav
 ```
@@ -26,6 +28,12 @@ the 2.67 ms real-time deadline. Maximum wall-clock time includes operating
 system scheduling interruptions. When launched by double-clicking, it waits
 for Enter before closing and also writes `drop_pedal_latency_results.txt`
 beside the executable.
+
+`harness.exe 128` runs the production Drop Pedal shifter with 128-frame ASIO
+callbacks over held notes, plucks, weak signals, string changes, bends, double
+stops, staccato notes, and live retuning. It reports introduced pop events,
+pitch error, and harmonic purity. WAV mode accepts a recorded mono DI take:
+`harness.exe input.wav semitones output.wav 128`.
 
 `speaker_latency.exe` compares algorithmic latency, processing cost, and pitch
 accuracy at the game's observed 48 kHz sample rate and 128-frame decoder
