@@ -21,7 +21,13 @@ if not defined VSPATH (
 call "%VSPATH%\VC\Auxiliary\Build\vcvarsall.bat" x64 >nul
 
 :build
-set FLAGS=/nologo /O2 /EHsc /std:c++17 /D_CRT_SECURE_NO_WARNINGS /I ..\..\DLL\Audio
+set FLAGS=/nologo /O2 /EHsc /std:c++17 /D_CRT_SECURE_NO_WARNINGS /I . /I ..\..\DLL\Audio
+
+cl %FLAGS% drop_pedal_latency.cpp ..\..\DLL\Audio\DelayLinePitchShifter.cpp /Fe:drop_pedal_latency.exe
+if %errorlevel% neq 0 exit /b 1
+
+cl %FLAGS% harness.cpp ..\..\DLL\Audio\DelayLinePitchShifter.cpp /Fe:harness.exe
+if %errorlevel% neq 0 exit /b 1
 
 cl %FLAGS% speaker_latency.cpp /Fe:speaker_latency.exe
 if %errorlevel% neq 0 exit /b 1
@@ -29,4 +35,4 @@ if %errorlevel% neq 0 exit /b 1
 cl %FLAGS% speaker_pipeline_benchmark.cpp /Fe:speaker_pipeline_benchmark.exe
 if %errorlevel% neq 0 exit /b 1
 
-echo Built speaker_latency.exe and speaker_pipeline_benchmark.exe
+echo Built drop_pedal_latency.exe, harness.exe, speaker_latency.exe and speaker_pipeline_benchmark.exe

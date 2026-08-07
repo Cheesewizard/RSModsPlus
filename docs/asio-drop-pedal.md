@@ -50,9 +50,22 @@ modify Rocksmith's tuning reference. Arrangements authored for A != 440 retain
 that reference, so each instrument must be true-tuned as Rocksmith normally
 requires before applying the semitone shift.
 
-The shifter trails the input by up to one pitch period of the note being
-played (roughly 1-13 ms depending on the string), on top of the interface's
-normal round trip (~15 ms at 256 frames / 48 kHz on a typical interface).
+At 48 kHz with 128-frame callbacks, the production-shifter harness measures
+roughly 6-20 ms of observable content delay depending on the note and shift.
+This is added to the interface's normal round trip, which also depends on its
+driver and buffer configuration.
+
+For context, DigiTech's published Drop pedal specifications list its 44.1 kHz
+sample rate but do not give a latency figure. Independent waveform measurements
+report approximately
+[12-17 ms](https://www.thefretboard.co.uk/discussion/107282/digitech-drop-tune/p2),
+and a separate documented burst test measured roughly
+[16 ms](https://www.reddit.com/r/audioengineering/comments/r3mecr/analyzing_the_digitech_drop_pedal/). Those tests are not method-for-method
+identical to this project's envelope-transition harness, but they show that
+the mod's 6-20 ms result is in the same broad range as a respected dedicated
+drop-tuning pedal. End-to-end feel also depends on the interface's round trip,
+so use the lowest stable ASIO buffer size for the most responsive setup.
+
 At a zero-semitone target or while disabled, a shifter bypasses detection and
 splicing and returns that input unshifted, adding no pitch-shifter delay. The
 lightweight format conversion and history update still run so engaging the

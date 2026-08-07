@@ -31,15 +31,25 @@ to the ASIO engine; without it the Cable engine is used. See the
 [ASIO](asio-drop-pedal.md) and [Cable](cable-drop-pedal.md) guides for the
 input-side setup each engine needs.
 
+ASIO routing is automatic. If the debug log says the shifter selected the
+wrong hardware input, pin its zero-based channel in the same section:
+
+```ini
+Player1AsioChannel = 1
+Player2AsioChannel = -1
+```
+
+Leave both values at `-1` unless the automatic route is wrong.
+
 ## 3. Select a mode in game
 
 The session always starts at `Pitch: Off`. With Rocksmith focused:
 
-| Action | Key |
-|---|---|
-| Cycle Off -> Drop Pedal -> Speaker Mode | `F7` |
-| Pitch target down / up | `,` / `.` |
-| Physical guitar tuning (Speaker Mode) | `F9` |
+| Action | Player 1 | Player 2 |
+|---|---|---|
+| Cycle Drop Pedal / Speaker Mode / Off | `F7` | `F7` |
+| Pitch target down / up | `,` / `.` | `Control+,` / `Control+.` |
+| Physical guitar tuning | `F9` | `Control+F9` |
 
 The overlay in the top-left corner shows the current mode. The pitch keys do
 nothing while the mode is Off or the game window is not focused.
