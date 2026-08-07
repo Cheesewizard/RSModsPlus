@@ -82,7 +82,10 @@ namespace RSMods
                 "[Drop Pedal]", new Dictionary<string, string>
                 {
                     { ReadSettings.DropPedalEnabledIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalEnabledIdentifier, "off") },
-                    { ReadSettings.DropPedalEngineIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalEngineIdentifier, "automatic") }
+                    { ReadSettings.DropPedalEngineIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalEngineIdentifier, "automatic") },
+                    // No UI control; hand-edited values are preserved across saves. -1 = automatic.
+                    { ReadSettings.DropPedalPlayer1AsioChannelIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalPlayer1AsioChannelIdentifier, "-1") },
+                    { ReadSettings.DropPedalPlayer2AsioChannelIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalPlayer2AsioChannelIdentifier, "-1") }
                 }
             );
             saveSettingsOrDefaults.Add(

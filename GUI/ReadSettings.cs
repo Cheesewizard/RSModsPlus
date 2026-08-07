@@ -33,7 +33,7 @@ namespace RSMods
                              MidiAutoTuning, MidiAutoTuningDevice, MidiInDevice, MidiAutoTuningWhen, MidiSoftwareSemitoneTriggers, MidiSoftwareSemitoneSettings, MidiSoftwareTrueTuningTriggers, MidiSoftwareTrueTuningSettings, ChordsMode,
                              RiffRepeaterAboveHundred, ShowCurrentNoteOnScreen, OnScreenFont, OnScreenFontSize, ProfileToLoad, ShowSongTimerWhen, ShowSelectedVolumeWhen, SecondaryMonitor, RemoveSongPreviews, OverrideInputVolumeEnabled, OverrideInputVolumeDevice,
                              AllowAudioInBackground, BypassTwoRTCMessageBox, LinearRiffRepeater, UseAlternativeOutputSampleRate, AllowLooping, AllowRewind, FixOculusCrash, FixBrokenTones, UseCustomNSPTimer, DisplayCurrentAccuracy, PreventMidSongPause, RemoveFingerprints,
-                             DropPedalEnabled, DropPedalEngine,
+                             DropPedalEnabled, DropPedalEngine, DropPedalPlayer1AsioChannel, DropPedalPlayer2AsioChannel,
 
 
                              // String Colors
@@ -175,6 +175,8 @@ namespace RSMods
             PreventMidSongPauseIdentifier               = "PreventMidSongPause = ",
             DropPedalEnabledIdentifier                   = "EnableDropPedal = ",
             DropPedalEngineIdentifier                    = "Engine = ",
+            DropPedalPlayer1AsioChannelIdentifier        = "Player1AsioChannel = ",
+            DropPedalPlayer2AsioChannelIdentifier        = "Player2AsioChannel = ",
 
                 // String Colors (Normal {N} & Colorblind {CB})
                 // Normal String Colors
@@ -306,6 +308,10 @@ namespace RSMods
                 return "off";
             if (identifierToGrab == DropPedalEngineIdentifier)
                 return "automatic";
+            if (identifierToGrab == DropPedalPlayer1AsioChannelIdentifier)
+                return "-1";
+            if (identifierToGrab == DropPedalPlayer2AsioChannelIdentifier)
+                return "-1";
 
             return string.Empty;
         }
@@ -553,6 +559,10 @@ namespace RSMods
                     return FillSettingVariable(DropPedalEnabledIdentifier, SettingType.ON_OFF, currentLine, out DropPedalEnabled);
                 if (IdentifierIsFound(currentLine, DropPedalEngineIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalEngineIdentifier, SettingType.STRING, currentLine, out DropPedalEngine);
+                if (IdentifierIsFound(currentLine, DropPedalPlayer1AsioChannelIdentifier, identifierToGrab))
+                    return FillSettingVariable(DropPedalPlayer1AsioChannelIdentifier, SettingType.STRING, currentLine, out DropPedalPlayer1AsioChannel);
+                if (IdentifierIsFound(currentLine, DropPedalPlayer2AsioChannelIdentifier, identifierToGrab))
+                    return FillSettingVariable(DropPedalPlayer2AsioChannelIdentifier, SettingType.STRING, currentLine, out DropPedalPlayer2AsioChannel);
 
                 #endregion
                 #region String Colors

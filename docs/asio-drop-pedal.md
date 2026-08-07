@@ -16,6 +16,14 @@ This guide covers the ASIO engine. For setups without RS_ASIO, see the
 - No in-game tone setup. The pedal operates on every tone, stock or custom.
 - `[Asio.Input.0]` is Player 1 and `[Asio.Input.1]` is Player 2. Both inputs
   must use the same ASIO driver; they may use different channels.
+- If only `[Asio.Input.1]` names a driver, that section is the single active
+  player and Player 1's shifter follows its channel. This covers interfaces
+  where the guitar sits on the second input, such as a Scarlett with a
+  microphone in input 1 and the guitar in input 2.
+- The resolved routing is written to the debug log at launch, including which
+  ini section each player's channel came from. To pin a channel manually, set
+  `Player1AsioChannel` or `Player2AsioChannel` under `[Drop Pedal]` in
+  `RSMods.ini`. `-1` (the default) means automatic.
 - A silent second hardware jack is still ready. Availability is determined by
   the configured ASIO route, buffer and format, not by whether a guitar is
   producing a signal.
@@ -123,6 +131,7 @@ Changing Player 1 from Lead to Emulated Bass or Physical Bass keeps using
 | Symptom | Cause |
 |---|---|
 | Engine notice reads `Cable Drop Pedal` | A configured ASIO route did not initialize. Check the driver and channel under both `[Asio.Input.0]` and `[Asio.Input.1]` |
+| Pedal engages but the guitar's pitch never changes | The shifter is processing the wrong ASIO channel, typically a microphone. Check the `shifter will process ASIO channel` lines in the debug log, then set `Player1AsioChannel` under `[Drop Pedal]` in `RSMods.ini` to the guitar's channel |
 | Game reports "no audio output device" on launch | Another program changed the interface's sample rate (DAWs and amp sims do this silently). Set it back to 48000 Hz in the interface's control panel and relaunch |
 | Tuner reads a different tuning than the guitar is in | The shift, working as designed |
 | Pitch keys do nothing | Pitch processing is Off (`F7`), Speaker Mode gameplay has locked the controls, or Rocksmith is not the focused window |
