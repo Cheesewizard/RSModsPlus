@@ -23,6 +23,25 @@ channel from that driver. Configurations that assign the two inputs to
 different drivers are rejected because one hook instance cannot safely manage
 buffers owned by two independent driver modules.
 
+The table above describes the fully explicit case. Route 0 resolves in order:
+
+1. `[Asio.Input.0]` when it names a driver.
+2. Otherwise `[Asio.Input.1]` when it names a driver. RS_ASIO serves the
+   single active player from whichever input section is configured, so this is
+   the common single-player case where the guitar sits on the interface's
+   second input. Assuming channel 0 here would select a channel RS_ASIO never
+   requested a buffer for, so no route could ever become ready and processing
+   would stay disabled.
+3. Otherwise the `[Asio.Output]` driver with channel 0, as a last-resort guess
+   for configurations that name the interface only once.
+
+Resolutions from steps 2 and 3 are logged as inferred, with a warning that
+names the channel being processed and the section it came from.
+`Player1AsioChannel` and `Player2AsioChannel` under `[Drop Pedal]` in
+`RSMods.ini` pin a route's channel explicitly and silence the inference
+warning; `-1` (the default) keeps automatic resolution. An override applies
+only to a route that has a driver; it cannot conjure a second route.
+
 Input readiness is based on the configured route, negotiated buffer and sample
 format. Signal amplitude is not part of readiness; a connected interface input
 remains valid when no instrument is plugged into it.

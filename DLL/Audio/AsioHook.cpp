@@ -69,7 +69,11 @@ namespace Audio::AsioHook
 			std::string driverName;
 			std::array<std::string, INPUT_ROUTE_COUNT> inputDriverNames;
 			std::array<int, INPUT_ROUTE_COUNT> inputChannels{ 0, -1 };
-			std::array<bool, INPUT_ROUTE_COUNT> inputConfigured{ true, false };
+			std::array<bool, INPUT_ROUTE_COUNT> inputConfigured{ false, false };
+			// Where each route's channel came from, for the log. Routes marked inferred
+			// were not read from their own [Asio.Input.N] section and deserve a warning.
+			std::array<std::string, INPUT_ROUTE_COUNT> inputSources;
+			std::array<bool, INPUT_ROUTE_COUNT> inputInferred{ false, false };
 		};
 
 		typedef HRESULT(STDMETHODCALLTYPE* DllGetClassObject_t)(REFCLSID, REFIID, LPVOID*);
@@ -100,6 +104,7 @@ namespace Audio::AsioHook
 
 		std::atomic<IInputProcessor*> activeProcessors[INPUT_ROUTE_COUNT] = {};
 		std::array<int, INPUT_ROUTE_COUNT> selectedInputChannels{ -1, -1 };
+		std::array<int, INPUT_ROUTE_COUNT> channelOverrides{ -1, -1 };
 		std::array<int, INPUT_ROUTE_COUNT> resolvedInputIndices{ -1, -1 };
 		std::array<bool, INPUT_ROUTE_COUNT> configuredInputs{ false, false };
 		std::atomic<bool> inputReady[INPUT_ROUTE_COUNT] = {};
@@ -242,34 +247,57 @@ namespace Audio::AsioHook
 
 			RsAsioConfiguration configuration;
 
-			const char* playerOneDriver = reader.GetValue("Asio.Input.0", "Driver", "");
-			if (playerOneDriver && *playerOneDriver)
+			const char* inputZeroDriver = reader.GetValue("Asio.Input.0", "Driver", "");
+			const char* inputOneDriver = reader.GetValue("Asio.Input.1", "Driver", "");
+			const bool inputZeroNamesDriver = inputZeroDriver && *inputZeroDriver;
+			const bool inputOneNamesDriver = inputOneDriver && *inputOneDriver;
+
+			if (inputZeroNamesDriver)
 			{
-				configuration.driverName = playerOneDriver;
-				configuration.inputDriverNames[0] = playerOneDriver;
+				configuration.driverName = inputZeroDriver;
+				configuration.inputConfigured[0] = true;
+				configuration.inputDriverNames[0] = inputZeroDriver;
+				configuration.inputChannels[0] = static_cast<int>(
+					reader.GetLongValue("Asio.Input.0", "Channel", 0));
+				configuration.inputSources[0] = "[Asio.Input.0]";
+
+				if (inputOneNamesDriver)
+				{
+					configuration.inputConfigured[1] = true;
+					configuration.inputDriverNames[1] = inputOneDriver;
+					configuration.inputChannels[1] = static_cast<int>(
+						reader.GetLongValue("Asio.Input.1", "Channel", -1));
+					configuration.inputSources[1] = "[Asio.Input.1]";
+				}
+			}
+			else if (inputOneNamesDriver)
+			{
+				// [Asio.Input.0] is empty, so RS_ASIO serves the single active player from
+				// [Asio.Input.1]. Guitars on an interface's second input (mic in input 1,
+				// guitar in input 2) land here. Player 1's shifter follows that section;
+				// assuming channel 0 would process the one channel the user did not configure.
+				configuration.driverName = inputOneDriver;
+				configuration.inputConfigured[0] = true;
+				configuration.inputDriverNames[0] = inputOneDriver;
+				configuration.inputChannels[0] = static_cast<int>(
+					reader.GetLongValue("Asio.Input.1", "Channel", 0));
+				configuration.inputSources[0] = "[Asio.Input.1], the only configured input section";
+				configuration.inputInferred[0] = true;
 			}
 			else
 			{
-				// Falling back to the output driver covers configurations that name one
-				// interface only once. Player 1 still defaults to ASIO channel zero.
+				// Neither input section names a driver. The output driver plus channel 0
+				// is a guess that covers configurations naming the interface only once.
 				const char* output = reader.GetValue("Asio.Output", "Driver", "");
 				if (output && *output)
 				{
 					configuration.driverName = output;
+					configuration.inputConfigured[0] = true;
 					configuration.inputDriverNames[0] = output;
+					configuration.inputChannels[0] = 0;
+					configuration.inputSources[0] = "[Asio.Output] driver, assuming channel 0";
+					configuration.inputInferred[0] = true;
 				}
-			}
-
-			configuration.inputChannels[0] = static_cast<int>(
-				reader.GetLongValue("Asio.Input.0", "Channel", 0));
-
-			const char* playerTwoDriver = reader.GetValue("Asio.Input.1", "Driver", "");
-			if (playerTwoDriver && *playerTwoDriver)
-			{
-				configuration.inputConfigured[1] = true;
-				configuration.inputDriverNames[1] = playerTwoDriver;
-				configuration.inputChannels[1] = static_cast<int>(
-					reader.GetLongValue("Asio.Input.1", "Channel", -1));
 			}
 
 			return configuration;
@@ -572,7 +600,24 @@ namespace Audio::AsioHook
 			configuredInputs[routeIndex] = configuration.inputConfigured[routeIndex];
 			selectedInputChannels[routeIndex] = configuration.inputChannels[routeIndex];
 
-			if (!configuredInputs[routeIndex]) continue;
+			if (!configuredInputs[routeIndex])
+			{
+				if (channelOverrides[routeIndex] >= 0)
+				{
+					LOG_WARNING("[AsioHook] Player" << routeIndex + 1 << "AsioChannel is set in "
+						"RSMods.ini, but RS_ASIO.ini gives that player no input driver, so the "
+						"override is ignored." << std::endl);
+				}
+				continue;
+			}
+
+			std::string channelSource = configuration.inputSources[routeIndex];
+			if (channelOverrides[routeIndex] >= 0)
+			{
+				selectedInputChannels[routeIndex] = channelOverrides[routeIndex];
+				channelSource = "Player" + std::to_string(routeIndex + 1)
+					+ "AsioChannel override in RSMods.ini";
+			}
 
 			if (selectedInputChannels[routeIndex] < 0)
 			{
@@ -591,8 +636,18 @@ namespace Audio::AsioHook
 				return;
 			}
 
-			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << " uses ASIO channel "
-				<< selectedInputChannels[routeIndex] << "." << std::endl);
+			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << "'s shifter will process ASIO "
+				"channel " << selectedInputChannels[routeIndex] << " (" << channelSource << ")."
+				<< std::endl);
+
+			if (configuration.inputInferred[routeIndex] && channelOverrides[routeIndex] < 0)
+			{
+				LOG_WARNING("[AsioHook] That route is inferred, not read from an [Asio.Input."
+					<< routeIndex << "] section. If the pedal audibly does nothing, it is likely "
+					"shifting the wrong channel (a microphone, for example). Set Player"
+					<< routeIndex + 1 << "AsioChannel under [Drop Pedal] in RSMods.ini to the "
+					"guitar's ASIO channel to pin it." << std::endl);
+			}
 		}
 
 		if (!ReadDriverClassId(driverName, driverClassId))
@@ -668,6 +723,18 @@ namespace Audio::AsioHook
 		}
 
 		SetProcessingEnabled(true);
+	}
+
+	void SetChannelOverride(size_t routeIndex, int asioChannel)
+	{
+		if (routeIndex >= INPUT_ROUTE_COUNT)
+		{
+			LOG_ERROR("[AsioHook] Refusing to set channel override for invalid route "
+				<< routeIndex << "." << std::endl);
+			return;
+		}
+
+		channelOverrides[routeIndex] = asioChannel;
 	}
 
 	void SetProcessor(size_t routeIndex, IInputProcessor* inputProcessor)
