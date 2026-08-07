@@ -484,9 +484,10 @@ that its LP address landed inside note-detection RMS/onset processing and that
 `[EBP+8]` was a sample count, not a cent offset. Both the hook and its offsets
 were removed rather than retained as a fallback.
 
-The reference-builder address is known for Remastered September 2022. The LP
-December 2024 address is unresolved: live writes still keep in-song detection
-correct, but the pre-song tuner does not see the shifted load-time stamp.
+The reference-builder address is known for both supported builds: `0x004DCCB0`
+for Remastered September 2022 and module base + `0x002AD930` for Learn & Play
+December 2024. Both builds therefore apply the shift to the pre-song tuner's
+load-time snapshot as well as in-song note detection.
 
 
 ---

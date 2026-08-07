@@ -10,9 +10,9 @@ to Rocksmith 2014: a **Drop Pedal** that shifts the guitar to the song, and a
 **Speaker Mode** that shifts the song to the guitar.
 
 `F7` cycles between the two modes and Off. Range is -24 to +24 semitones.
-Supported game versions: Rocksmith 2014 Remastered (September 2022 update),
-fully playable including multiplayer, and the Learn & Play (December 2024)
-update, supported with partial multiplayer functionality currently.
+Supported game versions: Rocksmith 2014 Remastered (September 2022 update) and
+Learn & Play (December 2024 update). Drop Pedal multiplayer is supported on
+both versions.
 
 https://github.com/user-attachments/assets/c8951c94-e760-4830-a8f5-6b383dbb05da
 
