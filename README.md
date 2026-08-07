@@ -3,7 +3,7 @@
 <a href="https://buymeacoffee.com/cheesewizard">
   <img src="docs/images/buy-me-a-beer-alt-amplifier-v2.png" alt="Buy me a beer" width="240">
 </a>
-<br>
+<br><br>
 
 A fork of [RSMods](https://github.com/Lovrom8/RSMods) that adds pitch routing
 to Rocksmith 2014: a **Drop Pedal** that shifts the guitar to the song, and a
