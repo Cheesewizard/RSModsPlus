@@ -27,12 +27,6 @@ Engine = automatic
 With RS_ASIO installed, `automatic` uses the ASIO engine. Without RS_ASIO, it
 uses the Cable engine.
 
-![Drop Pedal settings and custom overlay colours](images/drop-pedal-overlay-colours.png)
-
-In the settings app, open **Enable / Disable Mods > Tuning**. Enable **Custom
-overlay colours** to choose the text colours for down shifts, up shifts and
-status messages.
-
 ## 3. Use Drop Pedal in game
 
 Every launch starts at `Pitch: Off`, regardless of the previous session.
