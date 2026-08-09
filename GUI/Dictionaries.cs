@@ -29,6 +29,7 @@ namespace RSMods
             TooltipDictionary.Add(checkBox_RainbowStrings, "Experimental.\nHow Pro are you? This makes the players guitar strings constantly cycling through colors.");
             TooltipDictionary.Add(checkBox_RainbowNotes, "Experimental.\nHow Pro are you? This makes all the notes constantly cycle through colors.");
             TooltipDictionary.Add(checkBox_DropPedal, "Enables the in-game drop pedal. Changes require restarting Rocksmith.");
+            TooltipDictionary.Add(checkBox_DropPedalCustomOverlayColors, "Shows colour pickers for each Drop Pedal overlay text state. Colour changes are applied when Rocksmith reloads its mod settings.");
             TooltipDictionary.Add(checkBox_CustomColors, "Lets you define the string / note colors you want.\nSaves a normal set and a Colorblind mode set.");
             TooltipDictionary.Add(checkBox_RemoveLaneMarkers, "Removes the additional lane marker lines seen in the display.\nWhen used with No Loft, provides a cleaner Luma Key.");
             TooltipDictionary.Add(checkBox_ScreenShotScores, "We will automatically take a steam screenshot whenever you finish a song");
