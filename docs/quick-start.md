@@ -5,12 +5,15 @@ it.
 
 ## 1. Install the files
 
-- Download the **release zip**, not the raw DLL. Some antivirus tools flag a
-  bare DLL download and quarantine it, leaving the old file in place.
-- Close the game, then extract `xinput1_3.dll` next to `Rocksmith2014.exe`,
-  replacing the existing file. Replacing while the game runs fails because the
-  loaded DLL is locked.
-- Install the matching `RSMods` settings-app folder from the same release.
+- Install upstream RSMods 1.2.8.2 first. Its libraries and decode tools remain
+  in the `RSMods` folder.
+- Download the **release zip**, not the raw DLL. The ZIP contains the matching
+  `RSMods.exe` required by Speaker Mode. Some antivirus tools also flag a bare
+  DLL download and quarantine it, leaving the old file in place.
+- Close the game, then extract the complete ZIP into the Rocksmith 2014 folder.
+  Allow it to replace `xinput1_3.dll`, `RSMods\RSMods.exe` and
+  `RSMods\RSMods.exe.config`. Replacing files while the game or settings app
+  runs will fail because the loaded files are locked.
 
 ## 2. Enable the pedal
 
@@ -58,7 +61,7 @@ After starting the game, the top of the log tells the whole story:
 
 | Log line | Meaning |
 |---|---|
-| `RSModsPlus 3.1 ...` | The mod DLL loaded. The `(based on RSMods 1.2.8.2)` part is the upstream base version, not the installed version. |
+| `RSModsPlus 3.2 ...` | The mod DLL loaded. The `(based on RSMods 1.2.8.2)` part is the upstream base version, not the installed version. |
 | `Drop pedal engine: ASIO Drop Pedal` or `Cable Drop Pedal` | The pedal is enabled and which engine owns it. |
 | No `Drop pedal engine` line at all | `EnableDropPedal` is still `off` in `RSMods.ini`. |
 | Old version number at the top | The old DLL is still loading: the replacement went to the wrong folder, the copy was blocked, or antivirus interfered. |
