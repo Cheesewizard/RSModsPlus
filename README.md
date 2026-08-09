@@ -192,15 +192,33 @@ failure turns the mode off rather than play at a wrong pitch.
 
 ## Documentation
 
+### User guides
+
 | Document | Covers |
 |---|---|
 | [docs/asio-drop-pedal.md](docs/asio-drop-pedal.md) | ASIO Drop Pedal: requirements, controls, multiplayer, bass, troubleshooting |
 | [docs/cable-drop-pedal.md](docs/cable-drop-pedal.md) | Cable Drop Pedal: tone setup, constraints, multiplayer, troubleshooting |
 | [docs/speaker-mode.md](docs/speaker-mode.md) | Speaker Mode: setup, choosing tunings, chart shapes, troubleshooting |
-| [docs/drop-pedal-multiplayer-design.md](docs/drop-pedal-multiplayer-design.md) | ASIO multiplayer architecture, lifecycle and performance data |
-| [docs/drop-pedal-multiplayer-findings.md](docs/drop-pedal-multiplayer-findings.md) | Technical findings behind multiplayer pitch processing |
-| [docs/speaker-mode-engine.md](docs/speaker-mode-engine.md) | Speaker Mode engine internals |
-| [docs/speaker-mode-investigation.md](docs/speaker-mode-investigation.md) | The investigation that led to the Speaker Mode design |
+
+### Designs
+
+| Document | Covers |
+|---|---|
+| [docs/designs/drop-pedal-multiplayer.md](docs/designs/drop-pedal-multiplayer.md) | Drop Pedal multiplayer architecture, lifecycle and performance data |
+| [docs/designs/speaker-mode.md](docs/designs/speaker-mode.md) | Speaker Mode engine internals |
+
+### Investigation records
+
+| Document | Covers |
+|---|---|
+| [docs/investigations/drop-pedal-multiplayer.md](docs/investigations/drop-pedal-multiplayer.md) | Earlier findings behind multiplayer pitch processing |
+| [docs/investigations/speaker-mode.md](docs/investigations/speaker-mode.md) | The investigation that led to the Speaker Mode design |
+
+### Technical reference
+
+| Document | Covers |
+|---|---|
+| [docs/wwise-plugin-internals.md](docs/wwise-plugin-internals.md) | Reverse-engineered Wwise plugin structures used by the Cable engine |
 
 ---
 
