@@ -709,6 +709,8 @@ namespace RSMods
                     break;
                 }
             }
+            checkBox_DropPedalCustomOverlayColors.Checked = ReadSettings.ProcessSettings(ReadSettings.DropPedalCustomOverlayColorsIdentifier) == "on";
+            DropPedalColors_Load();
 
             checkBox_EnableLooping.Checked = ReadSettings.ProcessSettings(ReadSettings.AllowLoopingIdentifier) == "on";
             groupBox_LoopingLeadUp.Visible = checkBox_EnableLooping.Checked;
@@ -2073,6 +2075,65 @@ namespace RSMods
             if (comboBox_DropPedalEngine.SelectedItem == null) return;
 
             SaveSettings_Save(ReadSettings.DropPedalEngineIdentifier, comboBox_DropPedalEngine.SelectedItem.ToString().ToLower());
+        }
+
+        private void Save_DropPedalCustomOverlayColors(object sender, EventArgs e)
+        {
+            groupBox_DropPedalOverlayColors.Visible = checkBox_DropPedalCustomOverlayColors.Checked;
+            groupBox_DropPedal.Height = checkBox_DropPedalCustomOverlayColors.Checked ? 200 : 101;
+            SaveSettings_Save(ReadSettings.DropPedalCustomOverlayColorsIdentifier, checkBox_DropPedalCustomOverlayColors.Checked.ToString().ToLower());
+        }
+
+        private void DropPedalColors_Load()
+        {
+            DropPedalColors_LoadSwatch(textBox_DropPedalOverlayDownColor, ReadSettings.DropPedalOverlayDownColorIdentifier);
+            DropPedalColors_LoadSwatch(textBox_DropPedalOverlayUpColor, ReadSettings.DropPedalOverlayUpColorIdentifier);
+            DropPedalColors_LoadSwatch(textBox_DropPedalOverlayStatusColor, ReadSettings.DropPedalOverlayStatusColorIdentifier);
+        }
+
+        private void DropPedalColors_LoadSwatch(TextBox colorSwatch, string settingIdentifier)
+        {
+            colorSwatch.BackColor = ColorTranslator.FromHtml("#" + ReadSettings.ProcessSettings(settingIdentifier));
+        }
+
+        private void DropPedalColors_ChangeColor(object sender, EventArgs e)
+        {
+            TextBox colorSwatch;
+            string settingIdentifier;
+
+            if (sender == button_DropPedalOverlayDownColor)
+            {
+                colorSwatch = textBox_DropPedalOverlayDownColor;
+                settingIdentifier = ReadSettings.DropPedalOverlayDownColorIdentifier;
+            }
+            else if (sender == button_DropPedalOverlayUpColor)
+            {
+                colorSwatch = textBox_DropPedalOverlayUpColor;
+                settingIdentifier = ReadSettings.DropPedalOverlayUpColorIdentifier;
+            }
+            else if (sender == button_DropPedalOverlayStatusColor)
+            {
+                colorSwatch = textBox_DropPedalOverlayStatusColor;
+                settingIdentifier = ReadSettings.DropPedalOverlayStatusColorIdentifier;
+            }
+            else
+            {
+                throw new InvalidOperationException("Unknown Drop Pedal overlay colour control.");
+            }
+
+            using (ColorDialog colorDialog = new ColorDialog
+            {
+                AllowFullOpen = true,
+                ShowHelp = false,
+                Color = colorSwatch.BackColor
+            })
+            {
+                if (colorDialog.ShowDialog() != DialogResult.OK) return;
+
+                string colorHex = (colorDialog.Color.ToArgb() & 0x00ffffff).ToString("X6");
+                SaveSettings_Save(settingIdentifier, colorHex);
+                colorSwatch.BackColor = colorDialog.Color;
+            }
         }
 
         private void Save_ExtendedRange(object sender, EventArgs e)

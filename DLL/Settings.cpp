@@ -98,6 +98,10 @@ void Settings::Initialize()
 		{"RemoveFingerprints", "off"},
 		{"EnableDropPedal", "off"},
 		{"DropPedalEngine", "automatic"},
+		{"DropPedalCustomOverlayColors", "off"},
+		{"DropPedalOverlayDownColor", "6BE06B"},
+		{"DropPedalOverlayUpColor", "FFC24D"},
+		{"DropPedalOverlayStatusColor", "FFFFFF"},
 	};
 
 	customSettings = {
@@ -323,6 +327,10 @@ void Settings::ReadModSettings() {
 	modSettings["RemoveFingerprints"] = reader.GetValue("Toggle Switches", "RemoveFingerprints", "off");
 	modSettings["EnableDropPedal"] = reader.GetValue("Drop Pedal", "EnableDropPedal", "off");
 	modSettings["DropPedalEngine"] = reader.GetValue("Drop Pedal", "Engine", "automatic");
+	modSettings["DropPedalCustomOverlayColors"] = reader.GetValue("Drop Pedal", "CustomOverlayColors", "off");
+	modSettings["DropPedalOverlayDownColor"] = reader.GetValue("Drop Pedal", "OverlayDownColor", "6BE06B");
+	modSettings["DropPedalOverlayUpColor"] = reader.GetValue("Drop Pedal", "OverlayUpColor", "FFC24D");
+	modSettings["DropPedalOverlayStatusColor"] = reader.GetValue("Drop Pedal", "OverlayStatusColor", "FFFFFF");
 }
 
 /// <summary>

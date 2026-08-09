@@ -33,7 +33,9 @@ namespace RSMods
                              MidiAutoTuning, MidiAutoTuningDevice, MidiInDevice, MidiAutoTuningWhen, MidiSoftwareSemitoneTriggers, MidiSoftwareSemitoneSettings, MidiSoftwareTrueTuningTriggers, MidiSoftwareTrueTuningSettings, ChordsMode,
                              RiffRepeaterAboveHundred, ShowCurrentNoteOnScreen, OnScreenFont, OnScreenFontSize, ProfileToLoad, ShowSongTimerWhen, ShowSelectedVolumeWhen, SecondaryMonitor, RemoveSongPreviews, OverrideInputVolumeEnabled, OverrideInputVolumeDevice,
                              AllowAudioInBackground, BypassTwoRTCMessageBox, LinearRiffRepeater, UseAlternativeOutputSampleRate, AllowLooping, AllowRewind, FixOculusCrash, FixBrokenTones, UseCustomNSPTimer, DisplayCurrentAccuracy, PreventMidSongPause, RemoveFingerprints,
-                             DropPedalEnabled, DropPedalEngine, DropPedalPlayer1AsioChannel, DropPedalPlayer2AsioChannel,
+                             DropPedalEnabled, DropPedalEngine, DropPedalCustomOverlayColors,
+                             DropPedalOverlayDownColor, DropPedalOverlayUpColor, DropPedalOverlayStatusColor,
+                             DropPedalPlayer1AsioChannel, DropPedalPlayer2AsioChannel,
 
 
                              // String Colors
@@ -175,6 +177,10 @@ namespace RSMods
             PreventMidSongPauseIdentifier               = "PreventMidSongPause = ",
             DropPedalEnabledIdentifier                   = "EnableDropPedal = ",
             DropPedalEngineIdentifier                    = "Engine = ",
+            DropPedalCustomOverlayColorsIdentifier       = "CustomOverlayColors = ",
+            DropPedalOverlayDownColorIdentifier          = "OverlayDownColor = ",
+            DropPedalOverlayUpColorIdentifier            = "OverlayUpColor = ",
+            DropPedalOverlayStatusColorIdentifier        = "OverlayStatusColor = ",
             DropPedalPlayer1AsioChannelIdentifier        = "Player1AsioChannel = ",
             DropPedalPlayer2AsioChannelIdentifier        = "Player2AsioChannel = ",
 
@@ -308,6 +314,14 @@ namespace RSMods
                 return "off";
             if (identifierToGrab == DropPedalEngineIdentifier)
                 return "automatic";
+            if (identifierToGrab == DropPedalCustomOverlayColorsIdentifier)
+                return "off";
+            if (identifierToGrab == DropPedalOverlayDownColorIdentifier)
+                return "6BE06B";
+            if (identifierToGrab == DropPedalOverlayUpColorIdentifier)
+                return "FFC24D";
+            if (identifierToGrab == DropPedalOverlayStatusColorIdentifier)
+                return "FFFFFF";
             if (identifierToGrab == DropPedalPlayer1AsioChannelIdentifier)
                 return "-1";
             if (identifierToGrab == DropPedalPlayer2AsioChannelIdentifier)
@@ -559,6 +573,14 @@ namespace RSMods
                     return FillSettingVariable(DropPedalEnabledIdentifier, SettingType.ON_OFF, currentLine, out DropPedalEnabled);
                 if (IdentifierIsFound(currentLine, DropPedalEngineIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalEngineIdentifier, SettingType.STRING, currentLine, out DropPedalEngine);
+                if (IdentifierIsFound(currentLine, DropPedalCustomOverlayColorsIdentifier, identifierToGrab))
+                    return FillSettingVariable(DropPedalCustomOverlayColorsIdentifier, SettingType.ON_OFF, currentLine, out DropPedalCustomOverlayColors);
+                if (IdentifierIsFound(currentLine, DropPedalOverlayDownColorIdentifier, identifierToGrab))
+                    return FillSettingVariable(DropPedalOverlayDownColorIdentifier, SettingType.STRING, currentLine, out DropPedalOverlayDownColor);
+                if (IdentifierIsFound(currentLine, DropPedalOverlayUpColorIdentifier, identifierToGrab))
+                    return FillSettingVariable(DropPedalOverlayUpColorIdentifier, SettingType.STRING, currentLine, out DropPedalOverlayUpColor);
+                if (IdentifierIsFound(currentLine, DropPedalOverlayStatusColorIdentifier, identifierToGrab))
+                    return FillSettingVariable(DropPedalOverlayStatusColorIdentifier, SettingType.STRING, currentLine, out DropPedalOverlayStatusColor);
                 if (IdentifierIsFound(currentLine, DropPedalPlayer1AsioChannelIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalPlayer1AsioChannelIdentifier, SettingType.STRING, currentLine, out DropPedalPlayer1AsioChannel);
                 if (IdentifierIsFound(currentLine, DropPedalPlayer2AsioChannelIdentifier, identifierToGrab))

@@ -4,6 +4,7 @@
 #include "DropPedal.hpp"
 #include "DropPedalHooks.hpp"
 #include "DropPedalInput.hpp"
+#include "DropPedalOverlay.hpp"
 #include "DropPedalState.hpp"
 #include "../../GameState.hpp"
 #include "../../SongTuning.hpp"
@@ -163,6 +164,7 @@ void DropPedal::LoadSettings()
 	DropPedalState::Configure(
 		Settings::ReturnSettingValue("EnableDropPedal"),
 		Settings::ReturnSettingValue("DropPedalEngine"));
+	Overlay::LoadSettings();
 }
 
 bool DropPedal::IsConfiguredEnabled()

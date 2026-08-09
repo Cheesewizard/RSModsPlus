@@ -14,6 +14,8 @@ namespace DropPedal
 	class Overlay final
 	{
 	public:
+		static void LoadSettings();
+
 		void Render(ID3DXFont* font, const Resolution& windowSize);
 
 	private:
@@ -23,6 +25,7 @@ namespace DropPedal
 		std::array<int, PLAYER_COUNT> cachedTargetSemitones{};
 		std::array<int, PLAYER_COUNT> cachedBaseTuningSemitones{};
 		std::array<ID3DXFont*, PLAYER_COUNT> cachedTuningFonts{};
+		std::array<unsigned long long, PLAYER_COUNT> cachedTuningColorRevisions{};
 		std::array<std::string, PLAYER_COUNT> tuningLines;
 		std::array<unsigned int, PLAYER_COUNT> tuningTextColors{};
 

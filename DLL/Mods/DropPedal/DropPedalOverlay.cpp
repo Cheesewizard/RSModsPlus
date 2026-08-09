@@ -3,6 +3,7 @@
 
 #include "../../GameState.hpp"
 #include "../../Resolution.h"
+#include "../../Settings.hpp"
 #include "DropPedal.hpp"
 
 namespace
@@ -14,6 +15,78 @@ namespace
 	constexpr unsigned long long ENGINE_SHOW_MILLISECONDS = 6000;
 	constexpr unsigned long long ENGINE_FADE_MILLISECONDS = 1500;
 
+	struct OverlayTextColors
+	{
+		unsigned int down = DROP_PEDAL_DOWN_TEXT;
+		unsigned int up = DROP_PEDAL_UP_TEXT;
+		unsigned int status = WHITE_TEXT;
+		bool usesCustomColors = false;
+	};
+
+	OverlayTextColors overlayTextColors;
+	unsigned long long overlayTextColorRevision = 0;
+
+	int GetHexDigitValue(char digit)
+	{
+		if (digit >= '0' && digit <= '9') return digit - '0';
+		if (digit >= 'a' && digit <= 'f') return digit - 'a' + 10;
+		if (digit >= 'A' && digit <= 'F') return digit - 'A' + 10;
+		return -1;
+	}
+
+	unsigned int ReadConfiguredTextColor(
+		const std::string& settingName,
+		unsigned int defaultColor)
+	{
+		const std::string configuredColor = Settings::ReturnSettingValue(settingName);
+		if (configuredColor.length() != 6)
+		{
+			LOG_ERROR("Invalid " << settingName << " value '" << configuredColor
+				<< "'. Expected six hexadecimal digits." << std::endl);
+			return defaultColor;
+		}
+
+		unsigned int color = 0;
+		for (const char digit : configuredColor)
+		{
+			const int value = GetHexDigitValue(digit);
+			if (value < 0)
+			{
+				LOG_ERROR("Invalid " << settingName << " value '" << configuredColor
+					<< "'. Expected six hexadecimal digits." << std::endl);
+				return defaultColor;
+			}
+
+			color = (color << 4) | static_cast<unsigned int>(value);
+		}
+
+		return 0xFF000000 | color;
+	}
+
+	unsigned int ApplyAlpha(unsigned int color, unsigned int alpha)
+	{
+		return (color & 0x00FFFFFF) | (alpha << 24);
+	}
+}
+
+void DropPedal::Overlay::LoadSettings()
+{
+	overlayTextColors = {};
+	const std::string customColorsSetting = Settings::ReturnSettingValue("DropPedalCustomOverlayColors");
+	if (customColorsSetting == "on")
+	{
+		overlayTextColors.down = ReadConfiguredTextColor("DropPedalOverlayDownColor", DROP_PEDAL_DOWN_TEXT);
+		overlayTextColors.up = ReadConfiguredTextColor("DropPedalOverlayUpColor", DROP_PEDAL_UP_TEXT);
+		overlayTextColors.status = ReadConfiguredTextColor("DropPedalOverlayStatusColor", WHITE_TEXT);
+		overlayTextColors.usesCustomColors = true;
+	}
+	else if (customColorsSetting != "off")
+	{
+		LOG_ERROR("Invalid DropPedalCustomOverlayColors value '" << customColorsSetting
+			<< "'. Expected 'on' or 'off'." << std::endl);
+	}
+
+	++overlayTextColorRevision;
 }
 
 void DropPedal::Overlay::Render(ID3DXFont* font, const Resolution& windowSize)
@@ -94,7 +167,7 @@ void DropPedal::Overlay::RenderEngine(
 		font,
 		windowSize,
 		engineLine,
-		D3DCOLOR_ARGB(static_cast<int>(255 * fade), 255, 255, 255),
+		ApplyAlpha(overlayTextColors.status, static_cast<unsigned int>(255 * fade)),
 		left,
 		top,
 		left + static_cast<int>(windowSize.width / 3.0f),
@@ -121,7 +194,8 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 		&& isMissingPedalTone == cachedMissingPedalTone[playerIndex]
 		&& targetSemitones == cachedTargetSemitones[playerIndex]
 		&& baseTuningSemitones == cachedBaseTuningSemitones[playerIndex]
-		&& font == cachedTuningFonts[playerIndex])
+		&& font == cachedTuningFonts[playerIndex]
+		&& cachedTuningColorRevisions[playerIndex] == overlayTextColorRevision)
 	{
 		return;
 	}
@@ -146,14 +220,16 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 	{
 		tuningLine = "Drop: " + DropPedal::GetTuningName(player);
 	}
-	tuningTextColor = DROP_PEDAL_DISABLED_TEXT;
+	tuningTextColor = overlayTextColors.usesCustomColors
+		? overlayTextColors.status
+		: DROP_PEDAL_DISABLED_TEXT;
 
 	if (pitchMode != PitchMode::Off && !isMissingPedalTone)
 	{
 		const int direction = DropPedal::GetShiftDirection(player);
 		tuningTextColor = direction < 0
-			? DROP_PEDAL_DOWN_TEXT
-			: (direction > 0 ? DROP_PEDAL_UP_TEXT : WHITE_TEXT);
+			? overlayTextColors.down
+			: (direction > 0 ? overlayTextColors.up : overlayTextColors.status);
 	}
 
 	cachedPitchModes[playerIndex] = pitchMode;
@@ -161,6 +237,7 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 	cachedTargetSemitones[playerIndex] = targetSemitones;
 	cachedBaseTuningSemitones[playerIndex] = baseTuningSemitones;
 	cachedTuningFonts[playerIndex] = font;
+	cachedTuningColorRevisions[playerIndex] = overlayTextColorRevision;
 	hasCachedTuningState[playerIndex] = true;
 	font->PreloadTextA(tuningLine.c_str(), static_cast<int>(tuningLine.length()));
 }

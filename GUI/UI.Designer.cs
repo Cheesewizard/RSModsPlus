@@ -275,6 +275,14 @@
             this.checkBox_DropPedal = new System.Windows.Forms.CheckBox();
             this.label_DropPedalEngine = new System.Windows.Forms.Label();
             this.comboBox_DropPedalEngine = new System.Windows.Forms.ComboBox();
+            this.checkBox_DropPedalCustomOverlayColors = new System.Windows.Forms.CheckBox();
+            this.groupBox_DropPedalOverlayColors = new System.Windows.Forms.GroupBox();
+            this.textBox_DropPedalOverlayStatusColor = new System.Windows.Forms.TextBox();
+            this.button_DropPedalOverlayStatusColor = new System.Windows.Forms.Button();
+            this.textBox_DropPedalOverlayUpColor = new System.Windows.Forms.TextBox();
+            this.button_DropPedalOverlayUpColor = new System.Windows.Forms.Button();
+            this.textBox_DropPedalOverlayDownColor = new System.Windows.Forms.TextBox();
+            this.button_DropPedalOverlayDownColor = new System.Windows.Forms.Button();
             this.label_DropPedalPitchDownKey = new System.Windows.Forms.Label();
             this.label_DropPedalPitchUpKey = new System.Windows.Forms.Label();
             this.label_DropPedalToggleKey = new System.Windows.Forms.Label();
@@ -607,6 +615,7 @@
             this.groupBox_AutoLoadProfiles.SuspendLayout();
             this.tabPage_ModSettings_AutoTuning.SuspendLayout();
             this.groupBox_DropPedal.SuspendLayout();
+            this.groupBox_DropPedalOverlayColors.SuspendLayout();
             this.groupBox_MidiInDevice.SuspendLayout();
             this.groupBox_MidiAutoTuningWhen.SuspendLayout();
             this.groupBox_MidiAutoTuningOffset.SuspendLayout();
@@ -3696,12 +3705,14 @@
             //
             // groupBox_DropPedal
             //
+            this.groupBox_DropPedal.Controls.Add(this.groupBox_DropPedalOverlayColors);
+            this.groupBox_DropPedal.Controls.Add(this.checkBox_DropPedalCustomOverlayColors);
             this.groupBox_DropPedal.Controls.Add(this.checkBox_DropPedal);
             this.groupBox_DropPedal.Controls.Add(this.label_DropPedalEngine);
             this.groupBox_DropPedal.Controls.Add(this.comboBox_DropPedalEngine);
-            this.groupBox_DropPedal.Location = new System.Drawing.Point(480, 16);
+            this.groupBox_DropPedal.Location = new System.Drawing.Point(536, 16);
             this.groupBox_DropPedal.Name = "groupBox_DropPedal";
-            this.groupBox_DropPedal.Size = new System.Drawing.Size(279, 79);
+            this.groupBox_DropPedal.Size = new System.Drawing.Size(223, 101);
             this.groupBox_DropPedal.TabIndex = 5;
             this.groupBox_DropPedal.TabStop = false;
             this.groupBox_DropPedal.Text = "Drop Pedal";
@@ -3743,6 +3754,92 @@
             this.comboBox_DropPedalEngine.SelectedIndexChanged += new System.EventHandler(this.Save_DropPedalEngine);
             this.comboBox_DropPedalEngine.MouseLeave += new System.EventHandler(this.ToolTips_Hide);
             this.comboBox_DropPedalEngine.MouseHover += new System.EventHandler(this.ToolTips_Show);
+            //
+            // checkBox_DropPedalCustomOverlayColors
+            //
+            this.checkBox_DropPedalCustomOverlayColors.AutoSize = true;
+            this.checkBox_DropPedalCustomOverlayColors.Location = new System.Drawing.Point(11, 77);
+            this.checkBox_DropPedalCustomOverlayColors.Name = "checkBox_DropPedalCustomOverlayColors";
+            this.checkBox_DropPedalCustomOverlayColors.Size = new System.Drawing.Size(137, 17);
+            this.checkBox_DropPedalCustomOverlayColors.TabIndex = 3;
+            this.checkBox_DropPedalCustomOverlayColors.Text = "Custom overlay colours";
+            this.checkBox_DropPedalCustomOverlayColors.UseVisualStyleBackColor = true;
+            this.checkBox_DropPedalCustomOverlayColors.CheckedChanged += new System.EventHandler(this.Save_DropPedalCustomOverlayColors);
+            this.checkBox_DropPedalCustomOverlayColors.MouseLeave += new System.EventHandler(this.ToolTips_Hide);
+            this.checkBox_DropPedalCustomOverlayColors.MouseHover += new System.EventHandler(this.ToolTips_Show);
+            //
+            // groupBox_DropPedalOverlayColors
+            //
+            this.groupBox_DropPedalOverlayColors.Controls.Add(this.textBox_DropPedalOverlayStatusColor);
+            this.groupBox_DropPedalOverlayColors.Controls.Add(this.button_DropPedalOverlayStatusColor);
+            this.groupBox_DropPedalOverlayColors.Controls.Add(this.textBox_DropPedalOverlayUpColor);
+            this.groupBox_DropPedalOverlayColors.Controls.Add(this.button_DropPedalOverlayUpColor);
+            this.groupBox_DropPedalOverlayColors.Controls.Add(this.textBox_DropPedalOverlayDownColor);
+            this.groupBox_DropPedalOverlayColors.Controls.Add(this.button_DropPedalOverlayDownColor);
+            this.groupBox_DropPedalOverlayColors.Location = new System.Drawing.Point(11, 98);
+            this.groupBox_DropPedalOverlayColors.Name = "groupBox_DropPedalOverlayColors";
+            this.groupBox_DropPedalOverlayColors.Size = new System.Drawing.Size(201, 91);
+            this.groupBox_DropPedalOverlayColors.TabIndex = 4;
+            this.groupBox_DropPedalOverlayColors.TabStop = false;
+            this.groupBox_DropPedalOverlayColors.Text = "Text colours";
+            this.groupBox_DropPedalOverlayColors.Visible = false;
+            //
+            // textBox_DropPedalOverlayStatusColor
+            //
+            this.textBox_DropPedalOverlayStatusColor.Enabled = false;
+            this.textBox_DropPedalOverlayStatusColor.Location = new System.Drawing.Point(116, 63);
+            this.textBox_DropPedalOverlayStatusColor.Name = "textBox_DropPedalOverlayStatusColor";
+            this.textBox_DropPedalOverlayStatusColor.ReadOnly = true;
+            this.textBox_DropPedalOverlayStatusColor.Size = new System.Drawing.Size(77, 20);
+            this.textBox_DropPedalOverlayStatusColor.TabIndex = 5;
+            //
+            // button_DropPedalOverlayStatusColor
+            //
+            this.button_DropPedalOverlayStatusColor.Location = new System.Drawing.Point(8, 63);
+            this.button_DropPedalOverlayStatusColor.Name = "button_DropPedalOverlayStatusColor";
+            this.button_DropPedalOverlayStatusColor.Size = new System.Drawing.Size(102, 20);
+            this.button_DropPedalOverlayStatusColor.TabIndex = 4;
+            this.button_DropPedalOverlayStatusColor.Text = "Status";
+            this.button_DropPedalOverlayStatusColor.UseVisualStyleBackColor = true;
+            this.button_DropPedalOverlayStatusColor.Click += new System.EventHandler(this.DropPedalColors_ChangeColor);
+            //
+            // textBox_DropPedalOverlayUpColor
+            //
+            this.textBox_DropPedalOverlayUpColor.Enabled = false;
+            this.textBox_DropPedalOverlayUpColor.Location = new System.Drawing.Point(116, 40);
+            this.textBox_DropPedalOverlayUpColor.Name = "textBox_DropPedalOverlayUpColor";
+            this.textBox_DropPedalOverlayUpColor.ReadOnly = true;
+            this.textBox_DropPedalOverlayUpColor.Size = new System.Drawing.Size(77, 20);
+            this.textBox_DropPedalOverlayUpColor.TabIndex = 3;
+            //
+            // button_DropPedalOverlayUpColor
+            //
+            this.button_DropPedalOverlayUpColor.Location = new System.Drawing.Point(8, 40);
+            this.button_DropPedalOverlayUpColor.Name = "button_DropPedalOverlayUpColor";
+            this.button_DropPedalOverlayUpColor.Size = new System.Drawing.Size(102, 20);
+            this.button_DropPedalOverlayUpColor.TabIndex = 2;
+            this.button_DropPedalOverlayUpColor.Text = "Up shift";
+            this.button_DropPedalOverlayUpColor.UseVisualStyleBackColor = true;
+            this.button_DropPedalOverlayUpColor.Click += new System.EventHandler(this.DropPedalColors_ChangeColor);
+            //
+            // textBox_DropPedalOverlayDownColor
+            //
+            this.textBox_DropPedalOverlayDownColor.Enabled = false;
+            this.textBox_DropPedalOverlayDownColor.Location = new System.Drawing.Point(116, 17);
+            this.textBox_DropPedalOverlayDownColor.Name = "textBox_DropPedalOverlayDownColor";
+            this.textBox_DropPedalOverlayDownColor.ReadOnly = true;
+            this.textBox_DropPedalOverlayDownColor.Size = new System.Drawing.Size(77, 20);
+            this.textBox_DropPedalOverlayDownColor.TabIndex = 1;
+            //
+            // button_DropPedalOverlayDownColor
+            //
+            this.button_DropPedalOverlayDownColor.Location = new System.Drawing.Point(8, 17);
+            this.button_DropPedalOverlayDownColor.Name = "button_DropPedalOverlayDownColor";
+            this.button_DropPedalOverlayDownColor.Size = new System.Drawing.Size(102, 20);
+            this.button_DropPedalOverlayDownColor.TabIndex = 0;
+            this.button_DropPedalOverlayDownColor.Text = "Down shift";
+            this.button_DropPedalOverlayDownColor.UseVisualStyleBackColor = true;
+            this.button_DropPedalOverlayDownColor.Click += new System.EventHandler(this.DropPedalColors_ChangeColor);
             // 
             // groupBox_MidiInDevice
             // 
@@ -7102,6 +7199,8 @@
             this.tabPage_ModSettings_AutoTuning.ResumeLayout(false);
             this.groupBox_DropPedal.ResumeLayout(false);
             this.groupBox_DropPedal.PerformLayout();
+            this.groupBox_DropPedalOverlayColors.ResumeLayout(false);
+            this.groupBox_DropPedalOverlayColors.PerformLayout();
             this.groupBox_MidiInDevice.ResumeLayout(false);
             this.groupBox_MidiInDevice.PerformLayout();
             this.groupBox_MidiAutoTuningWhen.ResumeLayout(false);
@@ -7569,6 +7668,14 @@
         private System.Windows.Forms.CheckBox checkBox_DropPedal;
         private System.Windows.Forms.Label label_DropPedalEngine;
         private System.Windows.Forms.ComboBox comboBox_DropPedalEngine;
+        private System.Windows.Forms.CheckBox checkBox_DropPedalCustomOverlayColors;
+        private System.Windows.Forms.GroupBox groupBox_DropPedalOverlayColors;
+        private System.Windows.Forms.TextBox textBox_DropPedalOverlayStatusColor;
+        private System.Windows.Forms.Button button_DropPedalOverlayStatusColor;
+        private System.Windows.Forms.TextBox textBox_DropPedalOverlayUpColor;
+        private System.Windows.Forms.Button button_DropPedalOverlayUpColor;
+        private System.Windows.Forms.TextBox textBox_DropPedalOverlayDownColor;
+        private System.Windows.Forms.Button button_DropPedalOverlayDownColor;
         private System.Windows.Forms.Label label_DropPedalPitchDownKey;
         private System.Windows.Forms.Label label_DropPedalPitchUpKey;
         private System.Windows.Forms.Label label_DropPedalToggleKey;
