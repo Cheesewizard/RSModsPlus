@@ -2,7 +2,6 @@ using Rocksmith2014PsarcLib.Psarc;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 
@@ -82,7 +81,11 @@ namespace RSMods.Tests.ShifterHarness
 				using (var archive = new PsarcFile(archivePath))
 				{
 					var bankEntry = archive.TOC.Entries.FirstOrDefault(entry =>
-						string.Equals(Path.GetFileName(entry.Path), bankName, StringComparison.OrdinalIgnoreCase));
+						RSMods.PsarcEntryPath.TryGetFileName(entry.Path, out string entryFileName)
+						&& string.Equals(
+							entryFileName,
+							bankName,
+							StringComparison.OrdinalIgnoreCase));
 					if (bankEntry == null)
 					{
 						continue;
@@ -97,14 +100,12 @@ namespace RSMods.Tests.ShifterHarness
 
 					var matchingWems = archive.TOC.Entries.Where(entry =>
 					{
-						if (!string.Equals(Path.GetExtension(entry.Path), ".wem", StringComparison.OrdinalIgnoreCase))
+						if (!RSMods.PsarcEntryPath.TryGetWemMediaId(entry.Path, out uint mediaId))
 						{
 							return false;
 						}
 
-						var name = Path.GetFileNameWithoutExtension(entry.Path);
-						return uint.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out uint mediaId)
-							&& Contains(bankBytes, BitConverter.GetBytes(mediaId));
+						return Contains(bankBytes, BitConverter.GetBytes(mediaId));
 					}).ToList();
 					if (matchingWems.Count != 1)
 					{
