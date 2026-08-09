@@ -46,6 +46,9 @@ It verifies frame counts, deterministic output, mapped-output accuracy, and
 continuity across streaming call boundaries.
 
 `speaker_extractor_benchmark.cs` isolates PSARC discovery, WEM extraction, and
-the external decode stages. Build it beside `GUI\Lib\Rocksmith2014PsarcLib.dll`.
+the external decode stages. Compile it with `GUI\PsarcEntryPath.cs` beside
+`GUI\Lib\Rocksmith2014PsarcLib.dll`.
 `speaker_extractor_integration_test.cs` drives the same command-line extraction
-entry point exposed by `RSMods.exe`.
+entry point exposed by `RSMods.exe`. Its `--test-psarc-entry-paths` mode verifies
+that PSARC entry names are parsed as archive identifiers, including names with
+characters Windows rejects in filesystem paths and pathless TOC entries.
