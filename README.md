@@ -201,7 +201,6 @@ failure turns the mode off rather than play at a wrong pitch.
 | [docs/drop-pedal-multiplayer-findings.md](docs/drop-pedal-multiplayer-findings.md) | Technical findings behind multiplayer pitch processing |
 | [docs/speaker-mode-engine.md](docs/speaker-mode-engine.md) | Speaker Mode engine internals |
 | [docs/speaker-mode-investigation.md](docs/speaker-mode-investigation.md) | The investigation that led to the Speaker Mode design |
-| [docs/releasing.md](docs/releasing.md) | Release build, package contents and verification |
 
 ---
 
