@@ -5,9 +5,10 @@ through speakers, where the acoustic guitar is audible in the room.
 
 Speaker Mode processes the song rather than the guitar input or the current
 in-game tone, so it works identically with any input setup: a Real Tone Cable
-or an ASIO interface through RS_ASIO. It requires no MultiPitch tone. The
-matching `RSMods` settings-app folder must be installed because its helper,
-PSARC library, and Wwise decode tools prepare temporary full-song audio.
+or an ASIO interface through RS_ASIO. It requires no MultiPitch tone. Install
+upstream RSMods first for its PSARC library and Wwise decode tools, then extract
+the complete RSModsPlus release so its matching `RSMods.exe` can prepare the
+temporary full-song audio.
 
 Enable the feature in `RSMods.ini`:
 
@@ -146,7 +147,8 @@ guitar tuning.
 | Target keys do nothing in the pre-song tuner | Expected after chart synchronization; back out to select an octave offset, or use `F9` to correct the physical tuning |
 | Keys do nothing | Rocksmith is not focused, the mode is Off, or Speaker Mode gameplay has locked pitch changes |
 | Menu clicks do not change pitch | Expected; bank-backed menu SFX are excluded |
-| Log says `RSMods.exe` or a decode tool is missing | Install the matching `RSMods` folder from the same build as `xinput1_3.dll` |
+| The settings window opens when a song starts | The installed `RSMods.exe` is older than the RSModsPlus DLL; extract the complete release ZIP into the Rocksmith folder |
+| Log says `RSMods.exe` or a decode tool is missing | Install upstream RSMods, then extract the complete RSModsPlus release ZIP into the Rocksmith folder |
 | Song takes longer to enter the first time | The opening was not ready before leaving the tuner; later positions still render ahead |
 | Pitch cannot be changed during a song | Expected; Speaker Mode locks it to preserve zero-added-delay synchronization |
 | Music stays unshifted | Temporary-audio preparation or identity resolution failed; quit and attach `RSMods_debug.txt` to a bug report |
