@@ -133,17 +133,17 @@ can be loaded at a time.
 Install upstream RSMods 1.2.8.2 first. RSModsPlus uses its existing settings,
 libraries and decode tools.
 
-Back up `xinput1_3.dll`, `RSMods\RSMods.exe` and `RSMods\RSMods.exe.config` if
-you want to restore plain RSMods later. Then download the ZIP from the
+Back up `xinput1_3.dll` and `RSMods\RSMods.exe` if you want to restore plain
+RSMods later. Then download the ZIP from the
 [latest release](https://github.com/Cheesewizard/RSModsPlus/releases) and
 extract its complete contents into the Rocksmith 2014 folder. Allow it to
-replace `xinput1_3.dll`, `RSMods\RSMods.exe` and `RSMods\RSMods.exe.config`.
+replace `xinput1_3.dll` and `RSMods\RSMods.exe`.
 
 The updated settings executable also runs invisibly when Speaker Mode prepares
 full-song audio. The rest of the existing `RSMods` folder and `RSMods.ini`
 remain untouched.
 
-To uninstall, restore those three files, or reinstall upstream RSMods.
+To uninstall, restore those two files, or reinstall upstream RSMods.
 
 Requirements are upstream's: Steam Rocksmith 2014 Remastered on Windows, and
 the MS Visual C++ 2015-2019 redistributable. The ASIO engine additionally
@@ -192,15 +192,33 @@ failure turns the mode off rather than play at a wrong pitch.
 
 ## Documentation
 
+### User guides
+
 | Document | Covers |
 |---|---|
 | [docs/asio-drop-pedal.md](docs/asio-drop-pedal.md) | ASIO Drop Pedal: requirements, controls, multiplayer, bass, troubleshooting |
 | [docs/cable-drop-pedal.md](docs/cable-drop-pedal.md) | Cable Drop Pedal: tone setup, constraints, multiplayer, troubleshooting |
 | [docs/speaker-mode.md](docs/speaker-mode.md) | Speaker Mode: setup, choosing tunings, chart shapes, troubleshooting |
-| [docs/drop-pedal-multiplayer-design.md](docs/drop-pedal-multiplayer-design.md) | ASIO multiplayer architecture, lifecycle and performance data |
-| [docs/drop-pedal-multiplayer-findings.md](docs/drop-pedal-multiplayer-findings.md) | Technical findings behind multiplayer pitch processing |
-| [docs/speaker-mode-engine.md](docs/speaker-mode-engine.md) | Speaker Mode engine internals |
-| [docs/speaker-mode-investigation.md](docs/speaker-mode-investigation.md) | The investigation that led to the Speaker Mode design |
+
+### Designs
+
+| Document | Covers |
+|---|---|
+| [docs/designs/drop-pedal-multiplayer.md](docs/designs/drop-pedal-multiplayer.md) | Drop Pedal multiplayer architecture, lifecycle and performance data |
+| [docs/designs/speaker-mode.md](docs/designs/speaker-mode.md) | Speaker Mode engine internals |
+
+### Investigation records
+
+| Document | Covers |
+|---|---|
+| [docs/investigations/drop-pedal-multiplayer.md](docs/investigations/drop-pedal-multiplayer.md) | Earlier findings behind multiplayer pitch processing |
+| [docs/investigations/speaker-mode.md](docs/investigations/speaker-mode.md) | The investigation that led to the Speaker Mode design |
+
+### Technical reference
+
+| Document | Covers |
+|---|---|
+| [docs/wwise-plugin-internals.md](docs/wwise-plugin-internals.md) | Reverse-engineered Wwise plugin structures used by the Cable engine |
 
 ---
 

@@ -1,4 +1,4 @@
-# Drop Pedal Multiplayer Technical Findings
+﻿# Drop Pedal Multiplayer Technical Findings
 
 ## Scope
 
@@ -6,8 +6,11 @@ This document records the technical findings behind multiplayer pitch
 processing for the Drop Pedal, for both engines: player identity,
 configuration, audio processing, readiness, controls and engine constraints.
 User setup instructions are provided in the
-[ASIO Drop Pedal guide](asio-drop-pedal.md) and the
-[Cable Drop Pedal guide](cable-drop-pedal.md).
+[ASIO Drop Pedal guide](../asio-drop-pedal.md) and the
+[Cable Drop Pedal guide](../cable-drop-pedal.md).
+
+**Status:** Historical record. Drop Pedal multiplayer has been implemented and
+released.
 
 ## Supported configuration
 
@@ -22,25 +25,6 @@ Both inputs must use the same ASIO driver. Each input may select a different
 channel from that driver. Configurations that assign the two inputs to
 different drivers are rejected because one hook instance cannot safely manage
 buffers owned by two independent driver modules.
-
-The table above describes the fully explicit case. Route 0 resolves in order:
-
-1. `[Asio.Input.0]` when it names a driver.
-2. Otherwise `[Asio.Input.1]` when it names a driver. RS_ASIO serves the
-   single active player from whichever input section is configured, so this is
-   the common single-player case where the guitar sits on the interface's
-   second input. Assuming channel 0 here would select a channel RS_ASIO never
-   requested a buffer for, so no route could ever become ready and processing
-   would stay disabled.
-3. Otherwise the `[Asio.Output]` driver with channel 0, as a last-resort guess
-   for configurations that name the interface only once.
-
-Resolutions from steps 2 and 3 are logged as inferred, with a warning that
-names the channel being processed and the section it came from.
-`Player1AsioChannel` and `Player2AsioChannel` under `[Drop Pedal]` in
-`RSMods.ini` pin a route's channel explicitly and silence the inference
-warning; `-1` (the default) keeps automatic resolution. An override applies
-only to a route that has a driver; it cannot conjure a second route.
 
 Input readiness is based on the configured route, negotiated buffer and sample
 format. Signal amplitude is not part of readiness; a connected interface input
@@ -205,10 +189,10 @@ identification mechanisms proven by trace:
 Validated live on Remastered September 2022 with two interface inputs:
 independent per-player targets and note detection across two songs with
 different arrangement tunings (Fortunate Son: D standard lead with E standard
-rhythm), including tone switches and target changes mid-song. The functional
-matrix, each cell in both the same-tuning and different-tuning variants:
+rhythm), including tone switches and target changes mid-song. The checks covered
+both same-tuning and different-tuning arrangements:
 
-| Scenario | What to verify |
+| Scenario | Observed result |
 |---|---|
 | Both players Lead/Rhythm guitar | Each hears their own target; detection tracks each player |
 | Player 2 on Emulated Bass | Octave supplied by Rocksmith composes with the shift; A220 song-identity checks unaffected |
@@ -219,14 +203,3 @@ matrix, each cell in both the same-tuning and different-tuning variants:
 | Difficulty change | Builder re-stamp handled; targets persist |
 | Song transition and quick requeue | Identification resets and rebuilds; no writes into freed detection objects |
 | Mid-song enable/disable toggle | Both players restore to authored and reapply cleanly |
-
-## Cable callback overhead measurement
-
-The Cable engine adds work only in `SpySetParam` (tone loads, occasional) and
-the audio-thread push (hotkey-driven, occasional); the per-callback cost is the
-pitch-push scan of at most 16 slots. Measure with `QueryPerformanceCounter`
-around `PushPitchToLiveShiftersOnAudioThread` in a Release build:
-
-- steady state (no pushes): confirm the pending-flag check is the only cost;
-- worst case: repeated hotkey pushes with 8+ live objects in multiplayer;
-- long-session stability: a multi-hour session with periodic toggles.

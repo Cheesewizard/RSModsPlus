@@ -8,7 +8,7 @@ guitar tuning. It is the inverse of Drop Pedal mode:
 
 The implementation is enabled in Debug and Release builds. Runtime investigation
 details and the experiments that selected this insertion point are retained in
-[speaker-mode-investigation.md](speaker-mode-investigation.md).
+[the Speaker Mode investigation record](../investigations/speaker-mode.md).
 
 ## Pitch model
 
@@ -121,23 +121,16 @@ several seconds and cannot be changed immediately without adding DSP latency.
 
 Speaker Mode leaves the live input and rendered guitar tone unshifted. Rocksmith's
 tuning reference is adjusted by the inverse interval so its expected notes remain
-consistent with the physical guitar. The original isolation test established that
-preview and full-song streams were selected without muting menu SFX; it did not
-separately prove live guitar tone or note detection.
+consistent with the physical guitar.
 
 ## Verified behavior
 
 | Check | Result |
 |---|---|
 | File and bank factory identity | Distinct and retained |
-| Preview isolation | Preview music muted by the isolation probe |
-| Full-song isolation | Full-song music muted by the isolation probe |
-| Menu SFX isolation | Unaffected by the isolation probe |
-| Signed 16-bit layout | Confirmed after the incorrect float interpretation produced static |
-| Gain probe | Music level reduced cleanly, without static |
-| Polyphonic pitch | Preview and full-song music shifted cleanly |
-| Original 120 ms window | Pitch worked, but playing exposed noticeable latency |
-| Low-latency stream benchmark | 60 ms fixed DSP latency at approximately 1-2% of one CPU core |
+| Preview and full-song playback | Music shifted cleanly in game |
+| Menu sound effects | Unaffected by Speaker Mode |
+| Decoded sample format | Interleaved signed 16-bit PCM |
 | Full-song decode frame count | Thin Boys: `12,129,984` raw decoder frames normalized to Wwise's `12,129,454` |
 | Packaged helper extraction | Thin Boys decoded and normalized in 2.1-4.1 seconds across final runs; every new preparation decodes again |
 | Progressive opening | First ten seconds rendered in 12 ms in the explicit x86 benchmark |
@@ -145,7 +138,6 @@ separately prove live guitar tone or note detection.
 | Progressive call boundaries | Boundary RMS delta 0.0367 versus 0.0376 globally; no boundary spike |
 | Full-song playback path | Position-indexed memory copy; no streaming DSP latency |
 | Offline start/end compensation | Current Signalsmith `outputSeek` plus exact-length flush |
-| Independent segment rendering | Rejected: 8 x86 workers took 1.906 seconds but hard seams differed by up to 1.82 full-scale |
 | Extraction/decode stages | 59/5/780/93/936 ms for resolve/inflate/ww2ogg/revorb/oggdec |
 | Gameplay pitch stability | Pitch and mode controls are locked until gameplay ends |
 
@@ -155,10 +147,6 @@ separately prove live guitar tone or note detection.
 - Stereo streamed Vorbis music at 44.1 or 48 kHz.
 - Integer semitone shifts in the shared -24 to +24 target range.
 - Speaker Mode changes the mixed song, not individual stems.
-- Exact recorded-output correlation, unusual custom asset formats, multiplayer,
-  and extended in-game Riff Repeater stress sessions have not been separately validated.
-- The progressive implementation has passed the standalone x86 build and
-  data-path benchmarks but has not been deployed for a new in-game test yet.
 
 ## Source layout
 

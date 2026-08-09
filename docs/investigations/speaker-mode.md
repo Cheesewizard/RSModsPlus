@@ -3,7 +3,9 @@
 This is the reverse-engineering record behind Speaker Mode: how the insertion
 point was chosen, what each verification step showed, and the findings that did
 not end up in the shipped implementation. The shipped design itself is described
-in [speaker-mode-engine.md](speaker-mode-engine.md).
+in [the Speaker Mode design](../designs/speaker-mode.md).
+
+**Status:** Historical record. Speaker Mode has been implemented and released.
 
 ## Insertion-layer selection
 
@@ -195,20 +197,6 @@ need to reproduce the private output-state contract, keep the decoder object's
 hidden position ahead of the pipeline, handle seeks and end-of-stream state, and
 serve buffers with Wwise-compatible lifetimes. An independent decoder plus
 position-indexed replacement leaves the original decoder state untouched.
-
-Verification must include a generated transient fixture whose source sample
-positions are known, prepared-audio reads across every 128-frame boundary, start/end
-padding, Riff Repeater seeks, preview-to-song transitions, and recorded-output
-onset comparison. Success means the shifted transient is emitted at the same
-Wwise `positionStart` as its unshifted source, not merely that processing runs
-faster than real time.
-
-Factory and source-identity logging worked without an active audio output
-device; only the decoder-output callbacks require playback. The replacement has
-passed standalone extraction, frame-count, render, cancellation-path compilation,
-and 32-bit Release build checks. It has deliberately not been deployed yet; live
-preview routing, recorded onset, and extended in-game Riff Repeater tests remain
-the gate before another DLL is installed.
 
 Primary references:
 

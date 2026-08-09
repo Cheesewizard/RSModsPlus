@@ -66,7 +66,7 @@ lightweight format conversion and history update still run so engaging the
 pedal starts from live input instead of an empty delay line. Two players with
 non-zero targets run two complete shifter workloads. Architecture, lifecycle
 and reference performance data are documented in
-[ASIO Drop Pedal Multiplayer Architecture](drop-pedal-multiplayer-design.md).
+[ASIO Drop Pedal Multiplayer Architecture](designs/drop-pedal-multiplayer.md).
 
 ## Controls
 
