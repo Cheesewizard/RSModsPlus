@@ -133,17 +133,17 @@ can be loaded at a time.
 Install upstream RSMods 1.2.8.2 first. RSModsPlus uses its existing settings,
 libraries and decode tools.
 
-Back up `xinput1_3.dll`, `RSMods\RSMods.exe` and `RSMods\RSMods.exe.config` if
-you want to restore plain RSMods later. Then download the ZIP from the
+Back up `xinput1_3.dll` and `RSMods\RSMods.exe` if you want to restore plain
+RSMods later. Then download the ZIP from the
 [latest release](https://github.com/Cheesewizard/RSModsPlus/releases) and
 extract its complete contents into the Rocksmith 2014 folder. Allow it to
-replace `xinput1_3.dll`, `RSMods\RSMods.exe` and `RSMods\RSMods.exe.config`.
+replace `xinput1_3.dll` and `RSMods\RSMods.exe`.
 
 The updated settings executable also runs invisibly when Speaker Mode prepares
 full-song audio. The rest of the existing `RSMods` folder and `RSMods.ini`
 remain untouched.
 
-To uninstall, restore those three files, or reinstall upstream RSMods.
+To uninstall, restore those two files, or reinstall upstream RSMods.
 
 Requirements are upstream's: Steam Rocksmith 2014 Remastered on Windows, and
 the MS Visual C++ 2015-2019 redistributable. The ASIO engine additionally

@@ -10,9 +10,9 @@ it.
 - Download the **release ZIP**. It contains the matching `RSMods.exe` required
   by Speaker Mode.
 - Close the game, then extract the complete ZIP into the Rocksmith 2014 folder.
-  Allow it to replace `xinput1_3.dll`, `RSMods\RSMods.exe` and
-  `RSMods\RSMods.exe.config`. Replacing files while the game or settings app
-  runs will fail because the loaded files are locked.
+  Allow it to replace `xinput1_3.dll` and `RSMods\RSMods.exe`. Replacing files
+  while the game or settings app runs will fail because the loaded files are
+  locked.
 
 ## 2. Enable the pedal
 
