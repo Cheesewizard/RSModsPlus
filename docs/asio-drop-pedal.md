@@ -144,6 +144,21 @@ Changing Player 1 from Lead to Emulated Bass or Physical Bass keeps using
 | Pitch keys do nothing | Pitch processing is Off (`F7`), Speaker Mode gameplay has locked the controls, or Rocksmith is not the focused window |
 | Player 2 controls report that Input 1 is unavailable | `[Asio.Input.1]` is not configured; signal level is not part of this check |
 
+### Automatic mode remains on Cable
+
+If the guitar already works through RS_ASIO but the engine notice remains
+`Cable Drop Pedal`, explicitly select the ASIO engine in `RSMods.ini` and
+restart Rocksmith:
+
+```ini
+[Drop Pedal]
+EnableDropPedal = on
+Engine = asio
+```
+
+This disables the Cable fallback. If the ASIO input chain does not initialize,
+the Drop Pedal remains inactive instead of using a MultiPitch tone.
+
 ### Wrong ASIO input selected
 
 Check the `shifter will process ASIO channel` line in `RSMods_debug.txt`. If it

@@ -73,3 +73,4 @@ After starting the game, the top of the log tells the whole story:
 | Rocksmith is not the focused window | The keys only work with the game focused |
 | Log shows an old version | Replace the DLL in the folder Steam opens via Manage > Browse local files, with the game closed |
 | No log file appears at all | The DLL is not loading; verify the release ZIP was extracted into the folder containing `Rocksmith2014.exe` |
+| RS_ASIO works but the engine remains `Cable Drop Pedal` | Set `Engine = asio` under `[Drop Pedal]`, then restart. This disables the Cable fallback |
