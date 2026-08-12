@@ -1,5 +1,8 @@
 # RSModsPlus
 
+If RSModsPlus has saved you time or made Rocksmith more enjoyable, consider
+buying me a beer. Your support helps me keep improving the mod.
+
 <a href="https://buymeacoffee.com/cheesewizard">
   <img src="docs/images/buy-me-a-beer-alt-amplifier-v2.png" alt="Buy me a beer" width="240">
 </a>
@@ -224,8 +227,8 @@ failure turns the mode off rather than play at a wrong pitch.
 
 ## Support
 
-RSModsPlus is free. If it helped you and you want to support the work, you can
-[buy me a beer](https://buymeacoffee.com/cheesewizard):
+If RSModsPlus has saved you time or made Rocksmith more enjoyable, consider
+buying me a beer. Your support helps me keep improving the mod.
 
 <a href="https://buymeacoffee.com/cheesewizard">
   <img src="docs/images/buy-me-a-beer-alt-amplifier-v2.png" alt="Buy me a beer" width="240">
