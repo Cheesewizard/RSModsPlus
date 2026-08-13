@@ -8,31 +8,61 @@ buying me a beer. Your support helps me keep improving the mod.
 </a>
 <br><br>
 
-A fork of [RSMods](https://github.com/Lovrom8/RSMods) that adds pitch routing
-to Rocksmith 2014: a **Drop Pedal** that shifts the guitar to the song, and a
-**Speaker Mode** that shifts the song to the guitar.
+A fork of [RSMods](https://github.com/Lovrom8/RSMods) that lets you play songs
+in a different tuning without retuning your guitar:
 
-`F7` cycles between the two modes and Off. Range is -24 to +24 semitones.
-Supported game versions: Rocksmith 2014 Remastered (September 2022 update) and
-Learn & Play (December 2024 update). Drop Pedal multiplayer is supported on
-both versions.
+- **Drop Pedal** shifts the guitar to match the song.
+- **Speaker Mode** shifts the song to match the guitar.
+
+`F7` cycles through Drop Pedal, Speaker Mode and Off. Both modes support shifts
+from -24 to +24 semitones. RSModsPlus supports Rocksmith 2014 Remastered
+(September 2022 update) and Learn & Play (December 2024 update). Drop Pedal
+also supports two-player arrangements on both versions.
 
 https://github.com/user-attachments/assets/c8951c94-e760-4830-a8f5-6b383dbb05da
 
 ## Quick start
 
-1. Make sure this is in `RSMods.ini` next to `Rocksmith2014.exe`:
+### 1. Enable the feature
 
-   ```ini
-   [Drop Pedal]
-   EnableDropPedal = on
-   Engine = automatic
-   ```
+Close Rocksmith, then open `RSMods.ini` next to `Rocksmith2014.exe`. Make sure
+it contains this block:
 
-2. Start Rocksmith and press `F7` once. The top-left readout changes from
+```ini
+[Drop Pedal]
+EnableDropPedal = on
+Engine = automatic
+```
+
+If the `[Drop Pedal]` section is missing, add it manually. Seeing the Drop
+Pedal settings in `RSMods.exe` does not guarantee that this block is already in
+your INI file. Settings are read when Rocksmith starts, so restart the game
+after changing them.
+
+### 2. Choose the setup that matches your input
+
+| Your setup | What you need before playing | Guide |
+|---|---|---|
+| **ASIO interface with RS_ASIO** | Nothing else. Stock and custom tones work normally | [ASIO Drop Pedal](docs/asio-drop-pedal.md) |
+| **Real Tone Cable without RS_ASIO** | A custom tone containing a **MultiPitch** pedal with `Pitch 1 = 0.00` and `Mix = 100%`. Select that tone in every song | [Cable Drop Pedal](docs/cable-drop-pedal.md) |
+| **Real Tone Cable with speakers** | No MultiPitch tone. Use Speaker Mode to shift the song while the physical guitar remains audible in the room | [Speaker Mode](docs/speaker-mode.md) |
+
+> **Real Tone Cable users:** the current Cable Drop Pedal does not work with a
+> stock tone. You must [build and assign a MultiPitch tone](docs/cable-drop-pedal.md#setup-build-the-tone),
+> then select its tone slot after the song loads. The pedal uses Rocksmith's
+> built-in pitch effect, so it has more latency and stronger audio artefacts
+> than the ASIO engine.
+
+Leave `Engine = automatic` unless the troubleshooting guide tells you to
+override it. Automatic mode uses ASIO when a working RS_ASIO input is ready;
+otherwise it uses the Cable engine.
+
+### 3. Use it in Rocksmith
+
+1. Start Rocksmith and press `F7` once. The top-left readout changes from
    `Pitch: Off` to `Drop: E`.
 
-3. Match the readout to the song. Press `,` to move down one semitone or `.`
+2. Match the readout to the song. Press `,` to move down one semitone or `.`
    to move up one semitone. For example, with a guitar in E standard and an Eb
    song, press `,` once until the readout says `Drop: E -> Eb (-1)`.
 
@@ -44,10 +74,9 @@ Other controls:
 | Move the target down / up | `,` / `.` | `Control+,` / `Control+.` |
 | Tell the mod the guitar's physical tuning | `F9` | `Control+F9` |
 
-Settings are read when the game starts, and every session starts at
-`Pitch: Off`. If the keys do nothing or the mod seems missing, the
-[Quick Start guide](docs/quick-start.md) walks through the install gotchas
-and the extra controls.
+Every session starts at `Pitch: Off`. If the keys do nothing or the mod seems
+missing, the full [Quick Start guide](docs/quick-start.md) walks through the
+installation checks and common problems.
 
 ---
 
@@ -67,7 +96,8 @@ Two engines realise the shift, selected at launch and announced on screen:
   stock or custom, receives the shifted signal.
 - **Cable engine**: without RS_ASIO, such as a plain Real Tone cable, the
   shift is applied through a MultiPitch pedal in the tone and the game's
-  tuning reference is transposed to match.
+  tuning reference is transposed to match. This route requires a custom tone
+  and uses Rocksmith's higher-latency pitch effect.
 
 Multiplayer is supported by both engines: each player has an independent
 target and base tuning (`Control` + the pedal keys addresses Player 2), with
@@ -124,6 +154,24 @@ it: extended range mode, custom song list titles, toggle loft, force
 re-enumeration, GuitarSpeak, and the rest. See
 [upstream's README](https://github.com/Lovrom8/RSMods#readme) for that list
 and for the full `RSMods.ini` reference.
+
+---
+
+## Roadmap
+
+These items are being investigated or developed. They are **not available in
+the current release** and will only ship after focused tests and in-game
+validation.
+
+| Work | Status | Goal |
+|---|---|---|
+| **Note by Note** | In development | Add a Riff Repeater practice mode that stops at each expected chart note and waits for you to play it correctly before continuing |
+| **Raw Real Tone Cable processing** ([issue #18](https://github.com/Cheesewizard/RSModsPlus/issues/18)) | Investigation planned | Process Cable input before Rocksmith's detection and tone systems. If the required capture point is proven safe, this will replace the current MultiPitch workaround and give Cable users an ASIO-style setup with no special tone |
+| **Volume on large ASIO shifts** ([issue #17](https://github.com/Cheesewizard/RSModsPlus/issues/17)) | Under investigation | Reproduce the reported volume loss on large downward shifts, identify whether it comes from the shifter or the Rocksmith tone, and fix the cause without applying a blanket gain boost |
+
+The issue links contain the investigation scope and acceptance criteria. A
+roadmap entry is a direction, not a promise that the reverse-engineering work
+will prove practical.
 
 ---
 
@@ -199,6 +247,7 @@ failure turns the mode off rather than play at a wrong pitch.
 
 | Document | Covers |
 |---|---|
+| [docs/quick-start.md](docs/quick-start.md) | Installation, enabling the feature and first-use troubleshooting |
 | [docs/asio-drop-pedal.md](docs/asio-drop-pedal.md) | ASIO Drop Pedal: requirements, controls, multiplayer, bass, troubleshooting |
 | [docs/cable-drop-pedal.md](docs/cable-drop-pedal.md) | Cable Drop Pedal: tone setup, constraints, multiplayer, troubleshooting |
 | [docs/speaker-mode.md](docs/speaker-mode.md) | Speaker Mode: setup, choosing tunings, chart shapes, troubleshooting |
