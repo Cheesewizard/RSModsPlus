@@ -14,13 +14,13 @@ This guide covers the ASIO engine. For setups without RS_ASIO, see the
 
 - Set up [RS_ASIO](https://github.com/mdias/rs_asio) first and confirm that the
   unshifted guitar works in Rocksmith.
+- The ASIO Drop Pedal integration in this release requires RS_ASIO v0.7.5.
 - Enable the feature using the [Quick Start](quick-start.md). There is no
   special in-game tone to install; the pedal works with stock and custom
   tones.
 - Input selection is automatic. A single-player setup needs no extra channel
   settings in `RSMods.ini`.
 - For two players, configure both Rocksmith inputs in `RS_ASIO.ini` as normal.
-  Both inputs must use the same audio interface.
 
 The engine is selected at launch and announced beside the pedal readout, then
 fades after a few seconds:
@@ -35,14 +35,15 @@ Pedal`, the ASIO chain did not initialize; see
 
 ## How it works
 
-The mod hooks the ASIO driver underneath RS_ASIO and gives each configured
-Rocksmith input its own persistent pitch shifter. Each route is shifted before
-the game receives it. The shifter uses period-synchronous splicing. Rocksmith
-therefore receives each player's shifted input signal, so detection, the tuner
-and tone processing operate on the same pitch-shifted audio. The pedal does not
-modify Rocksmith's tuning reference. Arrangements authored for A != 440 retain
-that reference, so each instrument must be true-tuned as Rocksmith normally
-requires before applying the semitone shift.
+The mod attaches to the capture endpoints RS_ASIO v0.7.5 already created and
+gives each configured Rocksmith input its own persistent pitch shifter. It does
+not start the ASIO driver early or create a second ASIO host. Each route is
+shifted before the game receives it. The shifter uses period-synchronous
+splicing. Rocksmith therefore receives each player's shifted input signal, so
+detection, the tuner and tone processing operate on the same pitch-shifted
+audio. The pedal does not modify Rocksmith's tuning reference. Arrangements
+authored for A != 440 retain that reference, so each instrument must be
+true-tuned as Rocksmith normally requires before applying the semitone shift.
 
 At 48 kHz with 128-frame callbacks, the production-shifter harness measures
 roughly 6-20 ms of observable content delay depending on the note and shift.
@@ -138,7 +139,7 @@ Changing Player 1 from Lead to Emulated Bass or Physical Bass keeps using
 | Symptom | Cause |
 |---|---|
 | Engine notice reads `Cable Drop Pedal` | A configured ASIO route did not initialize. Check the driver and channel under both `[Asio.Input.0]` and `[Asio.Input.1]` |
-| Pedal engages but the guitar's pitch never changes | The automatic route may have selected another input, such as a microphone. Follow [Wrong ASIO input selected](#wrong-asio-input-selected) below |
+| Pedal engages but the guitar's pitch never changes | RS_ASIO may be capturing another interface channel. Follow [Wrong ASIO input selected](#wrong-asio-input-selected) below |
 | Game reports "no audio output device" on launch | Another program changed the interface's sample rate (DAWs and amp sims do this silently). Set it back to 48000 Hz in the interface's control panel and relaunch |
 | Tuner reads a different tuning than the guitar is in | The shift, working as designed |
 | Pitch keys do nothing | Pitch processing is Off (`F7`), Speaker Mode gameplay has locked the controls, or Rocksmith is not the focused window |
@@ -161,11 +162,10 @@ the Drop Pedal remains inactive instead of using a MultiPitch tone.
 
 ### Wrong ASIO input selected
 
-Check the `shifter will process ASIO channel` line in `RSMods_debug.txt`. If it
-does not match the guitar's `Channel =` value in `RS_ASIO.ini`, copy that number
-to `Player1AsioChannel` under `[Drop Pedal]` in `RSMods.ini`, then restart the
-game. Use `Player2AsioChannel` for Player 2. Removing the setting returns to
-automatic routing.
+RS_ASIO owns the input channel before the mod attaches. Change `Channel =`
+under the corresponding `[Asio.Input.0]` or `[Asio.Input.1]` section in
+`RS_ASIO.ini`, then restart the game. The log line beginning with
+`[AsioHook] Player` confirms which RS_ASIO endpoint and channel the mod follows.
 
 Logging is opt-in: enable it from the settings app before reproducing the
 issue, or the log will not exist. The log is `RSMods_debug.txt`, next to

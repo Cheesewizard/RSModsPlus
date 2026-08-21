@@ -86,10 +86,7 @@ namespace RSMods
                     { ReadSettings.DropPedalCustomOverlayColorsIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalCustomOverlayColorsIdentifier, "off") },
                     { ReadSettings.DropPedalOverlayDownColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayDownColorIdentifier, "6BE06B") },
                     { ReadSettings.DropPedalOverlayUpColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayUpColorIdentifier, "FFC24D") },
-                    { ReadSettings.DropPedalOverlayStatusColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayStatusColorIdentifier, "FFFFFF") },
-                    // No UI control; hand-edited values are preserved across saves. -1 = automatic.
-                    { ReadSettings.DropPedalPlayer1AsioChannelIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalPlayer1AsioChannelIdentifier, "-1") },
-                    { ReadSettings.DropPedalPlayer2AsioChannelIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalPlayer2AsioChannelIdentifier, "-1") }
+                    { ReadSettings.DropPedalOverlayStatusColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayStatusColorIdentifier, "FFFFFF") }
                 }
             );
             saveSettingsOrDefaults.Add(
