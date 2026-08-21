@@ -27,6 +27,13 @@ Engine = automatic
 With RS_ASIO installed, `automatic` uses the ASIO engine. Without RS_ASIO, it
 uses the Cable engine.
 
+### Optional: change the overlay colours
+
+Open the bundled `RSMods\RSMods.exe`, go to **Enable / Disable Mods > Tuning**
+and enable **Custom overlay colours**. Choose the colours used for downward
+shifts, upward shifts and status text. These settings affect the Drop Pedal
+readout only.
+
 ## 3. Use Drop Pedal in game
 
 Every launch starts at `Pitch: Off`, regardless of the previous session.
@@ -60,7 +67,7 @@ After starting the game, the top of the log tells the whole story:
 
 | Log line | Meaning |
 |---|---|
-| `RSModsPlus 3.2 ...` | The mod DLL loaded. The `(based on RSMods 1.2.8.2)` part is the upstream base version, not the installed version. |
+| `RSModsPlus 3.3 ...` | The mod DLL loaded. The `(based on RSMods 1.2.8.2)` part is the upstream base version, not the installed version. |
 | `Drop pedal engine: ASIO Drop Pedal` or `Cable Drop Pedal` | The pedal is enabled and which engine owns it. |
 | No `Drop pedal engine` line at all | `EnableDropPedal` is still `off` in `RSMods.ini`. |
 | Old version number at the top | The old DLL is still loading: the replacement went to the wrong folder, the copy was blocked, or antivirus interfered. |

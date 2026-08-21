@@ -191,10 +191,6 @@ void DropPedal::InstallInputHooks()
 {
 	if (!ShouldInstallInputHooks()) return;
 
-	Audio::AsioHook::SetChannelOverride(GetPlayerIndex(Player::One),
-		Settings::GetModSetting("DropPedalPlayer1AsioChannel"));
-	Audio::AsioHook::SetChannelOverride(GetPlayerIndex(Player::Two),
-		Settings::GetModSetting("DropPedalPlayer2AsioChannel"));
 	Audio::AsioHook::Install();
 	Audio::AsioHook::SetProcessor(GetPlayerIndex(Player::One), &playerOneInputPitchShifter);
 	Audio::AsioHook::SetProcessor(GetPlayerIndex(Player::Two), &playerTwoInputPitchShifter);

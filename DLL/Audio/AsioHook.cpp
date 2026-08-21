@@ -5,129 +5,97 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <type_traits>
 
 namespace Audio::AsioHook
 {
 	namespace
 	{
-		// Minimal slice of the ASIO SDK. Pulling in the real headers means agreeing to
-		// Steinberg's licence for a handful of structures, so the ones we touch are declared
-		// here instead. Layout must match the SDK exactly or the driver will write past us.
-		typedef long ASIOBool;
-		typedef long ASIOError;
-		typedef double ASIOSampleRate;
-
-		constexpr ASIOError ASE_OK = 0;
-		constexpr long ASIOSTInt16LSB = 16;
-		constexpr long ASIOSTInt24LSB = 17;
-		constexpr long ASIOSTInt32LSB = 18;
-		constexpr long ASIOSTFloat32LSB = 19;
-		constexpr long MAX_ASIO_CHANNEL_NAME = 32;
-
-		struct ASIOBufferInfo
-		{
-			ASIOBool isInput;
-			long channelNum;
-			void* buffers[2];
-		};
-
-		struct ASIOChannelInfo
-		{
-			long channel;
-			ASIOBool isInput;
-			ASIOBool isActive;
-			long channelGroup;
-			long type;
-			char name[MAX_ASIO_CHANNEL_NAME];
-		};
-
-		struct ASIOTime;
-
-		struct ASIOCallbacks
-		{
-			void (*bufferSwitch)(long doubleBufferIndex, ASIOBool directProcess);
-			void (*sampleRateDidChange)(ASIOSampleRate sRate);
-			long (*asioMessage)(long selector, long value, void* message, double* opt);
-			ASIOTime* (*bufferSwitchTimeInfo)(ASIOTime* params, long doubleBufferIndex, ASIOBool directProcess);
-		};
-
-		// IUnknown occupies slots 0-2; the ASIO methods follow in declaration order.
-		constexpr size_t SLOT_ASIO_GET_SAMPLE_RATE = 13;
-		constexpr size_t SLOT_ASIO_GET_CHANNEL_INFO = 18;
-		constexpr size_t SLOT_ASIO_CREATE_BUFFERS = 19;
-		constexpr size_t SLOT_CLASS_FACTORY_CREATE_INSTANCE = 3;
-
-		constexpr long MAX_BUFFER_FRAMES = 4096;
-		constexpr int MAX_INPUT_CHANNELS = 16;
+		constexpr size_t SLOT_CAPTURE_CLIENT_GET_BUFFER = 3;
+		constexpr uint32_t MAX_BUFFER_FRAMES = 4096;
 		constexpr float INT16_TO_FLOAT = 1.0f / 32768.0f;
 		constexpr float INT24_TO_FLOAT = 1.0f / 8388608.0f;
 		constexpr float INT32_TO_FLOAT = 1.0f / 2147483648.0f;
+		constexpr char RS_ASIO_VERSION_MARKER[] = "Wrapper DLL loaded (v0.7.5)";
+
+		constexpr std::array<uint8_t, 11> UNMARSHAL_CALL_PRE_PATCH =
+		{
+			0xe8, 0x59, 0xdf, 0xff, 0xff, 0x57, 0xe8, 0x33, 0xe0, 0xff, 0xff
+		};
+
+		constexpr std::array<uint8_t, 11> UNMARSHAL_CALL_POST_PATCH =
+		{
+			0xe8, 0x97, 0xe2, 0xff, 0xff, 0x57, 0xe8, 0x71, 0xe3, 0xff, 0xff
+		};
+
+		constexpr std::array<uint8_t, 11> UNMARSHAL_CALL_LEARN_AND_PLAY =
+		{
+			0xe8, 0xd6, 0xfd, 0xff, 0xff, 0x56, 0xe8, 0xb0, 0xfe, 0xff, 0xff
+		};
+
+		const GUID PCM_SUBFORMAT =
+		{
+			0x00000001, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 }
+		};
+
+		const GUID FLOAT_SUBFORMAT =
+		{
+			0x00000003, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 }
+		};
 
 		struct RsAsioConfiguration
 		{
-			std::string driverName;
-			std::array<std::string, INPUT_ROUTE_COUNT> inputDriverNames;
 			std::array<int, INPUT_ROUTE_COUNT> inputChannels{ 0, -1 };
 			std::array<bool, INPUT_ROUTE_COUNT> inputConfigured{ false, false };
-			// Where each route's channel came from, for the log. Routes marked inferred
-			// were not read from their own [Asio.Input.N] section and deserve a warning.
 			std::array<std::string, INPUT_ROUTE_COUNT> inputSources;
 			std::array<bool, INPUT_ROUTE_COUNT> inputInferred{ false, false };
 		};
 
-		typedef HRESULT(STDMETHODCALLTYPE* DllGetClassObject_t)(REFCLSID, REFIID, LPVOID*);
-		typedef HRESULT(STDMETHODCALLTYPE* CreateInstance_t)(IClassFactory*, IUnknown*, REFIID, void**);
-		typedef ASIOError(__fastcall* CreateBuffers_t)(void* self, void* unused, ASIOBufferInfo*, long, long, ASIOCallbacks*);
-		typedef ASIOError(__fastcall* GetChannelInfo_t)(void* self, void* unused, ASIOChannelInfo*);
-		typedef ASIOError(__fastcall* GetSampleRate_t)(void* self, void* unused, ASIOSampleRate*);
+		struct PaWasapiSubStreamPrefix
+		{
+			IUnknown* clientParent;
+			IUnknown* clientStream;
+			IUnknown* clientProc;
+			WAVEFORMATEXTENSIBLE waveFormat;
+			uint8_t remaining[0xdc - sizeof(WAVEFORMATEXTENSIBLE)];
+		};
 
-		DllGetClassObject_t original_DllGetClassObject = nullptr;
-		CreateInstance_t original_CreateInstance = nullptr;
-		CreateBuffers_t original_CreateBuffers = nullptr;
+		struct PaWasapiStreamPrefix
+		{
+			uint8_t prefix[0x108];
+			PaWasapiSubStreamPrefix input;
+			IUnknown* captureClientParent;
+			IUnknown* captureClientStream;
+			IAudioCaptureClient* captureClient;
+		};
 
-		GUID driverClassId{};
-		std::string driverName;
+		static_assert(sizeof(void*) == 4, "RSModsPlus and Rocksmith require a 32-bit build");
+		static_assert(offsetof(PaWasapiStreamPrefix, input.waveFormat) == 0x114, "Unexpected PortAudio input format offset");
+		static_assert(offsetof(PaWasapiStreamPrefix, captureClientParent) == 0x1f0, "Unexpected PortAudio capture parent offset");
+		static_assert(offsetof(PaWasapiStreamPrefix, captureClient) == 0x1f8, "Unexpected PortAudio capture client offset");
 
-		// Written once during createBuffers, read on the ASIO callback thread afterwards.
-		void* inputBuffers[MAX_INPUT_CHANNELS][2] = {};		// [inputIndex][doubleBufferIndex]
-		long inputChannelNumbers[MAX_INPUT_CHANNELS] = {};
-		long inputSampleTypes[MAX_INPUT_CHANNELS] = {};
-		int discoveredInputChannels = 0;
-		long activeBufferFrames = 0;
-
-		ASIOCallbacks originalCallbacks{};
-		ASIOCallbacks hookedCallbacks{};
+		using UnmarshalStreamComPointers_t = HRESULT(__cdecl*)(void*);
+		using CaptureGetBuffer_t = HRESULT(STDMETHODCALLTYPE*)(
+			IAudioCaptureClient*, BYTE**, UINT32*, DWORD*, UINT64*, UINT64*);
 
 		std::array<CaptureFormat, INPUT_ROUTE_COUNT> routeFormats;
 		std::array<std::vector<float>, INPUT_ROUTE_COUNT> conversionBuffers;
-
-		std::atomic<IInputProcessor*> activeProcessors[INPUT_ROUTE_COUNT] = {};
+		std::array<std::atomic<IInputProcessor*>, INPUT_ROUTE_COUNT> activeProcessors;
+		std::array<std::atomic<IAudioCaptureClient*>, INPUT_ROUTE_COUNT> routeCaptureClients;
 		std::array<int, INPUT_ROUTE_COUNT> selectedInputChannels{ -1, -1 };
-		std::array<int, INPUT_ROUTE_COUNT> channelOverrides{ -1, -1 };
-		std::array<int, INPUT_ROUTE_COUNT> resolvedInputIndices{ -1, -1 };
 		std::array<bool, INPUT_ROUTE_COUNT> configuredInputs{ false, false };
-		std::atomic<bool> inputReady[INPUT_ROUTE_COUNT] = {};
+		std::array<std::atomic<bool>, INPUT_ROUTE_COUNT> inputReady;
 		std::atomic<bool> bufferLayoutReady{ false };
 		std::atomic<bool> processingEnabled{ false };
 		std::atomic<bool> autoEnabledOnce{ false };
+		std::mutex registrationMutex;
 
-		SampleFormat GetSampleFormat(long sampleType)
-		{
-			switch (sampleType)
-			{
-			case ASIOSTFloat32LSB:
-				return SampleFormat::Float32;
-			case ASIOSTInt32LSB:
-				return SampleFormat::Int32;
-			case ASIOSTInt24LSB:
-				return SampleFormat::Int24;
-			case ASIOSTInt16LSB:
-				return SampleFormat::Int16;
-			default:
-				return SampleFormat::Unsupported;
-			}
-		}
+		UnmarshalStreamComPointers_t originalUnmarshalStreamComPointers = nullptr;
+		CaptureGetBuffer_t originalCaptureGetBuffer = nullptr;
+		void** captureClientVTable = nullptr;
 
 		float ClampSample(float value)
 		{
@@ -139,9 +107,6 @@ namespace Audio::AsioHook
 		SampleType FloatToSignedInteger(float value)
 		{
 			static_assert(std::is_signed<SampleType>::value, "SampleType must be signed");
-			static_assert(BIT_DEPTH > 1 && BIT_DEPTH <= 32, "BIT_DEPTH must fit a signed 32-bit sample");
-			static_assert(sizeof(SampleType) * 8 >= BIT_DEPTH, "SampleType is too small for BIT_DEPTH");
-
 			constexpr int64_t magnitude = int64_t{ 1 } << (BIT_DEPTH - 1);
 			const float clamped = ClampSample(value);
 			if (clamped <= -1.0f) return static_cast<SampleType>(-magnitude);
@@ -151,93 +116,21 @@ namespace Audio::AsioHook
 
 		int32_t ReadInt24(const uint8_t* sample)
 		{
-			const uint32_t packed = (uint32_t)sample[0]
-				| ((uint32_t)sample[1] << 8)
-				| ((uint32_t)sample[2] << 16);
+			const uint32_t packed = static_cast<uint32_t>(sample[0])
+				| (static_cast<uint32_t>(sample[1]) << 8)
+				| (static_cast<uint32_t>(sample[2]) << 16);
 
 			return (packed & 0x00800000u) != 0
-				? (int32_t)packed - 0x01000000
-				: (int32_t)packed;
+				? static_cast<int32_t>(packed) - 0x01000000
+				: static_cast<int32_t>(packed);
 		}
 
 		void WriteInt24(int32_t value, uint8_t* sample)
 		{
-			const uint32_t packed = (uint32_t)value;
-			sample[0] = (uint8_t)packed;
-			sample[1] = (uint8_t)(packed >> 8);
-			sample[2] = (uint8_t)(packed >> 16);
-		}
-
-		bool ConvertInputToFloat(void* input, long sampleType, size_t count, float* output)
-		{
-			switch (sampleType)
-			{
-			case ASIOSTFloat32LSB:
-			{
-				const float* samples = reinterpret_cast<const float*>(input);
-				for (size_t i = 0; i < count; ++i)
-					output[i] = samples[i];
-				return true;
-			}
-			case ASIOSTInt32LSB:
-			{
-				const int32_t* samples = reinterpret_cast<const int32_t*>(input);
-				for (size_t i = 0; i < count; ++i)
-					output[i] = (float)samples[i] * INT32_TO_FLOAT;
-				return true;
-			}
-			case ASIOSTInt24LSB:
-			{
-				const uint8_t* samples = reinterpret_cast<const uint8_t*>(input);
-				for (size_t i = 0; i < count; ++i)
-					output[i] = (float)ReadInt24(samples + i * 3) * INT24_TO_FLOAT;
-				return true;
-			}
-			case ASIOSTInt16LSB:
-			{
-				const int16_t* samples = reinterpret_cast<const int16_t*>(input);
-				for (size_t i = 0; i < count; ++i)
-					output[i] = (float)samples[i] * INT16_TO_FLOAT;
-				return true;
-			}
-			default:
-				return false;
-			}
-		}
-
-		void ConvertFloatToInput(void* input, long sampleType, size_t count, const float* converted)
-		{
-			switch (sampleType)
-			{
-			case ASIOSTFloat32LSB:
-			{
-				float* samples = reinterpret_cast<float*>(input);
-				for (size_t i = 0; i < count; ++i)
-					samples[i] = ClampSample(converted[i]);
-				break;
-			}
-			case ASIOSTInt32LSB:
-			{
-				int32_t* samples = reinterpret_cast<int32_t*>(input);
-				for (size_t i = 0; i < count; ++i)
-					samples[i] = FloatToSignedInteger<int32_t, 32>(converted[i]);
-				break;
-			}
-			case ASIOSTInt24LSB:
-			{
-				uint8_t* samples = reinterpret_cast<uint8_t*>(input);
-				for (size_t i = 0; i < count; ++i)
-					WriteInt24(FloatToSignedInteger<int32_t, 24>(converted[i]), samples + i * 3);
-				break;
-			}
-			case ASIOSTInt16LSB:
-			{
-				int16_t* samples = reinterpret_cast<int16_t*>(input);
-				for (size_t i = 0; i < count; ++i)
-					samples[i] = FloatToSignedInteger<int16_t, 16>(converted[i]);
-				break;
-			}
-			}
+			const uint32_t packed = static_cast<uint32_t>(value);
+			sample[0] = static_cast<uint8_t>(packed);
+			sample[1] = static_cast<uint8_t>(packed >> 8);
+			sample[2] = static_cast<uint8_t>(packed >> 16);
 		}
 
 		RsAsioConfiguration ReadRsAsioConfiguration()
@@ -246,54 +139,37 @@ namespace Audio::AsioHook
 			if (reader.LoadFile("RS_ASIO.ini") < 0) return {};
 
 			RsAsioConfiguration configuration;
-
 			const char* inputZeroDriver = reader.GetValue("Asio.Input.0", "Driver", "");
 			const char* inputOneDriver = reader.GetValue("Asio.Input.1", "Driver", "");
-			const bool inputZeroNamesDriver = inputZeroDriver && *inputZeroDriver;
-			const bool inputOneNamesDriver = inputOneDriver && *inputOneDriver;
+			const bool hasInputZero = inputZeroDriver && *inputZeroDriver;
+			const bool hasInputOne = inputOneDriver && *inputOneDriver;
 
-			if (inputZeroNamesDriver)
+			if (hasInputZero)
 			{
-				configuration.driverName = inputZeroDriver;
 				configuration.inputConfigured[0] = true;
-				configuration.inputDriverNames[0] = inputZeroDriver;
-				configuration.inputChannels[0] = static_cast<int>(
-					reader.GetLongValue("Asio.Input.0", "Channel", 0));
+				configuration.inputChannels[0] = static_cast<int>(reader.GetLongValue("Asio.Input.0", "Channel", 0));
 				configuration.inputSources[0] = "[Asio.Input.0]";
 
-				if (inputOneNamesDriver)
+				if (hasInputOne)
 				{
 					configuration.inputConfigured[1] = true;
-					configuration.inputDriverNames[1] = inputOneDriver;
-					configuration.inputChannels[1] = static_cast<int>(
-						reader.GetLongValue("Asio.Input.1", "Channel", -1));
+					configuration.inputChannels[1] = static_cast<int>(reader.GetLongValue("Asio.Input.1", "Channel", -1));
 					configuration.inputSources[1] = "[Asio.Input.1]";
 				}
 			}
-			else if (inputOneNamesDriver)
+			else if (hasInputOne)
 			{
-				// [Asio.Input.0] is empty, so RS_ASIO serves the single active player from
-				// [Asio.Input.1]. Guitars on an interface's second input (mic in input 1,
-				// guitar in input 2) land here. Player 1's shifter follows that section;
-				// assuming channel 0 would process the one channel the user did not configure.
-				configuration.driverName = inputOneDriver;
 				configuration.inputConfigured[0] = true;
-				configuration.inputDriverNames[0] = inputOneDriver;
-				configuration.inputChannels[0] = static_cast<int>(
-					reader.GetLongValue("Asio.Input.1", "Channel", 0));
+				configuration.inputChannels[0] = static_cast<int>(reader.GetLongValue("Asio.Input.1", "Channel", 0));
 				configuration.inputSources[0] = "[Asio.Input.1], the only configured input section";
 				configuration.inputInferred[0] = true;
 			}
 			else
 			{
-				// Neither input section names a driver. The output driver plus channel 0
-				// is a guess that covers configurations naming the interface only once.
-				const char* output = reader.GetValue("Asio.Output", "Driver", "");
-				if (output && *output)
+				const char* outputDriver = reader.GetValue("Asio.Output", "Driver", "");
+				if (outputDriver && *outputDriver)
 				{
-					configuration.driverName = output;
 					configuration.inputConfigured[0] = true;
-					configuration.inputDriverNames[0] = output;
 					configuration.inputChannels[0] = 0;
 					configuration.inputSources[0] = "[Asio.Output] driver, assuming channel 0";
 					configuration.inputInferred[0] = true;
@@ -303,280 +179,382 @@ namespace Audio::AsioHook
 			return configuration;
 		}
 
-		bool ReadDriverClassId(const std::string& name, GUID& classId)
+		bool IsRangeInsideModule(const void* address, size_t size, const MODULEINFO& moduleInfo)
 		{
-			std::string keyPath = "SOFTWARE\\ASIO\\" + name;
-
-			HKEY driverKey = nullptr;
-			if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, keyPath.c_str(), 0, KEY_READ, &driverKey) != ERROR_SUCCESS)
-				return false;
-
-			char clsidText[64] = {};
-			DWORD clsidSize = sizeof(clsidText);
-			DWORD valueType = 0;
-
-			const bool read = RegQueryValueExA(driverKey, "CLSID", nullptr, &valueType, (LPBYTE)clsidText, &clsidSize) == ERROR_SUCCESS
-				&& valueType == REG_SZ;
-
-			RegCloseKey(driverKey);
-			if (!read) return false;
-
-			wchar_t wideClsid[64] = {};
-			MultiByteToWideChar(CP_ACP, 0, clsidText, -1, wideClsid, ARRAYSIZE(wideClsid));
-
-			return SUCCEEDED(CLSIDFromString(wideClsid, &classId));
+			const uintptr_t start = reinterpret_cast<uintptr_t>(moduleInfo.lpBaseOfDll);
+			const uintptr_t end = start + moduleInfo.SizeOfImage;
+			const uintptr_t rangeStart = reinterpret_cast<uintptr_t>(address);
+			return rangeStart >= start && rangeStart <= end && size <= end - rangeStart;
 		}
 
-		std::wstring ReadDriverModulePath(const GUID& classId)
+		bool ModuleContainsMarker(const MODULEINFO& moduleInfo, const char* marker)
 		{
-			wchar_t clsidText[64] = {};
-			if (StringFromGUID2(classId, clsidText, ARRAYSIZE(clsidText)) == 0) return {};
-
-			std::wstring keyPath = L"CLSID\\";
-			keyPath += clsidText;
-			keyPath += L"\\InprocServer32";
-
-			HKEY serverKey = nullptr;
-			if (RegOpenKeyExW(HKEY_CLASSES_ROOT, keyPath.c_str(), 0, KEY_READ, &serverKey) != ERROR_SUCCESS)
-				return {};
-
-			wchar_t path[MAX_PATH] = {};
-			DWORD pathSize = sizeof(path);
-			DWORD valueType = 0;
-
-			const bool read = RegQueryValueExW(serverKey, nullptr, nullptr, &valueType, (LPBYTE)path, &pathSize) == ERROR_SUCCESS
-				&& (valueType == REG_SZ || valueType == REG_EXPAND_SZ);
-
-			RegCloseKey(serverKey);
-			if (!read) return {};
-
-			return path;
+			const auto* start = static_cast<const char*>(moduleInfo.lpBaseOfDll);
+			const auto* end = start + moduleInfo.SizeOfImage;
+			const size_t markerLength = std::strlen(marker);
+			return std::search(start, end, marker, marker + markerLength) != end;
 		}
 
-		int FindInputIndexForChannel(int channelNumber)
+		template<size_t SIZE>
+		void FindPattern(const MODULEINFO& moduleInfo, const std::array<uint8_t, SIZE>& pattern, std::vector<uint8_t*>& matches)
 		{
-			for (int i = 0; i < discoveredInputChannels; ++i)
+			auto* start = static_cast<uint8_t*>(moduleInfo.lpBaseOfDll);
+			auto* end = start + moduleInfo.SizeOfImage;
+			auto* cursor = start;
+
+			while (cursor < end)
 			{
-				if (inputChannelNumbers[i] == channelNumber) return i;
+				cursor = std::search(cursor, end, pattern.begin(), pattern.end());
+				if (cursor == end) return;
+				matches.push_back(cursor);
+				++cursor;
+			}
+		}
+
+		bool ReplacePatchedTarget(uint8_t* target, void* replacement)
+		{
+			return MemUtil::PatchAdr(target + 1, &replacement, sizeof(replacement));
+		}
+
+		CaptureFormat ReadCaptureFormat(const WAVEFORMATEXTENSIBLE& waveFormat)
+		{
+			const WAVEFORMATEX& baseFormat = waveFormat.Format;
+			CaptureFormat format;
+			format.sampleRate = baseFormat.nSamplesPerSec;
+			format.channelCount = baseFormat.nChannels;
+
+			if (baseFormat.wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+			{
+				if (baseFormat.cbSize < sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) return {};
+
+				if (IsEqualGUID(waveFormat.SubFormat, FLOAT_SUBFORMAT) && baseFormat.wBitsPerSample == 32)
+					format.sampleFormat = SampleFormat::Float32;
+				else if (IsEqualGUID(waveFormat.SubFormat, PCM_SUBFORMAT))
+				{
+					switch (baseFormat.wBitsPerSample)
+					{
+					case 32: format.sampleFormat = SampleFormat::Int32; break;
+					case 24: format.sampleFormat = SampleFormat::Int24; break;
+					case 16: format.sampleFormat = SampleFormat::Int16; break;
+					}
+				}
+			}
+			else if (baseFormat.wFormatTag == WAVE_FORMAT_IEEE_FLOAT && baseFormat.wBitsPerSample == 32)
+			{
+				format.sampleFormat = SampleFormat::Float32;
+			}
+			else if (baseFormat.wFormatTag == WAVE_FORMAT_PCM)
+			{
+				switch (baseFormat.wBitsPerSample)
+				{
+				case 32: format.sampleFormat = SampleFormat::Int32; break;
+				case 24: format.sampleFormat = SampleFormat::Int24; break;
+				case 16: format.sampleFormat = SampleFormat::Int16; break;
+				}
 			}
 
+			const uint32_t bytesPerSample = baseFormat.wBitsPerSample / 8;
+			if (!format.IsUsable() || bytesPerSample == 0
+				|| baseFormat.nBlockAlign != format.channelCount * bytesPerSample)
+				return {};
+
+			return format;
+		}
+
+		bool CopyFirstChannelToFloat(const BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float* output)
+		{
+			const size_t channelCount = format.channelCount;
+			switch (format.sampleFormat)
+			{
+			case SampleFormat::Float32:
+			{
+				const float* samples = reinterpret_cast<const float*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					output[frame] = samples[static_cast<size_t>(frame) * channelCount];
+				return true;
+			}
+			case SampleFormat::Int32:
+			{
+				const int32_t* samples = reinterpret_cast<const int32_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					output[frame] = static_cast<float>(samples[static_cast<size_t>(frame) * channelCount]) * INT32_TO_FLOAT;
+				return true;
+			}
+			case SampleFormat::Int24:
+			{
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t sampleIndex = static_cast<size_t>(frame) * channelCount;
+					output[frame] = static_cast<float>(ReadInt24(packet + sampleIndex * 3)) * INT24_TO_FLOAT;
+				}
+				return true;
+			}
+			case SampleFormat::Int16:
+			{
+				const int16_t* samples = reinterpret_cast<const int16_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					output[frame] = static_cast<float>(samples[static_cast<size_t>(frame) * channelCount]) * INT16_TO_FLOAT;
+				return true;
+			}
+			default:
+				return false;
+			}
+		}
+
+		void CopyFloatToAllChannels(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, const float* converted)
+		{
+			const size_t channelCount = format.channelCount;
+			switch (format.sampleFormat)
+			{
+			case SampleFormat::Float32:
+			{
+				float* samples = reinterpret_cast<float*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const float value = ClampSample(converted[frame]);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[static_cast<size_t>(frame) * channelCount + channel] = value;
+				}
+				break;
+			}
+			case SampleFormat::Int32:
+			{
+				int32_t* samples = reinterpret_cast<int32_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const int32_t value = FloatToSignedInteger<int32_t, 32>(converted[frame]);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[static_cast<size_t>(frame) * channelCount + channel] = value;
+				}
+				break;
+			}
+			case SampleFormat::Int24:
+			{
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const int32_t value = FloatToSignedInteger<int32_t, 24>(converted[frame]);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t sampleIndex = static_cast<size_t>(frame) * channelCount + channel;
+						WriteInt24(value, packet + sampleIndex * 3);
+					}
+				}
+				break;
+			}
+			case SampleFormat::Int16:
+			{
+				int16_t* samples = reinterpret_cast<int16_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const int16_t value = FloatToSignedInteger<int16_t, 16>(converted[frame]);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[static_cast<size_t>(frame) * channelCount + channel] = value;
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+
+		int FindCaptureRoute(IAudioCaptureClient* captureClient)
+		{
+			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
+			{
+				if (routeCaptureClients[routeIndex].load(std::memory_order_relaxed) == captureClient)
+					return static_cast<int>(routeIndex);
+			}
 			return -1;
 		}
 
-		void ProcessInputBuffers(long doubleBufferIndex)
+		HRESULT STDMETHODCALLTYPE Hook_CaptureGetBuffer(
+			IAudioCaptureClient* self,
+			BYTE** data,
+			UINT32* frameCount,
+			DWORD* flags,
+			UINT64* devicePosition,
+			UINT64* performanceCounterPosition)
 		{
-			if (activeBufferFrames <= 0 || activeBufferFrames > MAX_BUFFER_FRAMES) return;
+			const HRESULT result = originalCaptureGetBuffer(
+				self, data, frameCount, flags, devicePosition, performanceCounterPosition);
 
-			const size_t count = static_cast<size_t>(activeBufferFrames);
-
-			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
-			{
-				if (!configuredInputs[routeIndex]) continue;
-
-				const int inputIndex = resolvedInputIndices[routeIndex];
-				if (inputIndex < 0) continue;
-
-				IInputProcessor* processor = activeProcessors[routeIndex].load(std::memory_order_relaxed);
-				if (!processor) continue;
-
-				void* samples = inputBuffers[inputIndex][doubleBufferIndex];
-				if (!samples) continue;
-
-				float* converted = conversionBuffers[routeIndex].data();
-				const long sampleType = inputSampleTypes[inputIndex];
-
-				if (!ConvertInputToFloat(samples, sampleType, count, converted))
-				{
-					continue;
-				}
-
-				processor->Process(converted, static_cast<uint32_t>(activeBufferFrames));
-				ConvertFloatToInput(samples, sampleType, count, converted);
-			}
-		}
-
-		// The driver fills the input buffers before calling this, and RS_ASIO copies them out
-		// inside the original callback, so editing here lands ahead of everything downstream.
-		void Hook_BufferSwitch(long doubleBufferIndex, ASIOBool directProcess)
-		{
-			if (processingEnabled.load(std::memory_order_acquire))
-				ProcessInputBuffers(doubleBufferIndex);
-
-			if (originalCallbacks.bufferSwitch)
-				originalCallbacks.bufferSwitch(doubleBufferIndex, directProcess);
-		}
-
-		ASIOTime* Hook_BufferSwitchTimeInfo(ASIOTime* params, long doubleBufferIndex, ASIOBool directProcess)
-		{
-			if (processingEnabled.load(std::memory_order_acquire))
-				ProcessInputBuffers(doubleBufferIndex);
-
-			if (originalCallbacks.bufferSwitchTimeInfo)
-				return originalCallbacks.bufferSwitchTimeInfo(params, doubleBufferIndex, directProcess);
-
-			return params;
-		}
-
-		ASIOError __fastcall Hook_CreateBuffers(void* self, void* unused, ASIOBufferInfo* bufferInfos, long numChannels, long bufferSize, ASIOCallbacks* callbacks)
-		{
-			processingEnabled.store(false, std::memory_order_release);
-			bufferLayoutReady.store(false, std::memory_order_release);
-			autoEnabledOnce.store(false, std::memory_order_relaxed);
-			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
-			{
-				inputReady[routeIndex].store(false, std::memory_order_relaxed);
-				resolvedInputIndices[routeIndex] = -1;
-				routeFormats[routeIndex] = {};
-			}
-
-			// Swap in our own callback struct before the driver stores it. The driver keeps the
-			// pointer, so ours has to outlive the call, hence the file scope copy.
-			if (callbacks)
-			{
-				originalCallbacks = *callbacks;
-
-				hookedCallbacks.bufferSwitch = Hook_BufferSwitch;
-				hookedCallbacks.sampleRateDidChange = originalCallbacks.sampleRateDidChange;
-				hookedCallbacks.asioMessage = originalCallbacks.asioMessage;
-				hookedCallbacks.bufferSwitchTimeInfo = originalCallbacks.bufferSwitchTimeInfo ? Hook_BufferSwitchTimeInfo : nullptr;
-			}
-
-			const ASIOError result = original_CreateBuffers(self, unused, bufferInfos, numChannels, bufferSize, callbacks ? &hookedCallbacks : nullptr);
-
-			if (result != ASE_OK)
-			{
-				LOG_ERROR("[AsioHook] createBuffers failed with " << result << std::endl);
+			if (FAILED(result) || !processingEnabled.load(std::memory_order_acquire)
+				|| !data || !*data || !frameCount || *frameCount == 0 || *frameCount > MAX_BUFFER_FRAMES
+				|| (flags && (*flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0))
 				return result;
-			}
 
-			activeBufferFrames = bufferSize;
-			discoveredInputChannels = 0;
+			const int routeIndex = FindCaptureRoute(self);
+			if (routeIndex < 0 || !inputReady[routeIndex].load(std::memory_order_acquire)) return result;
 
-			for (long i = 0; i < numChannels && discoveredInputChannels < MAX_INPUT_CHANNELS; ++i)
-			{
-				if (!bufferInfos[i].isInput) continue;
+			IInputProcessor* processor = activeProcessors[routeIndex].load(std::memory_order_relaxed);
+			if (!processor) return result;
 
-				const int index = discoveredInputChannels++;
-				inputChannelNumbers[index] = bufferInfos[i].channelNum;
-				inputBuffers[index][0] = bufferInfos[i].buffers[0];
-				inputBuffers[index][1] = bufferInfos[i].buffers[1];
+			float* converted = conversionBuffers[routeIndex].data();
+			if (!CopyFirstChannelToFloat(*data, routeFormats[routeIndex], *frameCount, converted)) return result;
 
-				ASIOChannelInfo channelInfo{};
-				channelInfo.channel = bufferInfos[i].channelNum;
-				channelInfo.isInput = 1;
+			processor->Process(converted, *frameCount);
+			CopyFloatToAllChannels(*data, routeFormats[routeIndex], *frameCount, converted);
+			return result;
+		}
 
-				GetChannelInfo_t getChannelInfo = (GetChannelInfo_t)ComVTable::GetVTable(self)[SLOT_ASIO_GET_CHANNEL_INFO];
-				if (getChannelInfo(self, nullptr, &channelInfo) == ASE_OK)
-				{
-					inputSampleTypes[index] = channelInfo.type;
-					LOG_INFO("[AsioHook] Input " << index << " channel " << channelInfo.channel
-						<< " type " << channelInfo.type << " name " << channelInfo.name << std::endl);
-				}
-				else
-				{
-					inputSampleTypes[index] = -1;
-				}
-			}
-
-			ASIOSampleRate sampleRate = 0;
-			GetSampleRate_t getSampleRate = (GetSampleRate_t)ComVTable::GetVTable(self)[SLOT_ASIO_GET_SAMPLE_RATE];
-			if (getSampleRate(self, nullptr, &sampleRate) != ASE_OK || sampleRate <= 0)
-			{
-				LOG_WARNING("[AsioHook] Driver did not report a sample rate; processors cannot be prepared." << std::endl);
-			}
-
-			const bool isBufferSizeUsable = bufferSize > 0 && bufferSize <= MAX_BUFFER_FRAMES;
-			if (!isBufferSizeUsable)
-			{
-				LOG_WARNING("[AsioHook] Driver negotiated " << bufferSize
-					<< " frames; the defensive processing limit is " << MAX_BUFFER_FRAMES
-					<< ". Processing stays off." << std::endl);
-			}
-
+		void UpdateBufferLayoutReady()
+		{
 			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
 			{
 				if (!configuredInputs[routeIndex]) continue;
-
-				const int inputIndex = FindInputIndexForChannel(selectedInputChannels[routeIndex]);
-				resolvedInputIndices[routeIndex] = inputIndex;
-
-				const long sampleType = inputIndex >= 0 ? inputSampleTypes[inputIndex] : -1;
-				CaptureFormat& routeFormat = routeFormats[routeIndex];
-				routeFormat.sampleFormat = isBufferSizeUsable
-					? GetSampleFormat(sampleType)
-					: SampleFormat::Unsupported;
-				routeFormat.channelCount = 1;
-				routeFormat.sampleRate = sampleRate > 0 ? static_cast<uint32_t>(sampleRate) : 0;
-
-				if (inputIndex < 0)
-				{
-					LOG_ERROR("[AsioHook] Player " << routeIndex + 1
-						<< " is configured for ASIO channel " << selectedInputChannels[routeIndex]
-						<< ", but the driver did not create that input buffer." << std::endl);
-				}
-				else if (routeFormat.sampleFormat == SampleFormat::Unsupported)
-				{
-					LOG_ERROR("[AsioHook] Player " << routeIndex + 1 << " input sample type "
-						<< sampleType << " is unsupported." << std::endl);
-				}
+				if (!routeCaptureClients[routeIndex].load(std::memory_order_acquire)
+					|| !routeFormats[routeIndex].IsUsable()) return;
 			}
-
-			for (std::vector<float>& buffer : conversionBuffers)
-			{
-				buffer.assign(static_cast<size_t>(MAX_BUFFER_FRAMES), 0.0f);
-			}
-
-			LOG_INFO("[AsioHook] createBuffers: " << numChannels << " channels, " << bufferSize
-				<< " frames, " << discoveredInputChannels << " input(s) captured, "
-				<< static_cast<uint32_t>(sampleRate) << " Hz" << std::endl);
-
 			bufferLayoutReady.store(true, std::memory_order_release);
+		}
 
+		void RegisterCaptureStream(PaWasapiStreamPrefix* stream)
+		{
+			if (!stream || !stream->input.clientParent || !stream->captureClient) return;
+			std::lock_guard<std::mutex> guard(registrationMutex);
+			if (FindCaptureRoute(stream->captureClient) >= 0) return;
+
+			size_t routeIndex = INPUT_ROUTE_COUNT;
+			for (size_t candidate = 0; candidate < INPUT_ROUTE_COUNT; ++candidate)
+			{
+				if (configuredInputs[candidate]
+					&& !routeCaptureClients[candidate].load(std::memory_order_relaxed))
+				{
+					routeIndex = candidate;
+					break;
+				}
+			}
+
+			if (routeIndex == INPUT_ROUTE_COUNT)
+			{
+				LOG_WARNING("[AsioHook] Ignoring an additional capture stream after all configured routes were attached." << std::endl);
+				return;
+			}
+
+			const CaptureFormat format = ReadCaptureFormat(stream->input.waveFormat);
+			if (!format.IsUsable())
+			{
+				const WAVEFORMATEX& waveFormat = stream->input.waveFormat.Format;
+				LOG_ERROR("[AsioHook] Player " << routeIndex + 1 << " negotiated an unsupported capture format: tag "
+					<< waveFormat.wFormatTag << ", " << waveFormat.nSamplesPerSec << " Hz, "
+					<< waveFormat.nChannels << " channel(s), " << waveFormat.wBitsPerSample << " bits." << std::endl);
+				return;
+			}
+
+			void** vTable = ComVTable::GetVTable(stream->captureClient);
+			if (!captureClientVTable)
+			{
+				originalCaptureGetBuffer = reinterpret_cast<CaptureGetBuffer_t>(
+					vTable[SLOT_CAPTURE_CLIENT_GET_BUFFER]);
+				void* replacedGetBuffer = ComVTable::PatchSlot(
+					stream->captureClient,
+					SLOT_CAPTURE_CLIENT_GET_BUFFER,
+					Hook_CaptureGetBuffer);
+
+				if (!replacedGetBuffer
+					|| replacedGetBuffer != reinterpret_cast<void*>(originalCaptureGetBuffer))
+				{
+					originalCaptureGetBuffer = nullptr;
+					LOG_ERROR("[AsioHook] Could not patch IAudioCaptureClient::GetBuffer." << std::endl);
+					return;
+				}
+				captureClientVTable = vTable;
+			}
+			else if (captureClientVTable != vTable)
+			{
+				LOG_ERROR("[AsioHook] Player " << routeIndex + 1
+					<< " uses a different capture implementation; processing stays disabled." << std::endl);
+				return;
+			}
+
+			processingEnabled.store(false, std::memory_order_release);
+			inputReady[routeIndex].store(false, std::memory_order_relaxed);
+			routeFormats[routeIndex] = format;
+			routeCaptureClients[routeIndex].store(stream->captureClient, std::memory_order_release);
+
+			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << " attached to existing RS_ASIO capture client "
+				<< stream->captureClient << " using " << DescribeFormat(format) << "." << std::endl);
+			UpdateBufferLayoutReady();
+		}
+
+		HRESULT __cdecl Hook_UnmarshalStreamComPointers(void* stream)
+		{
+			const HRESULT result = originalUnmarshalStreamComPointers(stream);
+			if (SUCCEEDED(result)) RegisterCaptureStream(reinterpret_cast<PaWasapiStreamPrefix*>(stream));
 			return result;
 		}
 
-		HRESULT STDMETHODCALLTYPE Hook_CreateInstance(IClassFactory* self, IUnknown* outer, REFIID riid, void** created)
+		bool InstallUnmarshalHook()
 		{
-			const HRESULT result = original_CreateInstance(self, outer, riid, created);
-			if (FAILED(result) || !created || !*created) return result;
-
-			static bool hooked = false;
-			if (hooked) return result;
-
-			original_CreateBuffers = (CreateBuffers_t)ComVTable::PatchSlot(*created, SLOT_ASIO_CREATE_BUFFERS, Hook_CreateBuffers);
-
-			if (!original_CreateBuffers)
+			HMODULE rsAsioModule = GetModuleHandleA("RS_ASIO.dll");
+			if (!rsAsioModule)
 			{
-				LOG_ERROR("[AsioHook] Could not patch IASIO::createBuffers." << std::endl);
-				return result;
+				LOG_ERROR("[AsioHook] RS_ASIO.dll is not loaded; late capture cannot be installed." << std::endl);
+				return false;
 			}
 
-			hooked = true;
-			LOG_INFO("[AsioHook] IASIO instance at " << *created << ", createBuffers hooked." << std::endl);
-			return result;
-		}
-
-		HRESULT STDMETHODCALLTYPE Hook_DllGetClassObject(REFCLSID classId, REFIID riid, LPVOID* factory)
-		{
-			const HRESULT result = original_DllGetClassObject(classId, riid, factory);
-			if (FAILED(result) || !factory || !*factory) return result;
-
-			if (!IsEqualCLSID(classId, driverClassId)) return result;
-
-			static bool hooked = false;
-			if (hooked) return result;
-
-			original_CreateInstance = (CreateInstance_t)ComVTable::PatchSlot(*factory, SLOT_CLASS_FACTORY_CREATE_INSTANCE, Hook_CreateInstance);
-
-			if (!original_CreateInstance)
+			MODULEINFO rsAsioInfo{};
+			if (!GetModuleInformation(GetCurrentProcess(), rsAsioModule, &rsAsioInfo, sizeof(rsAsioInfo)))
 			{
-				LOG_ERROR("[AsioHook] Could not patch IClassFactory::CreateInstance." << std::endl);
-				return result;
+				LOG_ERROR("[AsioHook] Could not inspect RS_ASIO.dll, error " << GetLastError() << "." << std::endl);
+				return false;
 			}
 
-			hooked = true;
-			LOG_INFO("[AsioHook] Class factory for " << driverName << " hooked." << std::endl);
-			return result;
+			if (!ModuleContainsMarker(rsAsioInfo, RS_ASIO_VERSION_MARKER))
+			{
+				LOG_ERROR("[AsioHook] ASIO Drop Pedal requires RS_ASIO v0.7.5; processing stays disabled." << std::endl);
+				return false;
+			}
+
+			HMODULE gameModule = GetModuleHandleA(nullptr);
+			MODULEINFO gameInfo{};
+			if (!gameModule || !GetModuleInformation(GetCurrentProcess(), gameModule, &gameInfo, sizeof(gameInfo)))
+			{
+				LOG_ERROR("[AsioHook] Could not inspect the Rocksmith executable, error " << GetLastError() << "." << std::endl);
+				return false;
+			}
+
+			std::vector<uint8_t*> callSites;
+			FindPattern(gameInfo, UNMARSHAL_CALL_PRE_PATCH, callSites);
+			FindPattern(gameInfo, UNMARSHAL_CALL_POST_PATCH, callSites);
+			FindPattern(gameInfo, UNMARSHAL_CALL_LEARN_AND_PLAY, callSites);
+
+			if (callSites.size() != 1)
+			{
+				LOG_ERROR("[AsioHook] Expected one supported PortAudio unmarshal call, found "
+					<< callSites.size() << "; processing stays disabled." << std::endl);
+				return false;
+			}
+
+			uint8_t* callSite = callSites[0];
+			const int32_t relativeTarget = *reinterpret_cast<const int32_t*>(callSite + 1);
+			uint8_t* patchedTarget = callSite + 5 + relativeTarget;
+
+			if (!IsRangeInsideModule(patchedTarget, 6, gameInfo)
+				|| patchedTarget[0] != 0x68 || patchedTarget[5] != 0xc3)
+			{
+				LOG_ERROR("[AsioHook] RS_ASIO did not own the expected unmarshal target; processing stays disabled." << std::endl);
+				return false;
+			}
+
+			void* rsAsioUnmarshal = nullptr;
+			std::memcpy(&rsAsioUnmarshal, patchedTarget + 1, sizeof(rsAsioUnmarshal));
+			if (!IsRangeInsideModule(rsAsioUnmarshal, 1, rsAsioInfo))
+			{
+				LOG_ERROR("[AsioHook] The existing unmarshal target is outside RS_ASIO.dll; processing stays disabled." << std::endl);
+				return false;
+			}
+
+			originalUnmarshalStreamComPointers = reinterpret_cast<UnmarshalStreamComPointers_t>(rsAsioUnmarshal);
+			if (!ReplacePatchedTarget(patchedTarget, reinterpret_cast<void*>(Hook_UnmarshalStreamComPointers)))
+			{
+				originalUnmarshalStreamComPointers = nullptr;
+				LOG_ERROR("[AsioHook] Could not chain the existing RS_ASIO unmarshal hook." << std::endl);
+				return false;
+			}
+
+			LOG_INFO("[AsioHook] Attached to RS_ASIO's existing capture path without creating another ASIO host." << std::endl);
+			return true;
 		}
 	}
 
@@ -586,14 +564,9 @@ namespace Audio::AsioHook
 		if (installed) return;
 		installed = true;
 
+		LOG_INFO("[AsioHook] RS_ASIO v0.7.5 capture integration." << std::endl);
 		const RsAsioConfiguration configuration = ReadRsAsioConfiguration();
-		driverName = configuration.driverName;
-
-		if (driverName.empty())
-		{
-			LOG_INFO("[AsioHook] No ASIO driver named in RS_ASIO.ini; nothing to hook." << std::endl);
-			return;
-		}
+		bool hasConfiguredInput = false;
 
 		for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
 		{
@@ -601,101 +574,38 @@ namespace Audio::AsioHook
 			selectedInputChannels[routeIndex] = configuration.inputChannels[routeIndex];
 
 			if (!configuredInputs[routeIndex])
-			{
-				if (channelOverrides[routeIndex] >= 0)
-				{
-					LOG_WARNING("[AsioHook] Player" << routeIndex + 1 << "AsioChannel is set in "
-						"RSMods.ini, but RS_ASIO.ini gives that player no input driver, so the "
-						"override is ignored." << std::endl);
-				}
 				continue;
-			}
 
-			std::string channelSource = configuration.inputSources[routeIndex];
-			if (channelOverrides[routeIndex] >= 0)
-			{
-				selectedInputChannels[routeIndex] = channelOverrides[routeIndex];
-				channelSource = "Player" + std::to_string(routeIndex + 1)
-					+ "AsioChannel override in RSMods.ini";
-			}
-
+			hasConfiguredInput = true;
 			if (selectedInputChannels[routeIndex] < 0)
 			{
 				LOG_ERROR("[AsioHook] Player " << routeIndex + 1
-					<< " has no valid Channel in RS_ASIO.ini; ASIO Drop Pedal will not start."
-					<< std::endl);
+					<< " has no valid Channel in RS_ASIO.ini; processing stays disabled." << std::endl);
 				return;
 			}
 
-			if (configuration.inputDriverNames[routeIndex] != driverName)
-			{
-				LOG_ERROR("[AsioHook] Player " << routeIndex + 1 << " uses ASIO driver \""
-					<< configuration.inputDriverNames[routeIndex] << "\" while Player 1 uses \""
-					<< driverName << "\". Multiplayer Drop Pedal currently requires both inputs "
-						"on the same driver." << std::endl);
-				return;
-			}
+			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << " will follow the existing RS_ASIO endpoint for "
+				<< configuration.inputSources[routeIndex] << ", ASIO channel "
+				<< selectedInputChannels[routeIndex] << "." << std::endl);
 
-			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << "'s shifter will process ASIO "
-				"channel " << selectedInputChannels[routeIndex] << " (" << channelSource << ")."
-				<< std::endl);
-
-			if (configuration.inputInferred[routeIndex] && channelOverrides[routeIndex] < 0)
+			if (configuration.inputInferred[routeIndex])
 			{
-				LOG_WARNING("[AsioHook] That route is inferred, not read from an [Asio.Input."
-					<< routeIndex << "] section. If the pedal audibly does nothing, it is likely "
-					"shifting the wrong channel (a microphone, for example). Set Player"
-					<< routeIndex + 1 << "AsioChannel under [Drop Pedal] in RSMods.ini to the "
-					"guitar's ASIO channel to pin it." << std::endl);
+				LOG_WARNING("[AsioHook] Player " << routeIndex + 1
+					<< " input routing was inferred because no matching [Asio.Input.N] section named a driver." << std::endl);
 			}
 		}
 
-		if (!ReadDriverClassId(driverName, driverClassId))
+		if (!hasConfiguredInput)
 		{
-			LOG_ERROR("[AsioHook] No CLSID under HKLM\\SOFTWARE\\ASIO for \"" << driverName << "\"" << std::endl);
+			LOG_INFO("[AsioHook] No ASIO input is configured in RS_ASIO.ini; nothing to attach." << std::endl);
 			return;
 		}
 
-		const std::wstring modulePath = ReadDriverModulePath(driverClassId);
-
-		if (modulePath.empty())
-		{
-			LOG_ERROR("[AsioHook] No InprocServer32 path for \"" << driverName << "\"" << std::endl);
-			return;
-		}
-
-		// Loading it now means RS_ASIO's own load later returns this same module, already
-		// detoured. The driver is loaded either way; we are only changing when.
-		HMODULE driverModule = LoadLibraryW(modulePath.c_str());
-
-		if (!driverModule)
-		{
-			LOG_ERROR("[AsioHook] LoadLibrary failed for the ASIO driver, error " << GetLastError() << std::endl);
-			return;
-		}
-
-		FARPROC classObjectEntry = GetProcAddress(driverModule, "DllGetClassObject");
-
-		if (!classObjectEntry)
-		{
-			LOG_ERROR("[AsioHook] ASIO driver exports no DllGetClassObject." << std::endl);
-			return;
-		}
-
-		original_DllGetClassObject = (DllGetClassObject_t)DetourFunction((byte*)classObjectEntry, (byte*)Hook_DllGetClassObject);
-
-		if (!original_DllGetClassObject)
-		{
-			LOG_ERROR("[AsioHook] Failed to detour DllGetClassObject." << std::endl);
-			return;
-		}
-
-		LOG_INFO("[AsioHook] Watching \"" << driverName << "\" for instantiation." << std::endl);
+		InstallUnmarshalHook();
 	}
 
 	void Poll()
 	{
-		// One-shot: enables when the driver comes up, but never fights a manual disable.
 		if (autoEnabledOnce.load(std::memory_order_relaxed)) return;
 		if (processingEnabled.load(std::memory_order_relaxed)) return;
 		if (!bufferLayoutReady.load(std::memory_order_acquire)) return;
@@ -708,33 +618,19 @@ namespace Audio::AsioHook
 		}
 
 		autoEnabledOnce.store(true, std::memory_order_relaxed);
-
-		// Runs on the game thread while processing is still disabled, so the processor is
-		// free to allocate here before the audio thread ever calls Process.
 		for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
 		{
 			if (!configuredInputs[routeIndex]) continue;
 
+			conversionBuffers[routeIndex].assign(MAX_BUFFER_FRAMES, 0.0f);
 			IInputProcessor* processor = activeProcessors[routeIndex].load(std::memory_order_relaxed);
 			processor->Prepare(routeFormats[routeIndex]);
 			inputReady[routeIndex].store(true, std::memory_order_release);
-			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << " processor latency "
-				<< processor->GetLatencyFrames() << " frames" << std::endl);
+			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << " processor prepared with "
+				<< processor->GetLatencyFrames() << " frames of latency." << std::endl);
 		}
 
 		SetProcessingEnabled(true);
-	}
-
-	void SetChannelOverride(size_t routeIndex, int asioChannel)
-	{
-		if (routeIndex >= INPUT_ROUTE_COUNT)
-		{
-			LOG_ERROR("[AsioHook] Refusing to set channel override for invalid route "
-				<< routeIndex << "." << std::endl);
-			return;
-		}
-
-		channelOverrides[routeIndex] = asioChannel;
 	}
 
 	void SetProcessor(size_t routeIndex, IInputProcessor* inputProcessor)
@@ -744,7 +640,6 @@ namespace Audio::AsioHook
 			LOG_ERROR("[AsioHook] Refusing to set processor for invalid route " << routeIndex << "." << std::endl);
 			return;
 		}
-
 		activeProcessors[routeIndex].store(inputProcessor, std::memory_order_relaxed);
 	}
 
@@ -752,7 +647,7 @@ namespace Audio::AsioHook
 	{
 		if (enabled && !bufferLayoutReady.load(std::memory_order_acquire))
 		{
-			LOG_ERROR("[AsioHook] Refusing to enable processing before ASIO buffers are ready." << std::endl);
+			LOG_ERROR("[AsioHook] Refusing to enable processing before RS_ASIO capture is attached." << std::endl);
 			return;
 		}
 
@@ -761,10 +656,9 @@ namespace Audio::AsioHook
 			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
 			{
 				if (!configuredInputs[routeIndex]) continue;
-
 				if (!activeProcessors[routeIndex].load(std::memory_order_relaxed)
+					|| !routeCaptureClients[routeIndex].load(std::memory_order_acquire)
 					|| !routeFormats[routeIndex].IsUsable()
-					|| resolvedInputIndices[routeIndex] < 0
 					|| !inputReady[routeIndex].load(std::memory_order_acquire))
 				{
 					LOG_ERROR("[AsioHook] Refusing to enable processing because Player "
@@ -790,8 +684,25 @@ namespace Audio::AsioHook
 
 	bool IsInputReady(size_t routeIndex)
 	{
-		return routeIndex < INPUT_ROUTE_COUNT
-			&& inputReady[routeIndex].load(std::memory_order_acquire);
+		return routeIndex < INPUT_ROUTE_COUNT && inputReady[routeIndex].load(std::memory_order_acquire);
 	}
+}
 
+namespace Audio
+{
+	std::string DescribeFormat(const CaptureFormat& format)
+	{
+		const char* sampleType = "unsupported";
+		switch (format.sampleFormat)
+		{
+		case SampleFormat::Float32: sampleType = "32-bit float"; break;
+		case SampleFormat::Int32: sampleType = "32-bit PCM"; break;
+		case SampleFormat::Int24: sampleType = "24-bit PCM"; break;
+		case SampleFormat::Int16: sampleType = "16-bit PCM"; break;
+		default: break;
+		}
+
+		return std::to_string(format.channelCount) + " channel(s), "
+			+ std::to_string(format.sampleRate) + " Hz, " + sampleType;
+	}
 }

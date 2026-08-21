@@ -148,6 +148,8 @@ your tuning, and the guitar stays physically untouched.
   physically in rather than from E.
 - An on-screen readout of the current mode, route and per-player state, plus
   settings and rebindable keys in the settings app (Tuning tab).
+- Optional Drop Pedal overlay colours for downward shifts, upward shifts and
+  status text, configured in the settings app.
 
 Everything else comes from RSMods 1.2.8.2 and behaves as upstream documents
 it: extended range mode, custom song list titles, toggle loft, force
@@ -205,10 +207,11 @@ the Cable engine and Speaker Mode need neither.
 
 ## How it works
 
-**ASIO Drop Pedal.** With RS_ASIO installed, the mod hooks the ASIO driver
-below RS_ASIO and gives each configured Rocksmith input its own persistent
-pitch shifter, so note detection, the tuner and tone processing all consume
-the same shifted signal. The shifter uses period-synchronous splicing.
+**ASIO Drop Pedal.** With RS_ASIO v0.7.5 installed, the mod attaches to the
+capture endpoints RS_ASIO already created and gives each configured Rocksmith
+input its own persistent pitch shifter. It does not start the driver early or
+create a second ASIO host. Note detection, the tuner and tone processing all
+consume the same shifted signal. The shifter uses period-synchronous splicing.
 At 48 kHz with 128-frame callbacks, the production-shifter harness measures
 roughly 6-20 ms of observable content delay depending on the note and shift.
 This is added to the interface's normal round-trip latency. For comparison,

@@ -122,8 +122,6 @@ void Settings::Initialize()
 		{"RewindLeadup", 0},
 		{"CustomNSPTimeLimit", 10000},
 		{"OnScreenFontSize", 24},
-		{"DropPedalPlayer1AsioChannel", -1},
-		{"DropPedalPlayer2AsioChannel", -1},
 
 		{"GuitarSpeakDelete", 0},
 		{"GuitarSpeakSpace", 0},
@@ -244,10 +242,6 @@ void Settings::ReadModSettings() {
 		{"RewindLeadup", reader.GetLongValue("Mod Settings", "RewindLeadup", 0)},
 		{"CustomNSPTimeLimit", reader.GetLongValue("Mod Settings", "CustomNSPTimeLimit", 10000)},
 		{"OnScreenFontSize", reader.GetLongValue("Mod Settings", "OnScreenFontSize", 24)},
-
-		// -1 means resolve the ASIO channel from RS_ASIO.ini; >= 0 pins it.
-		{"DropPedalPlayer1AsioChannel", reader.GetLongValue("Drop Pedal", "Player1AsioChannel", -1)},
-		{"DropPedalPlayer2AsioChannel", reader.GetLongValue("Drop Pedal", "Player2AsioChannel", -1)},
 
 		{"GuitarSpeakDelete", reader.GetLongValue("Guitar Speak", "GuitarSpeakDeleteWhen", 0)},
 		{"GuitarSpeakSpace", reader.GetLongValue("Guitar Speak", "GuitarSpeakSpaceWhen", 0)},
