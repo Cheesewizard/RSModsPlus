@@ -11,6 +11,7 @@ void Offsets::Initialize() {
 	ptr_disableTrueTuning = { {0x004DCCF2, baseHandle + 0x00DD972 } };					// Code | Bytes d9 05 68 44 22 01 after the mask below (roughly 0x31 bytes away)
 	ptr_disableTrueTuning_jmpBck = { {0x004DCCF8, baseHandle + 0x00DD978 } };			// Code | Bytes 33 c0 after the mask below (roughly 0x37 bytes away)
 	ptr_disableTrueTuning_forceTT = { {0x004DCCC1, baseHandle + 0x00DD941 } };			// Code | 83 7d 08 00 53 57 74 ? db 45 08 (db is the byte we want)
+	func_PortAudioOpenStream = { {0x00E70550, 0} };										// Code | PortAudio Pa_OpenStream entry used by the modern cable input (CableInput).
 	ptr_disableTrueTuningGate = { {0x004DCCBF, baseHandle + 0x00DD93F } };				// Code | 83 7d 08 00 53 57 74 ? db 45 08 (74 is the byte we want)
 	func_tuningReferenceBuilder = { {0x004DCCB0, baseHandle + 0x002AD930} };			// Code | Converts an arrangement cent offset to the note-detection reference, 440 * 2^(cents / 1200), and stamps it at [detection + 0x135C].
 	ptr_tuningText = { {0x00F5F62C, 0x00F6062C} };										// Memory | Copied from loft

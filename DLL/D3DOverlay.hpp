@@ -13,6 +13,8 @@
 namespace GameOverlay {
 	Resolution GetWindowSize();
 	void DX9DrawText(const std::string& textToDraw, int textColorHex, int topLeftX, int topLeftY, int bottomRightX, int bottomRightY, LPDIRECT3DDEVICE9 pDevice, Resolution setFontSize = { NULL, NULL }, DWORD format = DT_LEFT | DT_NOCLIP);
+	// Wide-string draw for glyphs outside the ANSI codepage. Same font cache as DX9DrawText.
+	void DX9DrawTextW(const std::wstring& textToDraw, int textColorHex, int topLeftX, int topLeftY, int bottomRightX, int bottomRightY, LPDIRECT3DDEVICE9 pDevice, int fontHeight, DWORD format = DT_LEFT | DT_NOCLIP, int weight = FW_NORMAL);
 
 	inline HRESULT CustomDX9Font = NULL;
 	inline ID3DXFont* DX9FontEncapsulation = NULL;
@@ -31,6 +33,8 @@ namespace GameOverlay {
 	void DisplayCurrentTuningForAutoTune();
 	void DisplayLoopStartEndTimes(float loopStart, float loopEnd);
 	void DisplaySongAccuracy();
+	// Audio diagnostics: input path + latency, output latency, a live signal bar + packet rate.
+	void DisplayAudioDiagnostics();
 	void CheckCurrentFont();
 	void RenderOverlay(IDirect3DDevice9* pDevice);
 

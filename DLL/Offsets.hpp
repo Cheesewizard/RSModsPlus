@@ -26,6 +26,7 @@ namespace Offsets {
 
 	// Tuning Reference Builder (Drop Pedal)
 	inline VersioningStruct<uintptr_t> func_tuningReferenceBuilder;
+	inline VersioningStruct<uintptr_t> func_PortAudioOpenStream;
 
 	// Tuning - Textual Form
 	inline VersioningStruct<uintptr_t> ptr_tuningText;

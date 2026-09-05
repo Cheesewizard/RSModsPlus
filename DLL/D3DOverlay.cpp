@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "D3DOverlay.hpp"
 #include "Mods/DropPedal/DropPedalOverlay.hpp"
+#include "Mods/DropPedal/DropPedal.hpp"
+#include "Audio/CableInput.hpp"
 
 /// <returns>Size of Rocksmith Window</returns>
 Resolution GameOverlay::GetWindowSize() {
@@ -58,6 +60,120 @@ void GameOverlay::DX9DrawText(const std::string& textToDraw, int textColorHex, i
 	// Preload And Draw The Text (Supposed to reduce the performance hit (It's D3D/DX9 but still good practice))
 	font->PreloadTextA(textToDraw.c_str(), textToDraw.length());
 	font->DrawTextA(nullptr, textToDraw.c_str(), -1, &TextRectangle, format, textColorHex);
+}
+
+// Wide-string sibling of DX9DrawText. The font objects are Unicode-capable regardless of
+// having been created through D3DXCreateFontA, so a glyph like U+266A renders correctly.
+void GameOverlay::DX9DrawTextW(const std::wstring& textToDraw, int textColorHex, int topLeftX, int topLeftY, int bottomRightX, int bottomRightY, LPDIRECT3DDEVICE9 pDevice, int fontHeight, DWORD format, int weight)
+{
+	CComPtr<ID3DXFont> font;
+	const std::string face = Settings::ReturnSettingValue("OnScreenFont");
+	FontKey key = FontKey::Make(face, fontHeight, 0, weight, false);
+	if (!fontCache.Get(pDevice, key, font)) {
+		LOG_ERROR("Could not acquire wide-text font." << std::endl);
+		return;
+	}
+
+	RECT TextRectangle{ topLeftX, topLeftY, bottomRightX, bottomRightY };
+	font->DrawTextW(nullptr, textToDraw.c_str(), -1, &TextRectangle, format, textColorHex);
+}
+
+// Audio diagnostics overlay: latency and signal figures for the guitar input path. Two
+// rows, top-left, on the same grid as the Drop Pedal overlay:
+//   IN 10.0 ms measured (buf 10.0)   OUT 3.0 ms   TOTAL 13.0 ms   modern raw 48 kHz / exclusive out
+//   SIGNAL  [########----]  -18 dB   100 pkt/s
+// Input latency is measured from the device timestamp to the game's hand-off, with the
+// buffer arithmetic in brackets; output latency is the game's own figure from
+// audiodump.txt, so nothing here is estimated. Colour: green while a signal is present,
+// grey idle, amber after dropouts, red when the stream has stalled.
+void GameOverlay::DisplayAudioDiagnostics()
+{
+	if (!Audio::CableInput::IsOverlayEnabled()) return;
+	const Audio::CableInput::Diagnostics d = Audio::CableInput::GetDiagnostics();
+	if (!d.installed && !d.rsAsio) return;
+
+	auto widen = [](const std::string& s) { return std::wstring(s.begin(), s.end()); };
+
+	// Line 1: the numbers a player cares about, big and bold. IN is one served chunk (the
+	// driver period), OUT is the game's own figure from audiodump.txt, TOTAL is their sum.
+	// (The Drop Pedal input pitch shifter, whose live latency would add here, is not part of
+	// this build, so no pedal-latency term is shown.)
+	const uint32_t pedalFrames = 0;
+	const double pedalMs = pedalFrames > 0 ? 1000.0 * pedalFrames / 48000.0 : 0.0;
+
+	// IN prefers the MEASURED figure (device timestamp to game hand-off, newest sample) and
+	// shows the buffer arithmetic in brackets; a polled stock stream can be far fresher than
+	// its 22 ms buffer suggests, and only the measurement settles that.
+	std::wostringstream latency;
+	latency << std::fixed << std::setprecision(1);
+	const double bufferIn = d.rsAsio ? 0.0 : (d.inputLatencyMs > 0.0 ? d.inputLatencyMs : d.inputLatencyGameMs);
+	const double in = d.measuredValid ? d.measuredInputMs : bufferIn;
+	if (d.rsAsio) latency << L"IN RS_ASIO";
+	else if (d.measuredValid)
+	{
+		latency << L"IN " << d.measuredInputMs << L" ms measured";
+		if (bufferIn > 0.0) latency << L" (buf " << bufferIn << L")";
+	}
+	else if (in > 0.0) latency << L"IN " << in << L" ms buf";
+	else latency << L"IN --";
+	if (pedalMs > 0.0) latency << L"   PEDAL +" << pedalMs << L" ms";
+	if (d.outputKnown)
+	{
+		latency << L"   OUT " << d.outputLatencyMs << L" ms";
+		if (in > 0.0) latency << L"   TOTAL " << (in + pedalMs + d.outputLatencyMs) << L" ms";
+	}
+	if (!d.rsAsio && !d.inputPath.empty())
+	{
+		latency << L"   " << widen(d.inputPath);
+		if (!d.deviceFormat.empty()) latency << L" " << widen(d.deviceFormat);
+	}
+	if (d.outputKnown) latency << (d.outputExclusive ? L" / exclusive out" : L" / shared out");
+
+	// Line 2: a block meter with the level, or the fault state in red.
+	std::wostringstream signal;
+	int signalColor = 0xFFC8C8C8;
+	if (d.rsAsio)
+	{
+		signal << L"SIGNAL  handled by RS_ASIO";
+	}
+	else if (!d.streamActive)
+	{
+		signal << L"SIGNAL  waiting for the cable";
+	}
+	else if (d.stalled)
+	{
+		signal << L"NO SIGNAL  the input stream has stalled";
+		signalColor = 0xFFFF5A5A;
+	}
+	else
+	{
+		const double db = d.meterPeak > 0.0f ? 20.0 * std::log10(d.meterPeak) : -90.0;
+		const int bars = std::clamp(static_cast<int>((db + 60.0) / 60.0 * 12.0 + 0.5), 0, 12);
+		signal << L"SIGNAL  ";
+		for (int i = 0; i < 12; ++i) signal << (i < bars ? L'\u2588' : L'\u2591');
+		signal << L"  " << std::fixed << std::setprecision(0) << std::max(db, -90.0) << L" dB   "
+			<< d.packetsPerSecond << L" pkt/s";
+		if (d.dropouts > 0) signal << L"   dropouts " << d.dropouts;
+		if (db > -40.0) signalColor = 0xFF7EE07E;
+		if (d.dropouts > 0) signalColor = 0xFFFFB050;
+	}
+
+	// Same row grid as the Drop Pedal overlay (row pitch height/36 from height/54), rows
+	// 1 and 2, bold, with a solid two-pixel shadow so it reads over the bright menu wall.
+	const int rowPitch = static_cast<int>(WindowSize.height / 36.0f);
+	const int fontSize = std::max(14, static_cast<int>(WindowSize.height / 62.0f));
+	const int left = static_cast<int>(WindowSize.width / 96.0f);
+	const int right = static_cast<int>(WindowSize.width * 0.8f);
+	const int line1Top = static_cast<int>(WindowSize.height / 54.0f) + rowPitch;
+	const int line2Top = line1Top + rowPitch;
+	const int bottom = line2Top + rowPitch;
+	auto draw = [&](const std::wstring& text, int top, int color)
+	{
+		DX9DrawTextW(text, 0xFF000000, left + 2, top + 2, right + 2, bottom + 2, pDevice, fontSize, DT_LEFT | DT_NOCLIP, FW_BOLD);
+		DX9DrawTextW(text, color, left, top, right, bottom, pDevice, fontSize, DT_LEFT | DT_NOCLIP, FW_BOLD);
+	};
+	draw(latency.str(), line1Top, 0xFF3EC9C0);
+	draw(signal.str(), line2Top, signalColor);
 }
 
 void GameOverlay::DisplayMixer() {
@@ -346,6 +462,7 @@ void GameOverlay::RenderOverlay(IDirect3DDevice9* device) {
 		static DropPedal::Overlay dropPedalOverlay;
 		dropPedalOverlay.Render(cachedFont, WindowSize);
 		DisplaySongAccuracy();
+		DisplayAudioDiagnostics();
 
 		HandleLooping();
 	}

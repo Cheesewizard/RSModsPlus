@@ -2,6 +2,7 @@
 #include "ModManager.hpp"
 #include "Mods/DropPedal/DropPedal.hpp"
 #include "Audio/SongShift/WwiseMusicHook.hpp"
+#include "Audio/CableInput.hpp"
 
 namespace ModManager {
 	void InitializeConfiguration() {
@@ -21,6 +22,9 @@ namespace ModManager {
 		BugPrevention::PreventAdvancedDisplayCrash();
 		BugPrevention::PreventPortAudioInDeviceCrash();
 		BugPrevention::PreventExtraAudioDevicesCrash();
+
+		// Modern WASAPI capture for the Real Tone Cable (issue #76).
+		Audio::CableInput::Install();
 
 		if (Settings::ReturnSettingValue("FixBrokenTones") == "on") {
 			BugPrevention::PreventStuckTone();
@@ -252,6 +256,9 @@ namespace ModManager {
 		}
 
 		DropPedal::Poll();
+
+		// Liveness report for the modern cable input.
+		Audio::CableInput::Poll();
 
 		if (DropPedal::ShouldInstallInputHooks())
 		{
