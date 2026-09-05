@@ -36,6 +36,7 @@ namespace RSMods
                              DropPedalEnabled, DropPedalEngine, DropPedalCustomOverlayColors,
                              DropPedalOverlayDownColor, DropPedalOverlayUpColor, DropPedalOverlayStatusColor,
                              DropPedalPlayer1AsioChannel, DropPedalPlayer2AsioChannel,
+                             ModernCableInput, MonitorOutput, AudioDiagnosticsOverlay,
 
 
                              // String Colors
@@ -183,6 +184,9 @@ namespace RSMods
             DropPedalOverlayStatusColorIdentifier        = "OverlayStatusColor = ",
             DropPedalPlayer1AsioChannelIdentifier        = "Player1AsioChannel = ",
             DropPedalPlayer2AsioChannelIdentifier        = "Player2AsioChannel = ",
+            ModernCableInputIdentifier                   = "ModernCableInput = ",
+            MonitorOutputIdentifier                      = "MonitorOutput = ",
+            AudioDiagnosticsOverlayIdentifier            = "AudioDiagnosticsOverlay = ",
 
                 // String Colors (Normal {N} & Colorblind {CB})
                 // Normal String Colors
@@ -326,6 +330,12 @@ namespace RSMods
                 return "-1";
             if (identifierToGrab == DropPedalPlayer2AsioChannelIdentifier)
                 return "-1";
+            if (identifierToGrab == ModernCableInputIdentifier)
+                return "on";
+            if (identifierToGrab == MonitorOutputIdentifier)
+                return "off";
+            if (identifierToGrab == AudioDiagnosticsOverlayIdentifier)
+                return "off";
 
             return string.Empty;
         }
@@ -573,6 +583,12 @@ namespace RSMods
                     return FillSettingVariable(DropPedalEnabledIdentifier, SettingType.ON_OFF, currentLine, out DropPedalEnabled);
                 if (IdentifierIsFound(currentLine, DropPedalEngineIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalEngineIdentifier, SettingType.STRING, currentLine, out DropPedalEngine);
+                if (IdentifierIsFound(currentLine, ModernCableInputIdentifier, identifierToGrab))
+                    return FillSettingVariable(ModernCableInputIdentifier, SettingType.ON_OFF, currentLine, out ModernCableInput);
+                if (IdentifierIsFound(currentLine, MonitorOutputIdentifier, identifierToGrab))
+                    return FillSettingVariable(MonitorOutputIdentifier, SettingType.ON_OFF, currentLine, out MonitorOutput);
+                if (IdentifierIsFound(currentLine, AudioDiagnosticsOverlayIdentifier, identifierToGrab))
+                    return FillSettingVariable(AudioDiagnosticsOverlayIdentifier, SettingType.ON_OFF, currentLine, out AudioDiagnosticsOverlay);
                 if (IdentifierIsFound(currentLine, DropPedalCustomOverlayColorsIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalCustomOverlayColorsIdentifier, SettingType.ON_OFF, currentLine, out DropPedalCustomOverlayColors);
                 if (IdentifierIsFound(currentLine, DropPedalOverlayDownColorIdentifier, identifierToGrab))

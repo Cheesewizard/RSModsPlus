@@ -728,6 +728,10 @@ namespace RSMods
             checkBox_RainbowNotes.Checked = ReadSettings.ProcessSettings(ReadSettings.RainbowNotesEnabledIdentifier) == "on";
             checkBox_WhammyFiveChordsMode.Checked = ReadSettings.ProcessSettings(ReadSettings.ChordsModeIdentifier) == "on";
             checkBox_ShowCurrentNote.Checked = ReadSettings.ProcessSettings(ReadSettings.ShowCurrentNoteOnScreenIdentifier) == "on";
+            checkBox_ModernCableInput.Checked = ReadSettings.ProcessSettings(ReadSettings.ModernCableInputIdentifier) != "off";
+            checkBox_MonitorOutput.Checked = ReadSettings.ProcessSettings(ReadSettings.MonitorOutputIdentifier) == "on";
+            checkBox_AudioDiagnosticsOverlay.Checked = ReadSettings.ProcessSettings(ReadSettings.AudioDiagnosticsOverlayIdentifier) == "on";
+            RSModsPlus_RefreshAudioStatus(null, EventArgs.Empty);
             checkBox_CustomHighway.Checked = ReadSettings.ProcessSettings(ReadSettings.CustomHighwayColorsIdentifier) == "on";
             checkBox_SecondaryMonitor.Checked = ReadSettings.ProcessSettings(ReadSettings.SecondaryMonitorIdentifier) == "on";
             checkBox_NoteColors_UseRocksmithColors.Checked = ReadSettings.ProcessSettings(ReadSettings.SeparateNoteColorsModeIdentifier) == "1";
@@ -2069,6 +2073,99 @@ namespace RSMods
         private void Save_RainbowNotes(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.RainbowNotesEnabledIdentifier, checkBox_RainbowNotes.Checked.ToString().ToLower());
 
         private void Save_DropPedalEnabled(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.DropPedalEnabledIdentifier, checkBox_DropPedal.Checked.ToString().ToLower());
+
+        private void Save_ModernCableInput(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.ModernCableInputIdentifier, checkBox_ModernCableInput.Checked ? "on" : "off");
+
+        private void Save_MonitorOutput(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.MonitorOutputIdentifier, checkBox_MonitorOutput.Checked ? "on" : "off");
+
+        private void Save_AudioDiagnosticsOverlay(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.AudioDiagnosticsOverlayIdentifier, checkBox_AudioDiagnosticsOverlay.Checked ? "on" : "off");
+
+        /// <summary>
+        /// One-screen answer to "why is there no sound / no cable": the deployed host, RS_ASIO state,
+        /// the audio keys of both ini files, the stream-open lines of audiodump.txt and every
+        /// (CABLE INPUT) / (OUTPUT) / [AsioHook] line of RSMods_debug.txt. The host opens its log
+        /// with shared read, so this works while Rocksmith is running.
+        /// </summary>
+        private void RSModsPlus_RefreshAudioStatus(object sender, EventArgs e)
+        {
+            var report = new System.Text.StringBuilder();
+            try
+            {
+                string rsDir = GenUtil.GetRSDirectory();
+                if (string.IsNullOrEmpty(rsDir) || !Directory.Exists(rsDir))
+                {
+                    textBox_RSModsPlus_AudioStatus.Text = "Rocksmith folder not found.";
+                    return;
+                }
+
+                bool running = System.Diagnostics.Process.GetProcessesByName("Rocksmith2014").Length > 0;
+                report.AppendLine("Rocksmith: " + (running ? "RUNNING" : "not running"));
+                report.AppendLine("RS_ASIO.dll: " + (File.Exists(Path.Combine(rsDir, "RS_ASIO.dll")) ? "present (RS_ASIO owns the input; modern cable input stands down)" : "absent (native cable path)"));
+                report.AppendLine("Modern cable input setting: " + (checkBox_ModernCableInput.Checked ? "on" : "off"));
+
+                string rocksmithIni = Path.Combine(rsDir, "Rocksmith.ini");
+                if (File.Exists(rocksmithIni))
+                {
+                    foreach (string line in ReadSharedLines(rocksmithIni))
+                    {
+                        if (line.StartsWith("ExclusiveMode=") || line.StartsWith("MaxOutputBufferSize=") || line.StartsWith("LatencyBuffer=") || line.StartsWith("RealToneCableOnly="))
+                            report.AppendLine("Rocksmith.ini " + line.Trim());
+                    }
+                }
+
+                report.AppendLine();
+                report.AppendLine("audiodump.txt (this launch):");
+                AppendMatchingLines(report, Path.Combine(rsDir, "audiodump.txt"), new[] { "OpenStream", "INPUT ON", "capping", "ReleaseAudioSink", "RestoreAudioSink", "AK_Fail", " err " }, 12);
+
+                report.AppendLine();
+                report.AppendLine("RSMods_debug.txt (this launch):");
+                AppendMatchingLines(report, Path.Combine(rsDir, "RSMods_debug.txt"), new[] { "(CABLE INPUT)", "(OUTPUT)", "[AsioHook]", "[InputCapture]", "[ERROR]" }, 25);
+
+                report.AppendLine();
+                report.AppendLine("How to read it: no \"Input alive\" line = the cable stream never delivered audio; \"stalled\" = the device dropped mid-session;");
+                report.AppendLine("\"capping output buffer size (N -> M)\" with M below N and no sound = raise MaxOutputBufferSize to N in Rocksmith.ini.");
+            }
+            catch (Exception ex)
+            {
+                report.AppendLine("Could not read the audio status: " + ex.Message);
+            }
+            textBox_RSModsPlus_AudioStatus.Text = report.ToString();
+        }
+
+        private static IEnumerable<string> ReadSharedLines(string path)
+        {
+            // FileShare.ReadWrite: the game holds these files open for writing while it runs.
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(stream))
+            {
+                string line;
+                while ((line = reader.ReadLine()) != null) yield return line;
+            }
+        }
+
+        private static void AppendMatchingLines(System.Text.StringBuilder report, string path, string[] needles, int max)
+        {
+            if (!File.Exists(path))
+            {
+                report.AppendLine("  (no " + Path.GetFileName(path) + ")");
+                return;
+            }
+            var hits = new List<string>();
+            foreach (string line in ReadSharedLines(path))
+            {
+                foreach (string needle in needles)
+                {
+                    if (line.Contains(needle)) { hits.Add(line.Trim()); break; }
+                }
+            }
+            if (hits.Count == 0)
+            {
+                report.AppendLine("  (no matching lines)");
+                return;
+            }
+            int start = Math.Max(0, hits.Count - max);
+            for (int i = start; i < hits.Count; i++) report.AppendLine("  " + hits[i]);
+        }
 
         private void Save_DropPedalEngine(object sender, EventArgs e)
         {
