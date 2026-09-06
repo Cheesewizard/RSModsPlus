@@ -1,6 +1,11 @@
 #include "stdafx.h"
 #include "ModManager.hpp"
 #include "Mods/DropPedal/DropPedal.hpp"
+#include "Mods/FakeGuitar/FakeGuitarInjector.hpp"
+#include "Research/ResearchBridge.hpp"
+#include "Audio/MlAudioExporter.hpp"
+#include "Audio/CableInput.hpp"
+#include "OverlayToggles.hpp"
 #include "Audio/SongShift/WwiseMusicHook.hpp"
 
 namespace ModManager {
@@ -21,6 +26,9 @@ namespace ModManager {
 		BugPrevention::PreventAdvancedDisplayCrash();
 		BugPrevention::PreventPortAudioInDeviceCrash();
 		BugPrevention::PreventExtraAudioDevicesCrash();
+		// Modern WASAPI capture for the Real Tone Cable (issue #76): replaces the game's
+		// legacy exclusive/shared input open so the cable works regardless of Rocksmith.ini.
+		Audio::CableInput::Install();
 
 		if (Settings::ReturnSettingValue("FixBrokenTones") == "on") {
 			BugPrevention::PreventStuckTone();
@@ -90,6 +98,10 @@ namespace ModManager {
 		oEndScene = (tEndScene)MemUtil::TrampHook((byte*)vTable[D3DInfo::EndScene_Index], (byte*)D3DHooks::Hook_EndScene, 7); // https://docs.microsoft.com/en-us/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-endscene
 		oDrawIndexedPrimitive = (tDrawIndexedPrimitive)MemUtil::TrampHook((byte*)vTable[D3DInfo::DrawIndexedPrimitive_Index], (byte*)D3DHooks::Hook_DIP, 5); // https://docs.microsoft.com/en-us/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-drawindexedprimitive
 		oDrawPrimitive = (tDrawPrimitive)MemUtil::TrampHook((byte*)vTable[D3DInfo::DrawPrimitive_Index], (byte*)D3DHooks::Hook_DP, 7); // https://docs.microsoft.com/en-us/windows/win32/api/d3d9helper/nf-d3d9helper-idirect3ddevice9-drawprimitive
+		// Detours computes the prologue length itself; the user-pointer draw paths were a
+		// research blind spot until the 2026-08-22 physical-marker investigation.
+		oDrawPrimitiveUP = (tDrawPrimitiveUP)DetourFunction((byte*)vTable[D3DInfo::DrawPrimitiveUP_Index], (byte*)D3DHooks::Hook_DPUP);
+		oDrawIndexedPrimitiveUP = (tDrawIndexedPrimitiveUP)DetourFunction((byte*)vTable[D3DInfo::DrawIndexedPrimitiveUP_Index], (byte*)D3DHooks::Hook_DIPUP);
 	}
 
 	/// <summary>
@@ -114,6 +126,7 @@ namespace ModManager {
 		BugPrevention::FixModifyingFunctions();
 		Settings::Initialize();
 		UpdateSettings();
+		OverlayToggles::ApplyIniDefaults();   // per-feature overlay .ini gates ("Overlay_<name>")
 		ERMode::Initialize();
 		GUI();
 		Midi::InitMidi();
@@ -135,6 +148,14 @@ namespace ModManager {
 		// Runs before the game instantiates its ASIO driver, so the detour is in place
 		// when RS_ASIO loads the same module.
 		DropPedal::InstallInputHooks();
+
+#if defined(_DEBUG)
+		// Install the synthetic-guitar test harness as a source stage on the same input tap,
+		// ahead of any Drop Pedal shifter so the two coexist (armed synth feeds the real
+		// shifter). Installing here, before RS_ASIO unmarshals its capture stream, guarantees
+		// the source is in place when the stream attaches, so arming mid-session never misses it.
+		FakeGuitar::Install();
+#endif
 
 		AudioDevices::SetupMicrophones();
 		ApplyBugPrevention();
@@ -253,24 +274,32 @@ namespace ModManager {
 
 		DropPedal::Poll();
 
+		// Tier-1 export pump: the shared-memory mapping the ML companion reads is
+		// created here, off the audio thread (which must never allocate), and the
+		// applied input shift is refreshed here because walking DropPedal state is not
+		// audio-thread-safe. Runs regardless of the input-hook mode: the tier-0/tier-1
+		// tap observes the route even when no processor is installed (Speaker Mode).
+		MlAudioExporter::Poll(DropPedal::GetAppliedInputShiftSemitones());
+
+		// Liveness report for the modern cable input (packets flowing / stalled / resumed).
+		Audio::CableInput::Poll();
+
+#if defined(_DEBUG)
+		// Drive the ASIO hook for the synthetic-input harness when Drop Pedal is not already
+		// doing so, so processing auto-enables once the song's capture attaches. Native
+		// pitch detection stays live on purpose: the harness exists to test it.
+		FakeGuitar::Poll();
+		// Hands-free autoplay: inject the frozen Note by Note target each tick when armed.
+		ResearchBridge::PollFakeGuitarAutoPlay();
+#endif
+
 		if (DropPedal::ShouldInstallInputHooks())
 		{
 			Audio::AsioHook::Poll();
 
-			// Engine arbitration: exactly one pitch system may be live. Once the ASIO input
-			// shifter is processing, it owns pitch; the game-side MultiPitch path stays
-			// suppressed for the session. WndProc key commands update the input shifter as
-			// soon as each control is released.
-			DropPedal::SetInputShifterActive(Audio::AsioHook::IsProcessingEnabled());
-			if (DropPedal::ConsumeInputShifterTransitionFailure())
-			{
-				Audio::AsioHook::SetProcessingEnabled(false);
-				DropPedal::SetInputShifterActive(false);
-				LOG_ERROR("Drop pedal could not restore the live Cable pitch safely. "
-					"ASIO processing was disabled and Cable retained pitch ownership." << std::endl);
-			}
-
-			if (DropPedal::RequiresInputShifter() && !Audio::AsioHook::IsProcessingEnabled())
+			const bool isInputReady = Audio::AsioHook::IsProcessingEnabled();
+			DropPedal::SetInputShifterActive(isInputReady);
+			if (!isInputReady)
 			{
 				DropPedal::ReportInputShifterUnavailable();
 			}

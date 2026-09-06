@@ -284,3 +284,33 @@ __pycache__/
 
 Installer/Resources/
 *.user
+
+# Note by Note research and native reverse-engineering material.
+#
+# This repository's origin is public. The material below is investigation output,
+# native addresses and captured runtime evidence, and it is deliberately kept off it.
+# The private RocksmithNativeAtlas repository is where that work belongs.
+#
+# Ignoring these paths stops a careless "git add ." from staging them. It does not
+# untrack anything already committed, so anything previously added has to be handled
+# separately.
+Research/
+DLL/Research/
+tools/
+docs/development/
+docs/investigations/note-by-note-handover*.md
+artifacts/
+BuildArchive/
+build/
+DLL/Installer/
+
+# Note by Note research lives in the private RocksmithNativeAtlas repository.
+# origin here is public; nothing in this family may be tracked.
+docs/investigations/note-by-note-*.md
+
+# Design and research docs are private for now. Blanket-ignore the design/research
+# folders so new docs stay out of the public repo. Already-released (tracked) docs in
+# these folders keep being tracked - gitignore does not untrack them - so this only
+# affects new/untracked docs going forward. Use `git add -f` to release one deliberately.
+docs/designs/
+docs/investigations/

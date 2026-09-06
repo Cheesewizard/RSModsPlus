@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug with Wwise Logging|Win32">
@@ -20,6 +20,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Audio\AsioHook.cpp" />
+    <ClCompile Include="Audio\CableInput.cpp" />
+    <ClCompile Include="Audio\MlAudioExporter.cpp" />
+    <ClCompile Include="Audio\MlServiceLauncher.cpp" />
+    <ClCompile Include="Audio\MlStringFretReader.cpp" />
+    <ClCompile Include="Audio\RawPitchVerifier.cpp" />
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp" />
     <ClCompile Include="Audio\SongShift\WwiseMusicHook.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
@@ -123,6 +128,7 @@
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="D3DOverlay.cpp" />
+    <ClCompile Include="OverlayToggles.cpp" />
     <ClCompile Include="GameState.cpp" />
     <ClCompile Include="Keybindings.cpp" />
     <ClCompile Include="Keyboard.cpp" />
@@ -159,6 +165,27 @@
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\Midi.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+	<ClCompile Include="Mods\NoteByNoteProbe.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+	</ClCompile>
+    <ClCompile Include="Mods\NoteByNoteHookHost.cpp">
+		<PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+		<PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+		<PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+		<PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+	</ClCompile>
+    <ClCompile Include="Mods\NoteByNoteMenu.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="Mods\NoteByNoteHudLabel.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
@@ -200,6 +227,36 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="QualityOfLife.cpp" />
+    <ClCompile Include="Research\ResearchBridge.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="Mods\NoteByNoteNativeScoring.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Mods\NoteByNoteHostServices.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Mods\ResearchProbeRuntime.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Research\NoteByNoteProbe\NoteByNoteResearchProbe.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="SongTimer.cpp" />
     <ClCompile Include="SongTuning.cpp" />
     <ClCompile Include="Tests.cpp" />
@@ -246,6 +303,12 @@
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="Audio\AsioHook.hpp" />
+    <ClInclude Include="Audio\CableInput.hpp" />
+    <ClInclude Include="Audio\MlAudioExporter.hpp" />
+    <ClInclude Include="Audio\MlServiceLauncher.hpp" />
+    <ClInclude Include="Audio\MlStringFretReader.hpp" />
+    <ClInclude Include="Audio\MlFretDisplay.hpp" />
+    <ClInclude Include="Audio\RawPitchVerifier.hpp" />
     <ClInclude Include="Audio\CaptureFormat.h" />
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp" />
     <ClInclude Include="Audio\SongShift\WwiseMusicHook.hpp" />
@@ -266,6 +329,11 @@
     <ClInclude Include="CC\Effects\WavyNotesEffect.hpp" />
     <ClInclude Include="CC\Effects\ZoomEffect.hpp" />
     <ClCompile Include="D3D/D3DHooks.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="D3D/NoteByNoteHighwayRenderer.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
@@ -293,6 +361,7 @@
     <ClInclude Include="Audio\ComVTable.hpp" />
     <ClInclude Include="D3D/D3DHelper.hpp" />
     <ClInclude Include="D3D/D3DHooks.hpp" />
+    <ClInclude Include="D3D/NoteByNoteHighwayRenderer.hpp" />
     <ClInclude Include="D3D/D3D.hpp" />
     <ClInclude Include="CC\Effects\DrunkModeEffect.hpp" />
     <ClInclude Include="CC\Effects\FYourFCEffect.hpp" />
@@ -305,6 +374,7 @@
     <ClInclude Include="CC\Effects\HighwayScrollSpeedEffect.hpp" />
     <ClInclude Include="D3DInfo.h" />
     <ClInclude Include="D3DOverlay.hpp" />
+    <ClInclude Include="OverlayToggles.hpp" />
     <ClInclude Include="D3D\GdiplusManager.hpp" />
     <ClInclude Include="GameState.hpp" />
     <ClInclude Include="Audio\IInputProcessor.hpp" />
@@ -333,7 +403,18 @@
     <ClInclude Include="Mods\DropPedal\DropPedalOverlay.hpp" />
     <ClInclude Include="Mods\DropPedal\DropPedalPlayer.hpp" />
     <ClInclude Include="Mods\DropPedal\DropPedalState.hpp" />
+	<ClInclude Include="Mods\NoteByNoteMenu.hpp" />
+	<ClInclude Include="Mods\NoteByNoteHudLabel.hpp" />
+	<ClInclude Include="Mods\NoteByNoteNativeScoring.hpp" />
+    <ClInclude Include="Mods\NoteByNoteHostServices.hpp" />
+    <ClInclude Include="Mods\NoteByNoteProbe.hpp" />
+    <ClInclude Include="Mods\FakeGuitar\FakeGuitarInjector.hpp" />
     <ClCompile Include="Mods\DropPedal\DropPedal.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="Mods\FakeGuitar\FakeGuitarInjector.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
@@ -363,6 +444,8 @@
     <ClInclude Include="CC\Effects\ShuffleTonesEffect.hpp" />
     <ClInclude Include="CC\Effects\SmallNoteheadEffect.hpp" />
     <ClInclude Include="QualityOfLife.hpp" />
+    <ClInclude Include="Research\ResearchBridge.hpp" />
+    <ClInclude Include="Research\ResearchProtocol.hpp" />
     <ClInclude Include="Resolution.h" />
     <ClInclude Include="RSColor.h" />
     <ClInclude Include="SongTimer.hpp" />
@@ -383,6 +466,12 @@
     <ClInclude Include="Wwise\Root.hpp" />
     <ClInclude Include="Wwise\SoundEngine.hpp" />
     <ClInclude Include="Wwise\Types.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="Research\NoteByNoteProbe\NoteByNoteProbe.vcxproj">
+      <Project>{FC7C2237-25AF-4DCC-8363-C7F7BD5E467B}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CC\Effects\DrunkModeEffect.cpp">
@@ -589,16 +678,17 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <BuildArchiveDir>$(SolutionDir)BuildArchive\$([System.DateTime]::Now.ToString('yyyyMMdd-HHmmss'))</BuildArchiveDir>
+    <RocksmithInstallDir Condition="'$(RocksmithInstallDir)'==''">C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014</RocksmithInstallDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
     <TargetName>xinput1_3</TargetName>
-    <OutDir>$(SolutionDir)Installer\Resources\</OutDir>
+    <OutDir>$(SolutionDir)Installer\Resources\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">
     <LinkIncremental>true</LinkIncremental>
     <TargetName>xinput1_3</TargetName>
-    <OutDir>$(SolutionDir)Installer\Resources\</OutDir>
+    <OutDir>$(SolutionDir)Installer\Resources\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
@@ -606,7 +696,7 @@
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
     <LibraryPath>$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86);$(NETFXKitsDir)Lib\um\x86;</LibraryPath>
     <TargetName>xinput1_3</TargetName>
-    <OutDir>$(SolutionDir)Installer\Resources\</OutDir>
+    <OutDir>$(SolutionDir)Installer\Resources\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">
     <LinkIncremental>false</LinkIncremental>
@@ -614,7 +704,7 @@
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
     <LibraryPath>$(VC_LibraryPath_x86);$(WindowsSDK_LibraryPath_x86);$(NETFXKitsDir)Lib\um\x86;</LibraryPath>
     <TargetName>xinput1_3</TargetName>
-    <OutDir>$(SolutionDir)Installer\Resources\</OutDir>
+    <OutDir>$(SolutionDir)Installer\Resources\$(Configuration)\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -645,7 +735,6 @@
     </Link>
     <PostBuildEvent>
       <Command>
-IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
 if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
 copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
 copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
@@ -685,7 +774,6 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     </Link>
     <PostBuildEvent>
       <Command>
-IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
 if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
 copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
 copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
@@ -717,6 +805,12 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
+      <!-- Full LTCG, never incremental (2026-09-02): an incremental LTCG relink produced an image
+           whose constant-initialized vtable pointers were left as zero in .data (crash dumps
+           Rocksmith2014.exe(1).35800/43948: AsioHook::Poll calling Prepare through a null vptr
+           of a static DelayLinePitchShifter). A clean rebuild of the same source carried the
+           pointer. Correctness over link time for anything that gets deployed. -->
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <ModuleDefinitionFile>xinput1_3.def</ModuleDefinitionFile>
       <AdditionalLibraryDirectories>SDK Path\Lib</AdditionalLibraryDirectories>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
@@ -726,7 +820,6 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     </Link>
     <PostBuildEvent>
       <Command>
-IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
 if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
 copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
 copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
@@ -757,6 +850,12 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
+      <!-- Full LTCG, never incremental (2026-09-02): an incremental LTCG relink produced an image
+           whose constant-initialized vtable pointers were left as zero in .data (crash dumps
+           Rocksmith2014.exe(1).35800/43948: AsioHook::Poll calling Prepare through a null vptr
+           of a static DelayLinePitchShifter). A clean rebuild of the same source carried the
+           pointer. Correctness over link time for anything that gets deployed. -->
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <ModuleDefinitionFile>xinput1_3.def</ModuleDefinitionFile>
       <AdditionalLibraryDirectories>SDK Path\Lib</AdditionalLibraryDirectories>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
@@ -766,7 +865,6 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     </Link>
     <PostBuildEvent>
       <Command>
-IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
 if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
 copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
 copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
@@ -780,8 +878,36 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
       <Message>Deleting potentially problematic obj file</Message>
     </PreBuildEvent>
   </ItemDefinitionGroup>
+  <!-- Per-configuration host output (2026-09-02). Debug and Release used to link into the
+       same Installer\Resources\xinput1_3.dll; a Debug compile-check after a Release build
+       left the Debug host newer than every Release input, the Release link was skipped as
+       up to date, and DeployToRocksmith shipped a Debug host (debug CRT, logging on) into
+       the game folder - the host-side twin of the probe trap fixed the same morning. The
+       historical packaging path now receives a copy from RELEASE builds only. -->
+  <Target Name="PublishReleaseHost" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(SolutionDir)Installer\Resources\xinput1_3.dll" />
+    <Copy SourceFiles="$(OutDir)$(TargetName).pdb" DestinationFiles="$(SolutionDir)Installer\Resources\xinput1_3.pdb" Condition="Exists('$(OutDir)$(TargetName).pdb')" />
+  </Target>
+  <Target Name="DeployToRocksmith" AfterTargets="Build" Condition="Exists('$(RocksmithInstallDir)')">
+    <PropertyGroup>
+      <!-- Anchored to this project file, NOT $(SolutionDir): building DLL.vcxproj directly
+           (msbuild on the project, no solution) leaves SolutionDir unset and the old path
+           silently resolved into DLL\Installer\Resources, deploying a STALE probe copy -
+           the recurring "stale probe" trap (three strikes on 2026-08-31 alone). -->
+      <!-- Per-configuration probe (2026-09-02): the probe project now links into
+           RSModsResearch\$(Configuration)\ so a Release host can never deploy a Debug probe
+           (the shared RSModsResearch\NoteByNoteProbe.dll is whichever configuration built
+           last and is for the hand harness only). -->
+      <NoteByNoteProbeOutput>$(MSBuildThisFileDirectory)..\Installer\Resources\RSModsResearch\$(Configuration)\NoteByNoteProbe.dll</NoteByNoteProbeOutput>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(NoteByNoteProbeOutput)')" Text="Cannot deploy the RSMods build because the Note by Note probe output is missing: $(NoteByNoteProbeOutput)" />
+    <MakeDir Directories="$(RocksmithInstallDir)\RSModsResearch" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(RocksmithInstallDir)\xinput1_3.dll" />
+    <Copy SourceFiles="$(NoteByNoteProbeOutput)" DestinationFiles="$(RocksmithInstallDir)\RSModsResearch\NoteByNoteProbe.dll" />
+  </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
     <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
   </ImportGroup>
 </Project>
+

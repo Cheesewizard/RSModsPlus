@@ -9,6 +9,18 @@ namespace RSMods
 		[STAThread]
 		static void Main(string[] arguments)
 		{
+			if (NoteByNoteMenuInstaller.TryRun(arguments, out int menuInstallExitCode))
+			{
+				Environment.ExitCode = menuInstallExitCode;
+				return;
+			}
+
+			if (NoteByNoteChartExtractor.TryRun(arguments, out int chartExitCode))
+			{
+				Environment.ExitCode = chartExitCode;
+				return;
+			}
+
 			if (SpeakerModeCacheExtractor.TryRun(arguments, out int exitCode))
 			{
 				Environment.ExitCode = exitCode;

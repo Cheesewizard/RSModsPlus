@@ -12,8 +12,8 @@ namespace
 	constexpr unsigned int DROP_PEDAL_DOWN_TEXT = 0xFF6BE06B;
 	constexpr unsigned int DROP_PEDAL_UP_TEXT = 0xFFFFC24D;
 	constexpr unsigned int DROP_PEDAL_DISABLED_TEXT = 0xFFC8C8C8;
-	constexpr unsigned long long ENGINE_SHOW_MILLISECONDS = 6000;
-	constexpr unsigned long long ENGINE_FADE_MILLISECONDS = 1500;
+	constexpr unsigned long long INPUT_SHOW_MILLISECONDS = 6000;
+	constexpr unsigned long long INPUT_FADE_MILLISECONDS = 1500;
 
 	struct OverlayTextColors
 	{
@@ -103,7 +103,7 @@ void DropPedal::Overlay::Render(ID3DXFont* font, const Resolution& windowSize)
 		RenderTuning(font, windowSize, Player::Two, 1);
 	}
 
-	RenderEngine(font, windowSize, showsPlayerTwoRow);
+	RenderInputStatus(font, windowSize, showsPlayerTwoRow);
 }
 
 void DropPedal::Overlay::RenderTuning(
@@ -128,37 +128,37 @@ void DropPedal::Overlay::RenderTuning(
 		top + static_cast<int>(windowSize.height / 27.0f));
 }
 
-void DropPedal::Overlay::RenderEngine(
+void DropPedal::Overlay::RenderInputStatus(
 	ID3DXFont* font,
 	const Resolution& windowSize,
 	bool isMultiplayer)
 {
 	if (GameState::currentMenu != "MainMenu") return;
 
-	const unsigned long long noticeTick = DropPedal::GetEngineNoticeTick();
+	const unsigned long long noticeTick = DropPedal::GetInputNoticeTick();
 	if (noticeTick == 0) return;
 
-	// The engine is decided before the overlay font is ready, so the notice timer
-	// begins on the first frame that can render it. A later engine transition resets it.
+	// The input route is established before the overlay font is ready, so the notice
+	// timer begins on the first frame that can render it. A later state change resets it.
 	if (noticeTick != lastSeenNoticeTick)
 	{
 		lastSeenNoticeTick = noticeTick;
-		engineDisplayStartTick = 0;
+		inputDisplayStartTick = 0;
 	}
 
-	if (engineDisplayStartTick == 0)
+	if (inputDisplayStartTick == 0)
 	{
-		engineDisplayStartTick = GetTickCount64();
+		inputDisplayStartTick = GetTickCount64();
 	}
 
-	const unsigned long long elapsed = GetTickCount64() - engineDisplayStartTick;
-	if (elapsed >= ENGINE_SHOW_MILLISECONDS + ENGINE_FADE_MILLISECONDS) return;
+	const unsigned long long elapsed = GetTickCount64() - inputDisplayStartTick;
+	if (elapsed >= INPUT_SHOW_MILLISECONDS + INPUT_FADE_MILLISECONDS) return;
 
-	UpdateEngineCache(font);
+	UpdateInputStatusCache(font);
 
-	const float fade = elapsed < ENGINE_SHOW_MILLISECONDS
+	const float fade = elapsed < INPUT_SHOW_MILLISECONDS
 		? 1.0f
-		: 1.0f - (float)(elapsed - ENGINE_SHOW_MILLISECONDS) / ENGINE_FADE_MILLISECONDS;
+		: 1.0f - (float)(elapsed - INPUT_SHOW_MILLISECONDS) / INPUT_FADE_MILLISECONDS;
 
 	const int left = static_cast<int>(windowSize.width / 96.0f);
 	const int top = static_cast<int>(windowSize.height / (isMultiplayer ? 10.8f : 18.0f));
@@ -166,7 +166,7 @@ void DropPedal::Overlay::RenderEngine(
 	DrawShadowedText(
 		font,
 		windowSize,
-		engineLine,
+		inputLine,
 		ApplyAlpha(overlayTextColors.status, static_cast<unsigned int>(255 * fade)),
 		left,
 		top,
@@ -178,20 +178,14 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 {
 	const size_t playerIndex = GetPlayerIndex(player);
 	const auto pitchMode = DropPedal::GetPitchMode();
-	const bool isCableOwned = !DropPedal::IsInputShifterActive();
 	const int targetSemitones = DropPedal::GetTargetSemitones(player);
 	const int baseTuningSemitones = DropPedal::GetBaseTuningSemitones(player);
-
-	// Each row shows its own player's configured state, like hardware. The one
-	// exception is Cable's tone dependency: the game reloads tones every song,
-	// so the row flags a tone the pedal cannot act on.
-	const bool isMissingPedalTone = isCableOwned
-		&& pitchMode == PitchMode::DropPedal
-		&& !DropPedal::HasLivePedalTone(player);
+	const bool isInputUnavailable = pitchMode == PitchMode::DropPedal
+		&& !DropPedal::IsInputShifterActive();
 
 	if (hasCachedTuningState[playerIndex]
 		&& pitchMode == cachedPitchModes[playerIndex]
-		&& isMissingPedalTone == cachedMissingPedalTone[playerIndex]
+		&& isInputUnavailable == cachedInputUnavailable[playerIndex]
 		&& targetSemitones == cachedTargetSemitones[playerIndex]
 		&& baseTuningSemitones == cachedBaseTuningSemitones[playerIndex]
 		&& font == cachedTuningFonts[playerIndex]
@@ -212,9 +206,9 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 	{
 		tuningLine = "Speaker: " + DropPedal::GetPitchRouteName();
 	}
-	else if (isMissingPedalTone)
+	else if (isInputUnavailable)
 	{
-		tuningLine = "Drop: No pedal in tone";
+		tuningLine = "Drop: Input unavailable";
 	}
 	else
 	{
@@ -224,7 +218,7 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 		? overlayTextColors.status
 		: DROP_PEDAL_DISABLED_TEXT;
 
-	if (pitchMode != PitchMode::Off && !isMissingPedalTone)
+	if (pitchMode != PitchMode::Off && !isInputUnavailable)
 	{
 		const int direction = DropPedal::GetShiftDirection(player);
 		tuningTextColor = direction < 0
@@ -233,7 +227,7 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 	}
 
 	cachedPitchModes[playerIndex] = pitchMode;
-	cachedMissingPedalTone[playerIndex] = isMissingPedalTone;
+	cachedInputUnavailable[playerIndex] = isInputUnavailable;
 	cachedTargetSemitones[playerIndex] = targetSemitones;
 	cachedBaseTuningSemitones[playerIndex] = baseTuningSemitones;
 	cachedTuningFonts[playerIndex] = font;
@@ -242,21 +236,21 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 	font->PreloadTextA(tuningLine.c_str(), static_cast<int>(tuningLine.length()));
 }
 
-void DropPedal::Overlay::UpdateEngineCache(ID3DXFont* font)
+void DropPedal::Overlay::UpdateInputStatusCache(ID3DXFont* font)
 {
 	const bool isInputShifterActive = DropPedal::IsInputShifterActive();
-	if (hasCachedEngineState
+	if (hasCachedInputState
 		&& isInputShifterActive == cachedInputShifterActive
-		&& font == cachedEngineFont)
+		&& font == cachedInputFont)
 	{
 		return;
 	}
 
-	engineLine = isInputShifterActive ? "Engine: ASIO Drop Pedal" : "Engine: Cable Drop Pedal";
+	inputLine = isInputShifterActive ? "Input: Ready" : "Input: Waiting for capture";
 	cachedInputShifterActive = isInputShifterActive;
-	cachedEngineFont = font;
-	hasCachedEngineState = true;
-	font->PreloadTextA(engineLine.c_str(), static_cast<int>(engineLine.length()));
+	cachedInputFont = font;
+	hasCachedInputState = true;
+	font->PreloadTextA(inputLine.c_str(), static_cast<int>(inputLine.length()));
 }
 
 void DropPedal::Overlay::DrawShadowedText(

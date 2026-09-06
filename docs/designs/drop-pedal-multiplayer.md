@@ -18,40 +18,32 @@ RS_ASIO input sections map directly to Rocksmith player slots:
 | Player 1 | `[Asio.Input.0]` | ASIO route 0 shifter |
 | Player 2 | `[Asio.Input.1]` | ASIO route 1 shifter |
 
-Both inputs must use the same ASIO driver. Each input may select a different
-channel from that driver. Configurations that assign the two inputs to
-different drivers are rejected because one hook instance cannot safely manage
-buffers owned by two independent driver modules.
+RS_ASIO owns each input's driver and channel selection. The Drop Pedal does not
+create another ASIO host or redirect a channel after RS_ASIO has created its
+capture endpoint.
 
-The table above describes the fully explicit case. Route 0 resolves in order:
+The table above describes the fully explicit case. The expected active routes
+resolve in order:
 
 1. `[Asio.Input.0]` when it names a driver.
 2. Otherwise `[Asio.Input.1]` when it names a driver. RS_ASIO serves the
-   single active player from whichever input section is configured, so this is
-   the common single-player case where the guitar sits on the interface's
-   second input. Assuming channel 0 here would select a channel RS_ASIO never
-   requested a buffer for, so no route could ever become ready and processing
-   would stay disabled.
-3. Otherwise the `[Asio.Output]` driver with channel 0, as a last-resort guess
-   for configurations that name the interface only once.
+   single active player from whichever input section is configured.
+3. Otherwise `[Asio.Output]` implies one expected input route while the live
+   capture endpoint supplies the actual negotiated format.
 
-Resolutions from steps 2 and 3 are logged as inferred, with a warning that
-names the channel being processed and the section it came from.
-`Player1AsioChannel` and `Player2AsioChannel` under `[Drop Pedal]` in
-`RSMods.ini` pin a route's channel explicitly and silence the inference
-warning; `-1` (the default) keeps automatic resolution. An override applies
-only to a route that has a driver; it cannot conjure a second route.
+Resolutions from steps 2 and 3 are logged as inferred. Channel changes belong
+in `RS_ASIO.ini` and take effect after Rocksmith restarts.
 
 Input readiness is based on the configured route, negotiated buffer and sample
 format. Signal amplitude is not part of readiness; a connected interface input
 remains valid when no instrument is plugged into it.
 
-Supported sample formats are:
+Supported Rocksmith capture packet formats are:
 
-- `ASIOSTFloat32LSB`
-- `ASIOSTInt32LSB`
-- `ASIOSTInt24LSB`
-- `ASIOSTInt16LSB`
+- 32-bit floating point
+- 32-bit PCM
+- 24-bit packed PCM
+- 16-bit PCM
 
 Buffer sizes from 1 to 4096 frames are accepted. The upper bound is a defensive
 limit for fixed callback storage, not a recommended operating size.
@@ -85,11 +77,11 @@ tuning.
 
 ## Initialization and ownership
 
-1. Read `[Asio.Input.0]` and `[Asio.Input.1]` from `RS_ASIO.ini`.
-2. Validate the shared driver and each configured channel.
-3. Install the ASIO class-factory and buffer-creation hooks.
-4. Capture the driver's non-interleaved input buffers and negotiated formats.
-5. Associate each configured channel with its player route.
+1. Read the expected input routes from `RS_ASIO.ini`.
+2. Validate and chain RS_ASIO's existing PortAudio unmarshal patch.
+3. Observe each `IAudioCaptureClient` after RS_ASIO creates the endpoint.
+4. Read the interleaved capture format Rocksmith negotiated for that endpoint.
+5. Associate endpoints with configured player routes in creation order.
 6. Prepare one persistent processor per configured route on the game thread.
 7. Enable ASIO processing after every configured route is ready.
 
@@ -97,23 +89,23 @@ In automatic engine mode, Cable retains ownership until the complete configured
 ASIO route set is ready. Ownership is transferred as one operation, preventing
 a state where Player 1 is shifted by ASIO while Player 2 remains unshifted.
 
-Recreating ASIO buffers clears route readiness and disables processing until
-the new layout has been captured and both processors have been prepared again.
+The integration never loads the driver early and never creates a second ASIO
+host. RS_ASIO remains responsible for driver lifetime, channels and its native
+ASIO buffers.
 
 ## Audio callback
 
-ASIO input buffers are non-interleaved, so each player route is processed as a
-separate mono stream. For every callback:
+Each captured Rocksmith endpoint presents an interleaved packet. For every
+packet:
 
-1. Resolve the buffer associated with the route's configured ASIO channel.
-2. Convert the native ASIO sample format to floating point.
+1. Call the endpoint's original `GetBuffer` implementation.
+2. Copy the first packet channel to the route's floating-point work buffer.
 3. Process the block with that route's pitch shifter and target.
-4. Convert the processed samples back to the original ASIO format.
-5. Invoke the original RS_ASIO callback.
+4. Write the processed sample to every channel in that endpoint packet.
+5. Return the original buffer to Rocksmith's capture path.
 
-The processing occurs before RS_ASIO copies the samples into Rocksmith. The
-game's tuner, note detector and tone chain therefore receive the same shifted
-signal.
+The game consumes the changed packet, so its tuner, note detector and tone
+chain receive the same shifted signal.
 
 At a unity target, the processor bypasses pitch detection and splicing while
 continuing to update its input history. This keeps the route ready for a later
@@ -124,7 +116,7 @@ target change without paying the full shifted-path cost.
 | Action | Player 1 | Player 2 |
 |---|---|---|
 | Pitch down or up | `,` / `.` | `Control+,` / `Control+.` |
-| Base tuning down or up | `F9` / `F10` | `Control+F9` / `Control+F10` |
+| Cycle physical base tuning | `F9` | `Control+F9` |
 | Enable or disable both players | `F7` | `F7` |
 
 The single-player overlay contains one tuning row. Multiplayer adds a second
@@ -193,12 +185,30 @@ identification mechanisms proven by trace:
 
 | Condition | Behaviour |
 |---|---|
-| Configured channel is absent from the driver buffers | ASIO processing remains disabled |
-| Configured inputs use different ASIO drivers | Configuration is rejected |
-| A route negotiates an unsupported sample format | ASIO processing remains disabled |
+| RS_ASIO is not loaded or its PortAudio patch never becomes ready | Attachment retries without blocking; ASIO processing remains disabled until the validated patch is available |
+| Supported call signatures resolve to zero or multiple distinct PortAudio unmarshal targets | ASIO processing remains disabled |
+| A route negotiates an unsupported capture packet format | ASIO processing remains disabled |
 | A configured route is not ready | Automatic mode retains Cable ownership |
 | Player 2 is not configured under ASIO ownership | Player 2 controls are rejected; the overlay keeps showing Player 2's own configured state |
 | An input buffer contains silence | Route remains ready and is processed normally |
+
+## ASIO capture validation
+
+The original v0.7.5 capture integration was validated live in single player with a
+Behringer UMC22. Rocksmith started without a helper application, the mod
+attached after RS_ASIO created its existing 2-channel, 48 kHz, 32-bit PCM
+capture endpoint, and pitch processing enabled successfully. Startup was also
+reported as less laggy than the earlier driver-level hook.
+
+The capability-based attachment accepts the same structured unmarshal contract
+present in v0.7.4 and v0.7.5. Source comparison proves that contract is unchanged,
+but v0.7.4 still requires a fresh in-game attachment, audible monitoring and
+pitch-shift test before release acceptance.
+
+The late capture path has not yet received an equivalent live two-player test.
+The route and processor ownership remain independent, but multiplayer should
+be verified with two configured RS_ASIO inputs before claiming that scenario as
+runtime-proven for this implementation.
 
 ## Cable multiplayer validation
 

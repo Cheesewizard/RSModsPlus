@@ -44,18 +44,18 @@ after changing them.
 | Your setup | What you need before playing | Guide |
 |---|---|---|
 | **ASIO interface with RS_ASIO** | Nothing else. Stock and custom tones work normally | [ASIO Drop Pedal](docs/asio-drop-pedal.md) |
-| **Real Tone Cable without RS_ASIO** | A custom tone containing a **MultiPitch** pedal with `Pitch 1 = 0.00` and `Mix = 100%`. Select that tone in every song | [Cable Drop Pedal](docs/cable-drop-pedal.md) |
-| **Real Tone Cable with speakers** | No MultiPitch tone. Use Speaker Mode to shift the song while the physical guitar remains audible in the room | [Speaker Mode](docs/speaker-mode.md) |
+| **Real Tone Cable without RS_ASIO** | Nothing else. The mod captures and shifts the Cable input directly; stock and custom tones work normally | [Cable Drop Pedal](docs/cable-drop-pedal.md) |
+| **Real Tone Cable with speakers** | Use Speaker Mode to shift the song while the physical guitar remains audible in the room | [Speaker Mode](docs/speaker-mode.md) |
 
-> **Real Tone Cable users:** the current Cable Drop Pedal does not work with a
-> stock tone. You must [build and assign a MultiPitch tone](docs/cable-drop-pedal.md#setup-build-the-tone),
-> then select its tone slot after the song loads. The pedal uses Rocksmith's
-> built-in pitch effect, so it has more latency and stronger audio artefacts
-> than the ASIO engine.
+> **Real Tone Cable users:** no special tone is required. The mod captures the
+> Cable input and shifts it before Rocksmith detects it, so stock and custom
+> tones both work and the shift is independent of the selected tone slot. The
+> modern Cable input path stands down automatically when RS_ASIO is installed,
+> so ASIO users are unaffected.
 
-Leave `Engine = automatic` unless the troubleshooting guide tells you to
-override it. Automatic mode uses ASIO when a working RS_ASIO input is ready;
-otherwise it uses the Cable engine.
+Both inputs use one shared input-side shifter. There is no engine selector,
+Cable engine, or tone fallback: RS_ASIO and the Real Tone Cable differ only in
+how the device is opened, and everything downstream is the same.
 
 ### 3. Use it in Rocksmith
 
@@ -89,17 +89,14 @@ follow the shift.
 
 ![Downward shift applied](docs/images/overlay-drop-tuning-down.png)
 
-Two engines realise the shift, selected at launch and announced on screen:
+One shared input-side shifter realises the shift for every input. The raw
+instrument is captured and shifted before Rocksmith receives it, so every tone,
+stock or custom, receives the shifted signal and no special tone is required.
+Whether the input arrives through [RS_ASIO](https://github.com/mdias/rs_asio) or
+a plain Real Tone Cable changes only how the device is opened; the shift,
+detection, and tuner alignment downstream are identical.
 
-- **ASIO engine**: with [RS_ASIO](https://github.com/mdias/rs_asio), the raw
-  input is shifted before Rocksmith receives it. No tone setup: every tone,
-  stock or custom, receives the shifted signal.
-- **Cable engine**: without RS_ASIO, such as a plain Real Tone cable, the
-  shift is applied through a MultiPitch pedal in the tone and the game's
-  tuning reference is transposed to match. This route requires a custom tone
-  and uses Rocksmith's higher-latency pitch effect.
-
-Multiplayer is supported by both engines: each player has an independent
+Multiplayer is supported on both inputs: each player has an independent
 target and base tuning (`Control` + the pedal keys addresses Player 2), with
 `[Asio.Input.0]` as Player 1 and `[Asio.Input.1]` as Player 2 under ASIO.
 
@@ -120,7 +117,7 @@ your tuning, and the guitar stays physically untouched.
 
 ![Speaker Mode raising an Eb song to an E-standard guitar](docs/images/overlay-speaker-mode.png)
 
-- Requires no RS_ASIO, no audio interface, and no MultiPitch tone; a Real
+- Requires no RS_ASIO, no audio interface, and no special tone; a Real
   Tone cable alone is enough.
 - Gameplay audio carries **zero added latency**: the full song is
   pitch-rendered ahead of playback into temporary audio and read by exact song
@@ -148,6 +145,8 @@ your tuning, and the guitar stays physically untouched.
   physically in rather than from E.
 - An on-screen readout of the current mode, route and per-player state, plus
   settings and rebindable keys in the settings app (Tuning tab).
+- Optional Drop Pedal overlay colours for downward shifts, upward shifts and
+  status text, configured in the settings app.
 
 Everything else comes from RSMods 1.2.8.2 and behaves as upstream documents
 it: extended range mode, custom song list titles, toggle loft, force
@@ -166,7 +165,7 @@ validation.
 | Work | Status | Goal |
 |---|---|---|
 | **Note by Note** | In development | Add a Riff Repeater practice mode that stops at each expected chart note and waits for you to play it correctly before continuing |
-| **Raw Real Tone Cable processing** ([issue #18](https://github.com/Cheesewizard/RSModsPlus/issues/18)) | Investigation planned | Process Cable input before Rocksmith's detection and tone systems. If the required capture point is proven safe, this will replace the current MultiPitch workaround and give Cable users an ASIO-style setup with no special tone |
+| **Raw Real Tone Cable processing** ([issue #18](https://github.com/Cheesewizard/RSModsPlus/issues/18)) | Delivered | Cable input is now captured and processed before Rocksmith's detection and tone systems, exactly like the ASIO path. Cable users get an ASIO-style setup with no special tone; the old MultiPitch-tone workaround is retired |
 | **Volume on large ASIO shifts** ([issue #17](https://github.com/Cheesewizard/RSModsPlus/issues/17)) | Under investigation | Reproduce the reported volume loss on large downward shifts, identify whether it comes from the shifter or the Rocksmith tone, and fix the cause without applying a blanket gain boost |
 
 The issue links contain the investigation scope and acceptance criteria. A
@@ -205,10 +204,11 @@ the Cable engine and Speaker Mode need neither.
 
 ## How it works
 
-**ASIO Drop Pedal.** With RS_ASIO installed, the mod hooks the ASIO driver
-below RS_ASIO and gives each configured Rocksmith input its own persistent
-pitch shifter, so note detection, the tuner and tone processing all consume
-the same shifted signal. The shifter uses period-synchronous splicing.
+**ASIO Drop Pedal.** With RS_ASIO installed, the mod validates and attaches to the
+capture endpoints RS_ASIO already created and gives each configured Rocksmith
+input its own persistent pitch shifter. It does not start the driver early or
+create a second ASIO host. Note detection, the tuner and tone processing all
+consume the same shifted signal. The shifter uses period-synchronous splicing.
 At 48 kHz with 128-frame callbacks, the production-shifter harness measures
 roughly 6-20 ms of observable content delay depending on the note and shift.
 This is added to the interface's normal round-trip latency. For comparison,
@@ -223,13 +223,12 @@ ASIO buffer remains important. Input formats `Float32`, `Int32`, `Int24` and
 `Int16` and buffer sizes from 1 to 4096 frames are accepted, so common
 interfaces work out of the box.
 
-**Cable Drop Pedal.** Without RS_ASIO, detection reads the raw signal upstream
-of the tone chain, so the mod shifts inside the game instead: it retunes a
-MultiPitch pedal in the player's tone and transposes the reference frequency
-the game derives its expected pitch from. In multiplayer, each tone's pitch
-pedal and each player's detection reference are attributed to their owning
-player. This engine needs the MultiPitch pedal in the tone and covers uniform
-tunings.
+**Cable Drop Pedal.** Without RS_ASIO, the mod opens the Real Tone Cable through
+a modern Windows audio path and captures its samples, then shifts that buffer
+with the same input-side shifter the ASIO path uses before Rocksmith detects it.
+No special tone and no in-game pitch pedal are involved, so stock and custom
+tones both work. In multiplayer, each player's captured input and detection
+reference are attributed to their owning player.
 
 **Speaker Mode.** The mod hooks the game's Wwise music decoding. Menu previews
 are shifted live; for gameplay, the selected song is decoded and pitch-rendered

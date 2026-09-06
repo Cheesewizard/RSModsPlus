@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Windows.Forms;
 using System.Diagnostics;
@@ -82,14 +82,10 @@ namespace RSMods
                 "[Drop Pedal]", new Dictionary<string, string>
                 {
                     { ReadSettings.DropPedalEnabledIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalEnabledIdentifier, "off") },
-                    { ReadSettings.DropPedalEngineIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalEngineIdentifier, "automatic") },
                     { ReadSettings.DropPedalCustomOverlayColorsIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalCustomOverlayColorsIdentifier, "off") },
                     { ReadSettings.DropPedalOverlayDownColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayDownColorIdentifier, "6BE06B") },
                     { ReadSettings.DropPedalOverlayUpColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayUpColorIdentifier, "FFC24D") },
-                    { ReadSettings.DropPedalOverlayStatusColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayStatusColorIdentifier, "FFFFFF") },
-                    // No UI control; hand-edited values are preserved across saves. -1 = automatic.
-                    { ReadSettings.DropPedalPlayer1AsioChannelIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalPlayer1AsioChannelIdentifier, "-1") },
-                    { ReadSettings.DropPedalPlayer2AsioChannelIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalPlayer2AsioChannelIdentifier, "-1") }
+                    { ReadSettings.DropPedalOverlayStatusColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayStatusColorIdentifier, "FFFFFF") }
                 }
             );
             saveSettingsOrDefaults.Add(
@@ -220,6 +216,9 @@ namespace RSMods
                     { ReadSettings.RewindLeadupIdentifier, CreateDefaultOnOldINI(ReadSettings.RewindLeadupIdentifier, "2000") }, // Amount of time (in ms) to move the grey note timer back after rewinding.
                     { ReadSettings.CustomNSPTimeLimitIdentifier, CreateDefaultOnOldINI(ReadSettings.CustomNSPTimeLimitIdentifier, "10000") }, // Amount of time (in ms) to have Non-stop play wait until the next song.
                     { ReadSettings.OnScreenFontSizeIdentifier, CreateDefaultOnOldINI(ReadSettings.OnScreenFontSizeIdentifier, "24") },
+                    { ReadSettings.ModernCableInputIdentifier, CreateDefaultOnOldINI(ReadSettings.ModernCableInputIdentifier, "on") }, // Real Tone Cable through the modern WASAPI capture client (RSModsPlus tab).
+                    { ReadSettings.MonitorOutputIdentifier, CreateDefaultOnOldINI(ReadSettings.MonitorOutputIdentifier, "off") }, // Diagnostic output-stream monitor (RSModsPlus tab, experimental).
+                    { ReadSettings.AudioDiagnosticsOverlayIdentifier, CreateDefaultOnOldINI(ReadSettings.AudioDiagnosticsOverlayIdentifier, "on") }, // In-game audio latency / signal overlay (RSModsPlus tab).
                 }
             );
             saveSettingsOrDefaults.Add(

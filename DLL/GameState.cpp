@@ -212,6 +212,10 @@ namespace GameState {
 			return Contains(currentMenu, fastRRModes);
 		}
 
+		bool IsInRiffRepeaterMenus() {
+			return Contains(currentMenu, riffRepeaterMenus);
+		}
+
 		bool IsInOnlineModes() {
 			return Contains(currentMenu, onlineModes);
 		}

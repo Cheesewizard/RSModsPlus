@@ -21,11 +21,23 @@ Make sure this is in `RSMods.ini` next to `Rocksmith2014.exe`:
 ```ini
 [Drop Pedal]
 EnableDropPedal = on
-Engine = automatic
 ```
 
-With RS_ASIO installed, `automatic` uses the ASIO engine. Without RS_ASIO, it
-uses the Cable engine.
+The Real Tone Cable and RS_ASIO use the same input-side shifter. There is no
+engine setting and no special-tone requirement.
+
+For the lowest Real Tone Cable latency, open the settings app and enable
+**Exclusive Mode (lower latency)** under Rocksmith audio settings, then restart
+the game. If it is disabled, the settings app labels the route
+**Shared Mode (higher latency)** and the game log warns that Windows shared
+output is active.
+
+### Optional: change the overlay colours
+
+Open the bundled `RSMods\RSMods.exe`, go to **Enable / Disable Mods > Tuning**
+and enable **Custom overlay colours**. Choose the colours used for downward
+shifts, upward shifts and status text. These settings affect the Drop Pedal
+readout only.
 
 ## 3. Use Drop Pedal in game
 
@@ -60,9 +72,10 @@ After starting the game, the top of the log tells the whole story:
 
 | Log line | Meaning |
 |---|---|
-| `RSModsPlus 3.2 ...` | The mod DLL loaded. The `(based on RSMods 1.2.8.2)` part is the upstream base version, not the installed version. |
-| `Drop pedal engine: ASIO Drop Pedal` or `Cable Drop Pedal` | The pedal is enabled and which engine owns it. |
-| No `Drop pedal engine` line at all | `EnableDropPedal` is still `off` in `RSMods.ini`. |
+| `RSModsPlus 4 ...` | The mod DLL loaded. The `(based on RSMods 1.2.8.2)` part is the upstream base version, not the installed version. |
+| `Installing the shared Drop Pedal input path` | The input-side pedal is enabled for either Cable or ASIO. |
+| `Exclusive Real Tone Cable format correction installed` | The native Cable driver correction is active. |
+| `Rocksmith output is using the slower Windows shared mode` | Enable Exclusive Mode and restart for lower output latency. |
 | Old version number at the top | The old DLL is still loading: the replacement went to the wrong folder, the copy was blocked, or antivirus interfered. |
 
 ## Keys still do nothing?
@@ -73,4 +86,4 @@ After starting the game, the top of the log tells the whole story:
 | Rocksmith is not the focused window | The keys only work with the game focused |
 | Log shows an old version | Replace the DLL in the folder Steam opens via Manage > Browse local files, with the game closed |
 | No log file appears at all | The DLL is not loading; verify the release ZIP was extracted into the folder containing `Rocksmith2014.exe` |
-| RS_ASIO works but the engine remains `Cable Drop Pedal` | Set `Engine = asio` under `[Drop Pedal]`, then restart. This disables the Cable fallback |
+| Overlay says `Input: Waiting for capture` | The selected input has not opened yet; inspect `RSMods_debug.txt` |

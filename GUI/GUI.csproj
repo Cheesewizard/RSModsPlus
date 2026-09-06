@@ -129,6 +129,8 @@
     </Compile>
     <Compile Include="GuitarSpeak.cs" />
     <Compile Include="MemoryStream.cs" />
+	<Compile Include="NoteByNoteChartExtractor.cs" />
+    <Compile Include="NoteByNoteMenuInstaller.cs" />
     <Compile Include="Profiles.cs" />
     <Compile Include="PsarcEntryPath.cs" />
     <Compile Include="Rocksmith\ReadSettings.cs" />
