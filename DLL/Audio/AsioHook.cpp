@@ -417,7 +417,7 @@ namespace Audio::AsioHook
 			const HRESULT result = originalCaptureGetBuffer(
 				self, data, frameCount, flags, devicePosition, qpcOut);
 
-			if (SUCCEEDED(result) && result != AUDCLNT_S_BUFFER_EMPTY && frameCount && *frameCount > 0 && *qpcOut != 0
+			if (!CableInput::IsAsioPath() && SUCCEEDED(result) && result != AUDCLNT_S_BUFFER_EMPTY && frameCount && *frameCount > 0 && *qpcOut != 0
 				&& !(flags && (*flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)))
 			{
 				const int routeIndex = FindCaptureRoute(self);
@@ -428,10 +428,9 @@ namespace Audio::AsioHook
 					static LARGE_INTEGER frequency = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return f; }();
 					QueryPerformanceCounter(&counter);
 					const double now100ns = frequency.QuadPart > 0 ? counter.QuadPart * 10000000.0 / frequency.QuadPart : 0.0;
-					// Packet timestamps mark the packet's END (engine receipt), so mean sample age is the
-					// hand-off delay plus half the packet (see CableInput.cpp for the live evidence).
+					// WASAPI timestamps identify the first frame; the packet midpoint is newer.
 					const double meanAgeMs = (now100ns - static_cast<double>(*qpcOut)) / 10000.0
-						+ 500.0 * *frameCount / rate;
+						- 500.0 * *frameCount / rate;
 					CableInput::ReportMeasuredInputRaw(static_cast<int64_t>(now100ns - static_cast<double>(*qpcOut)), *frameCount);
 					if (now100ns > 0.0 && meanAgeMs > -20.0 && meanAgeMs < 500.0)
 						CableInput::ReportMeasuredInputAge(meanAgeMs);
@@ -477,6 +476,16 @@ namespace Audio::AsioHook
 				std::fill(converted, converted + *frameCount, 0.0f);
 			else if (!CopyFirstChannelToFloat(*data, routeFormats[routeIndex], *frameCount, converted))
 				return result;
+
+			if (observesRoute)
+			{
+				float peak = 0.0f;
+				for (UINT32 index = 0; index < *frameCount; ++index)
+				{
+					peak = std::max(peak, std::fabs(converted[index]));
+				}
+				CableInput::ReportTapPacket(peak, silent, *frameCount, routeFormats[routeIndex].sampleRate);
+			}
 
 			// The armed source replaces the captured input first, then the processor (e.g. the
 			// Drop Pedal shifter) transforms whatever is now in the buffer - real cable or synth.
@@ -634,7 +643,11 @@ namespace Audio::AsioHook
 		HRESULT __cdecl Hook_UnmarshalStreamComPointers(void* stream)
 		{
 			const HRESULT result = originalUnmarshalStreamComPointers(stream);
-			if (SUCCEEDED(result)) RegisterCaptureStream(reinterpret_cast<PaWasapiStreamPrefix*>(stream));
+			if (SUCCEEDED(result) && stream)
+			{
+				auto* audioStream = reinterpret_cast<PaWasapiStreamPrefix*>(stream);
+				RegisterCaptureStream(audioStream);
+			}
 			return result;
 		}
 

@@ -554,13 +554,6 @@ bool DropPedal::IsPlayerShiftAvailable(Player player)
 		&& Audio::AsioHook::IsInputReady(routeIndex);
 }
 
-unsigned long long DropPedal::GetInputNoticeTick()
-{
-	return DropPedalState::IsConfiguredEnabled()
-		? DropPedalHooks::GetInputNoticeTick()
-		: 0;
-}
-
 void DropPedal::Poll()
 {
 	if (!DropPedalState::IsConfiguredEnabled()) return;

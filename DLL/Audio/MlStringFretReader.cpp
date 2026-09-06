@@ -66,10 +66,15 @@ namespace
 	}
 }
 
-bool MlStringFretReader::TryGet(StringFret& out, double maxAgeSeconds)
+bool MlStringFretReader::TryGet(StringFret& out, double maxAgeSeconds, const char** failureReason)
 {
+	out = {};
+	out.ageSeconds = -1.0;
+	for (int index = 0; index < 6; ++index) out.fret[index] = -1;
+	if (failureReason != nullptr) *failureReason = "mapping-unavailable";
 	const StringFretResult* v = EnsureView();
 	if (v == nullptr) return false;
+	if (failureReason != nullptr) *failureReason = "protocol-mismatch";
 	if (v->magic != SF_MAGIC || v->version != SF_VERSION) return false;
 
 	// Seqlock read: capture an even seq, copy, re-read; retry a few times on a torn
@@ -86,26 +91,15 @@ bool MlStringFretReader::TryGet(StringFret& out, double maxAgeSeconds)
 		const uint32_t s2 = *const_cast<volatile uint32_t*>(&v->seq);
 		if (s1 == s2) { settled = true; break; }
 	}
+	if (failureReason != nullptr) *failureReason = "concurrent-write";
 	if (!settled) return false;
 
 	const uint64_t now = GetTickCount64();
 	const double age = (snap.updateTickMs != 0 && now >= snap.updateTickMs)
 		? (now - snap.updateTickMs) / 1000.0
 		: 1.0e9;
-	if (age > maxAgeSeconds) return false;
-	uint64_t currentSampleIndex = 0;
-	uint32_t currentSampleRate = 0;
-	if (!MlAudioExporter::QueryAudioPosition(currentSampleIndex, currentSampleRate)
-		|| snap.sampleRate != currentSampleRate || snap.analyzedSampleIndex > currentSampleIndex)
-	{
-		return false;
-	}
-	const double audioAge = static_cast<double>(currentSampleIndex - snap.analyzedSampleIndex)
-		/ static_cast<double>(currentSampleRate);
-	if (audioAge > maxAgeSeconds) return false;
-
 	out.shift = snap.shift;
-	out.ageSeconds = audioAge > age ? audioAge : age;
+	out.ageSeconds = age;
 	out.analyzedSampleIndex = snap.analyzedSampleIndex;
 	out.sampleRate = snap.sampleRate;
 	for (int i = 0; i < 6; ++i)
@@ -114,6 +108,22 @@ bool MlStringFretReader::TryGet(StringFret& out, double maxAgeSeconds)
 		out.physFret[i] = snap.physFret[i];
 		out.conf[i] = snap.conf[i];
 	}
+	if (failureReason != nullptr) *failureReason = "publication-stale";
+	if (age > maxAgeSeconds) return false;
+	uint64_t currentSampleIndex = 0;
+	uint32_t currentSampleRate = 0;
+	if (failureReason != nullptr) *failureReason = "audio-position-invalid";
+	if (!MlAudioExporter::QueryAudioPosition(currentSampleIndex, currentSampleRate)
+		|| snap.sampleRate != currentSampleRate || snap.analyzedSampleIndex > currentSampleIndex)
+	{
+		return false;
+	}
+	const double audioAge = static_cast<double>(currentSampleIndex - snap.analyzedSampleIndex)
+		/ static_cast<double>(currentSampleRate);
+	out.ageSeconds = audioAge > age ? audioAge : age;
+	if (failureReason != nullptr) *failureReason = "audio-stale";
+	if (audioAge > maxAgeSeconds) return false;
+	if (failureReason != nullptr) *failureReason = "fresh";
 	return true;
 }
 

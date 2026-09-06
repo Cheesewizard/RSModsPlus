@@ -60,9 +60,34 @@ input route and shifter.
 
 ## Troubleshooting
 
+### Combining an interface and a Real Tone Cable
+
+RS_ASIO can expose Windows inputs alongside its ASIO inputs with
+`EnableWasapiInputs=1` in `[Config]`. Output routing is independent: keep
+`EnableWasapiOutputs=0` and the existing `[Asio.Output]` configuration to
+continue listening through the interface.
+
+For one interface input plus one cable, configure only `[Asio.Input.0]` and
+leave the `Driver` in `[Asio.Input.1]` empty. An interface having two physical
+inputs does not automatically expose both: each ASIO input section selects
+one channel. Enabling both sections as well as the cable exposes a third
+candidate input; configure the intended pair rather than relying on selection
+order.
+
+Mixed cable/ASIO multiplayer shifting is not yet verified in RSModsPlus.
+The current Drop Pedal route setup reads the ASIO input sections and does not
+account for an additional Windows cable input. Device availability in RS_ASIO
+does not establish correct per-player shifting in the mod.
+
+### Understanding the audio display
+
+The audio overlay shows the signal level, packet rate and input health. Latency
+figures and the approximate total have been removed because they were not a
+validated comparison of cable and ASIO performance.
+
 | Symptom | Meaning |
 |---|---|
-| `Input: Waiting for capture` | RS_ASIO has not created a supported capture endpoint yet |
+| `SIGNAL waiting for input` | The input tap has not received audio packets yet |
 | Guitar works but pitch does not change | Confirm Drop Pedal mode is selected and the target is not 0 |
 | Wrong interface channel shifts | Change `Channel =` under the corresponding input in `RS_ASIO.ini` |
 | No output device on launch | Restore the interface to 48 kHz and restart Rocksmith |

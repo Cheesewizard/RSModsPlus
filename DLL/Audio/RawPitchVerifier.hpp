@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "RawAttackEvidence.hpp"
 
 // Tier 0 of the modern detection stack (issue #29; enabled by the #18 tap finding): a
 // Goertzel measurement bank over the RAW input route samples, observed at the same
@@ -14,6 +15,35 @@
 // freeze makes it latency-tolerant.
 namespace RawPitchVerifier
 {
+	struct AudioSnapshot
+	{
+		uint64_t endSampleIndex = 0;
+		uint32_t sampleRate = 0;
+		uint32_t sampleCount = 0;
+		float samples[16384] = {};
+	};
+
+	bool CaptureSnapshot(AudioSnapshot& out);
+	bool QueryAttacks(uint64_t afterSampleIndex, RawAttackBatch& out);
+	bool MeasureSnapshot(const AudioSnapshot& snapshot, double frequencyHz,
+		float windowSeconds, float& power, float& rms, uint32_t& sampleCount);
+
+	struct NoteConfirmation
+	{
+		uint64_t endSampleIndex = 0;
+		uint32_t sampleRate = 0;
+		float targetPower = 0.0f;
+		float attackChange = 0.0f;
+		float attackPower = 0.0f;
+		float attackMinusPower = 0.0f;
+		float attackPlusPower = 0.0f;
+		float neighbourPower = 0.0f;
+		bool confirmed = false;
+	};
+
+	bool ConfirmSnapshot(const AudioSnapshot& snapshot, double frequencyHz, NoteConfirmation& out);
+	bool QueryNoteConfirmation(double frequencyHz, NoteConfirmation& out, uint64_t minimumSampleIndex = 0, uint64_t maximumSampleIndex = 0);
+
 	// Goertzel powers around a target fundamental. Powers are normalized by
 	// (windowSampleCount/2)^2 so a full-scale sine at the bin reads ~1.0 regardless of
 	// window length; compare them against each other, not against absolute thresholds.

@@ -59,7 +59,7 @@ namespace Audio::CableInput
 		// client; output-only opens (the Wwise sink) get a passive monitor that only observes.
 		thread_local bool wrapCaptureActivation = false;
 		thread_local bool monitorRenderActivation = false;
-		bool modernInputEnabled = true;
+		bool modernInputEnabled = false;
 		// Output monitoring is OFF by default: two launches with it on (2026-09-05, build
 		// 8bb14663) stalled before the profile screen with no PortAudio processing thread ever
 		// created and one thread parked inside a COM call. Enable with RSMods.ini
@@ -129,7 +129,11 @@ namespace Audio::CableInput
 			}
 		};
 		StreamStats inputStats;
+		StreamStats tapStats;
 		StreamStats outputStats;
+		std::atomic<bool> asioPath{ false };
+		std::atomic<uint32_t> tapFrames{ 0 };
+		std::atomic<uint32_t> tapRate{ 0 };
 
 		std::mutex statusMutex;
 		std::string statusDescription = "not installed";
@@ -456,10 +460,8 @@ namespace Audio::CableInput
 					lastRawDelta100ns.store(delta, std::memory_order_relaxed);
 					lastRawFrames.store(chunkFrames, std::memory_order_relaxed);
 					lastRawSource.store(2, std::memory_order_relaxed);
-					// The engine stamps a packet when it RECEIVES it (measured 2026-09-05: now-qpc = 2 ms on a
-					// 10 ms packet), i.e. at the packet's end, so the mean sample age is the hand-off delay
-					// PLUS half the packet.
-					const double meanAgeMs = delta / 10000.0 + 500.0 * chunkFrames / presentedLayout.rate;
+					// The timestamp identifies the first frame, so subtract half the packet for its midpoint.
+					const double meanAgeMs = delta / 10000.0 - 500.0 * chunkFrames / presentedLayout.rate;
 					if (meanAgeMs > -20.0 && meanAgeMs < 500.0) ReportMeasuredInputAge(meanAgeMs);
 				}
 				pendingFrames = chunkFrames;
@@ -606,7 +608,6 @@ namespace Audio::CableInput
 					totalWritten += frames;
 					writeFrame += frames;
 					inputStats.OnPacket(peak, silent);
-					UpdateMeter(silent ? 0.0f : peak);
 
 					hr = real->ReleaseBuffer(frames);
 					if (FAILED(hr)) return hr;
@@ -1368,14 +1369,14 @@ namespace Audio::CableInput
 			GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
 			const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
 			char value[16] = {};
-			GetPrivateProfileStringA("Mod Settings", "ModernCableInput", "on", value, sizeof(value), iniPath.c_str());
+			GetPrivateProfileStringA("Mod Settings", "ModernCableInput", "off", value, sizeof(value), iniPath.c_str());
 			char monitor[16] = {};
 			GetPrivateProfileStringA("Mod Settings", "MonitorOutput", "off", monitor, sizeof(monitor), iniPath.c_str());
 			outputMonitorEnabled = _stricmp(monitor, "on") == 0;
 			char overlay[16] = {};
 			GetPrivateProfileStringA("Mod Settings", "AudioDiagnosticsOverlay", "on", overlay, sizeof(overlay), iniPath.c_str());
 			overlayEnabled = _stricmp(overlay, "off") != 0;
-			return _stricmp(value, "off") != 0;
+			return _stricmp(value, "on") == 0;
 		}
 
 		// The game writes its own view of both streams to audiodump.txt at start-up (when
@@ -1432,23 +1433,12 @@ namespace Audio::CableInput
 		if (installed) return;
 		installed = true;
 
-		// Hold the 1 ms system timer for the life of the process, as most games do. The
-		// stock polled cable path sleeps between polls and wakes on this timer: measured
-		// 2026-09-05, the same stream handed packets over 15.6 ms late at the Windows default
-		// tick and ~1 ms late with a 1 ms timer held by some other program. Holding it here
-		// makes the stock path (and every other sleep in the game) behave the same on every
-		// machine, whether or not the modern client is in use. Never released: the OS drops
-		// the request when the process exits.
-		if (timeBeginPeriod(1) == TIMERR_NOERROR)
-			LOG_INFO("(CABLE INPUT) Holding the 1 ms system timer for the game's lifetime" << std::endl);
-		else
-			LOG_WARNING("(CABLE INPUT) Could not request the 1 ms system timer; the stock polled input follows the default tick" << std::endl);
-
 		char executablePath[MAX_PATH];
 		GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
 		const auto gameDir = std::filesystem::path(executablePath).parent_path();
 		if (std::filesystem::exists(gameDir / "RS_ASIO.dll"))
 		{
+			asioPath.store(true, std::memory_order_release);
 			SetStatus("RS_ASIO owns the input");
 			ReadModernInputSetting();   // still honours the overlay switch
 			{
@@ -1460,6 +1450,20 @@ namespace Audio::CableInput
 		}
 
 		modernInputEnabled = ReadModernInputSetting();
+		if (!modernInputEnabled)
+		{
+			SetStatus("Modern Cable input off; input opening unchanged");
+			LOG_INFO("(CABLE INPUT) ModernCableInput=off; input opening unchanged" << std::endl);
+			return;
+		}
+
+		// Keep timing adjustments inside the experimental opt-in. The OS releases the
+		// timer request when the process exits.
+		if (timeBeginPeriod(1) == TIMERR_NOERROR)
+			LOG_INFO("(CABLE INPUT) Holding the 1 ms system timer for the game's lifetime" << std::endl);
+		else
+			LOG_WARNING("(CABLE INPUT) Could not request the 1 ms system timer; the stock polled input follows the default tick" << std::endl);
+
 		auto* target = reinterpret_cast<byte*>(Offsets::func_PortAudioOpenStream.Get());
 		if (target == nullptr)
 		{
@@ -1477,13 +1481,13 @@ namespace Audio::CableInput
 			return;
 		}
 
-		SetStatus(modernInputEnabled ? "armed, waiting for the game to open its input" : "legacy shared input (ModernCableInput=off)");
+		SetStatus("armed, waiting for the game to open its input");
 		{
 			std::lock_guard<std::mutex> guard(statusMutex);
 			diagnostics.installed = true;
 		}
 		LOG_INFO("(CABLE INPUT) Pa_OpenStream detoured; "
-			<< (modernInputEnabled ? "modern capture client enabled" : "ModernCableInput=off, legacy shared input only")
+			<< "experimental modern capture client enabled"
 			<< (outputMonitorEnabled ? "; output monitor ON (MonitorOutput=on)" : "; output monitor off")
 			<< std::endl);
 	}
@@ -1554,7 +1558,7 @@ namespace Audio::CableInput
 	{
 		static PollState inputState;
 		static PollState outputState;
-		PollDirection(inputStats, inputState, "(CABLE INPUT)", "Input");
+		PollDirection(tapStats, inputState, "(INPUT)", "Input");
 		PollDirection(outputStats, outputState, "(OUTPUT)", "Output");
 
 		// Overlay figures: packets per second over a 1 s window, stall state, and the
@@ -1562,7 +1566,7 @@ namespace Audio::CableInput
 		static uint64_t rateTick = 0;
 		static uint64_t ratePackets = 0;
 		const uint64_t now = GetTickCount64();
-		const uint64_t packets = inputStats.packets.load(std::memory_order_relaxed);
+		const uint64_t packets = tapStats.packets.load(std::memory_order_relaxed);
 		if (rateTick == 0) { rateTick = now; ratePackets = packets; }
 		else if (now - rateTick >= 1000)
 		{
@@ -1571,7 +1575,7 @@ namespace Audio::CableInput
 			ratePackets = packets;
 			std::lock_guard<std::mutex> guard(statusMutex);
 			diagnostics.packetsPerSecond = perSecond;
-			diagnostics.streamActive = inputStats.startTick.load(std::memory_order_acquire) != 0;
+			diagnostics.streamActive = tapStats.startTick.load(std::memory_order_acquire) != 0;
 			diagnostics.stalled = inputState.stalled;
 		}
 		RefreshAudioDumpFigures();
@@ -1625,7 +1629,23 @@ namespace Audio::CableInput
 		std::memcpy(&age, &ageBits, sizeof(age));
 		copy.measuredValid = measuredAny.load(std::memory_order_relaxed);
 		copy.measuredInputMs = std::max(0.0f, age);
+		copy.tapPacketFrames = tapFrames.load(std::memory_order_relaxed);
+		copy.tapSampleRate = tapRate.load(std::memory_order_relaxed);
 		return copy;
+	}
+
+	void ReportTapPacket(float peak, bool silent, uint32_t frames, uint32_t sampleRate)
+	{
+		if (tapStats.startTick.load(std::memory_order_acquire) == 0) tapStats.OnStart();
+		tapFrames.store(frames, std::memory_order_relaxed);
+		tapRate.store(sampleRate, std::memory_order_relaxed);
+		tapStats.OnPacket(peak, silent);
+		UpdateMeter(silent ? 0.0f : peak);
+	}
+
+	bool IsAsioPath()
+	{
+		return asioPath.load(std::memory_order_acquire);
 	}
 
 	void ReportMeasuredInputRaw(int64_t delta100ns, uint32_t frames)

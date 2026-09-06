@@ -286,7 +286,11 @@ void GameOverlay::DisplayNoteByNoteStatus()
 	// ground through their 15 s safety budgets. Red once the level sits in the
 	// dead band: if strums do not move the number, the capture session is gone
 	// and a game restart is what re-initializes it.
-	if (isEnabled)
+	// 2026-09-06 (Philip): the audio diagnostics signal bar occupies these same rows and is
+	// a live, animating level readout, so when it is on screen this line is redundant and the
+	// two overprinted each other. The signal bar replaces it; this line only draws when the
+	// bar is not visible (toggle off, overlay switched off in RSMods.ini, or no input path).
+	if (isEnabled && !IsAudioDiagnosticsVisible())
 	{
 		ResearchProtocol::NoteByNoteState inputState;
 		if (NoteByNoteNativeScoring::TryGetResearchState(inputState)
@@ -503,71 +507,29 @@ void GameOverlay::DisplayNoteByNoteCornerStatus()
 	}
 }
 
-// Audio diagnostics overlay (Philip, 2026-09-05: "display the latency on the screen ... under
-// a diagnostic tab that contains other stuff such as signal"). Two lines, bottom-left:
-//   AUDIO  in 10.0 ms (modern raw)   out 3.0 ms (exclusive)   path 13.0 ms
-//   signal -18.3 dBFS [########----]  100 pkt/s
-// Input latency is one served chunk (the driver period); output latency is the game's own
-// figure from audiodump.txt, so nothing here is estimated. Colour: green while a signal is
-// present, grey idle, red when the stream has stalled.
+// Single source of truth for "the audio diagnostics rows are on screen". The NBN input
+// line (DisplayNoteByNoteStatus) shares those rows and yields to this block, so both must
+// agree on the gate; keep every visibility condition here.
+bool GameOverlay::IsAudioDiagnosticsVisible()
+{
+	if (!OverlayToggles::Get("audio_diag") || !Audio::CableInput::IsOverlayEnabled()) return false;
+	const Audio::CableInput::Diagnostics d = Audio::CableInput::GetDiagnostics();
+	return d.installed || d.rsAsio;
+}
+
 void GameOverlay::DisplayAudioDiagnostics()
 {
-	if (!OverlayToggles::Get("audio_diag") || !Audio::CableInput::IsOverlayEnabled()) return;
+	if (!IsAudioDiagnosticsVisible()) return;
 	const Audio::CableInput::Diagnostics d = Audio::CableInput::GetDiagnostics();
-	if (!d.installed && !d.rsAsio) return;
 
-	auto widen = [](const std::string& s) { return std::wstring(s.begin(), s.end()); };
-
-	// Line 1: the numbers a player cares about, big and bold. IN is one served chunk (the
-	// driver period), OUT is the game's own figure from audiodump.txt, TOTAL is their sum.
-	// The Drop Pedal shifter is the one moving part: it adds its delay only while shifting,
-	// so the TOTAL visibly rises when the pedal engages and falls back when it is off.
-	const uint32_t pedalFrames = DropPedal::GetInputShifterLatencyFrames();
-	const double pedalMs = pedalFrames > 0 ? 1000.0 * pedalFrames / 48000.0 : 0.0;
-
-	// IN prefers the MEASURED figure (device timestamp to game hand-off, newest sample) and
-	// shows the buffer arithmetic in brackets; a polled stock stream can be far fresher than
-	// its 22 ms buffer suggests, and only the measurement settles that.
-	std::wostringstream latency;
-	latency << std::fixed << std::setprecision(1);
-	const double bufferIn = d.rsAsio ? 0.0 : (d.inputLatencyMs > 0.0 ? d.inputLatencyMs : d.inputLatencyGameMs);
-	const double in = d.measuredValid ? d.measuredInputMs : bufferIn;
-	if (d.rsAsio) latency << L"IN RS_ASIO";
-	else if (d.measuredValid)
-	{
-		latency << L"IN " << d.measuredInputMs << L" ms measured";
-		if (bufferIn > 0.0) latency << L" (buf " << bufferIn << L")";
-	}
-	else if (in > 0.0) latency << L"IN " << in << L" ms buf";
-	else latency << L"IN --";
-	if (pedalMs > 0.0) latency << L"   PEDAL +" << pedalMs << L" ms";
-	if (d.outputKnown)
-	{
-		latency << L"   OUT " << d.outputLatencyMs << L" ms";
-		if (in > 0.0) latency << L"   TOTAL " << (in + pedalMs + d.outputLatencyMs) << L" ms";
-	}
-	if (!d.rsAsio && !d.inputPath.empty())
-	{
-		latency << L"   " << widen(d.inputPath);
-		if (!d.deviceFormat.empty()) latency << L" " << widen(d.deviceFormat);
-	}
-	if (d.outputKnown) latency << (d.outputExclusive ? L" / exclusive out" : L" / shared out");
-
-	// Line 2: a block meter with the level, or the fault state in red.
 	std::wostringstream signal;
-	int signalColor = 0xFFC8C8C8;
-	if (d.rsAsio)
+	if (!d.streamActive)
 	{
-		signal << L"SIGNAL  handled by RS_ASIO";
-	}
-	else if (!d.streamActive)
-	{
-		signal << L"SIGNAL  waiting for the cable";
+		signal << L"SIGNAL  waiting for input";
 	}
 	else if (d.stalled)
 	{
 		signal << L"NO SIGNAL  the input stream has stalled";
-		signalColor = 0xFFFF5A5A;
 	}
 	else
 	{
@@ -578,26 +540,21 @@ void GameOverlay::DisplayAudioDiagnostics()
 		signal << L"  " << std::fixed << std::setprecision(0) << std::max(db, -90.0) << L" dB   "
 			<< d.packetsPerSecond << L" pkt/s";
 		if (d.dropouts > 0) signal << L"   dropouts " << d.dropouts;
-		if (db > -40.0) signalColor = 0xFF7EE07E;
-		if (d.dropouts > 0) signalColor = 0xFFFFB050;
 	}
 
-	// Same row grid as the Drop Pedal overlay (row pitch height/36 from height/54), rows
-	// 1 and 2, bold, with a solid two-pixel shadow so it reads over the bright menu wall.
+	// Same row grid as the Drop Pedal overlay, with white text and a black shadow.
 	const int rowPitch = static_cast<int>(WindowSize.height / 36.0f);
 	const int fontSize = std::max(14, static_cast<int>(WindowSize.height / 62.0f));
 	const int left = static_cast<int>(WindowSize.width / 96.0f);
 	const int right = static_cast<int>(WindowSize.width * 0.8f);
-	const int line1Top = static_cast<int>(WindowSize.height / 54.0f) + rowPitch;
-	const int line2Top = line1Top + rowPitch;
-	const int bottom = line2Top + rowPitch;
-	auto draw = [&](const std::wstring& text, int top, int color)
+	const int signalTop = static_cast<int>(WindowSize.height / 54.0f) + rowPitch;
+	const int bottom = signalTop + rowPitch;
+	auto draw = [&](const std::wstring& text, int top)
 	{
 		DX9DrawTextW(text, 0xFF000000, left + 2, top + 2, right + 2, bottom + 2, pDevice, fontSize, DT_LEFT | DT_NOCLIP, FW_BOLD);
-		DX9DrawTextW(text, color, left, top, right, bottom, pDevice, fontSize, DT_LEFT | DT_NOCLIP, FW_BOLD);
+		DX9DrawTextW(text, 0xFFFFFFFF, left, top, right, bottom, pDevice, fontSize, DT_LEFT | DT_NOCLIP, FW_BOLD);
 	};
-	draw(latency.str(), line1Top, 0xFF3EC9C0);
-	draw(signal.str(), line2Top, signalColor);
+	draw(signal.str(), signalTop);
 }
 
 // Paired detection readout: Rocksmith's OWN pitch read (line 1) with the FretNet ML

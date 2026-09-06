@@ -65,10 +65,6 @@ namespace DropPedal
 	uint32_t GetInputShifterLatencyFrames();
 	bool IsPlayerShiftAvailable(Player player);
 
-	// Tick of the last input-route state change, for the on-screen status notice.
-	// Zero until hooks are installed.
-	unsigned long long GetInputNoticeTick();
-
 	// The tuning the guitar is physically in, and which way the shift is going, so the
 	// overlay can name and colour the state without duplicating the arithmetic.
 	int GetBaseTuningSemitones(Player player);

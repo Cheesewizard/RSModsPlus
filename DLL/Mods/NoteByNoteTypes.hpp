@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "../Audio/RawAttackEvidence.hpp"
 
 // Note by Note domain types: the plain data structures the scoring engine, the host, and the
 // overlay all exchange. These are shippable and carry no dependency on the research bridge or
@@ -252,9 +253,38 @@ namespace ResearchProtocol
 		int32_t observedMidi = -1;
 		float confidence = 0.0f;
 		double ageSeconds = 0.0;
+		// Highest confidence any string read the EXPECTED note, in either the shifted (expected)
+		// or physical (expected - appliedShift) frame - independent of whether a louder OTHER
+		// string made the reduced verdict Conflicting. -1 when the expected note is not present.
+		// This is "does FretNet see the note you are playing", which a ringing neighbour must not
+		// veto; the direct ML-expected-note accept uses it.
+		float targetConfidence = -1.0f;
 	};
 
-	constexpr uint32_t HOST_API_VERSION = 2;
+	struct RawToneComb
+	{
+		uint64_t endSampleIndex = 0;
+		uint32_t sampleRate = 0;
+		uint32_t sampleCounts[3] = {};
+		float rms[3] = {};
+		// Windows: 50, 100, 150 ms. Bins: -50 through +150 cents in 12.5-cent steps.
+		float powers[3][17] = {};
+	};
+
+	struct RawNoteConfirmation
+	{
+		uint64_t endSampleIndex = 0;
+		uint32_t sampleRate = 0;
+		float targetPower = 0.0f;
+		float attackChange = 0.0f;
+		float attackPower = 0.0f;
+		float attackMinusPower = 0.0f;
+		float attackPlusPower = 0.0f;
+		float neighbourPower = 0.0f;
+		uint32_t confirmed = 0;
+	};
+
+	constexpr uint32_t HOST_API_VERSION = 6;
 
 	// The services the host provides to the scoring engine (pitch-shift frame, tier-0 raw tone
 	// evidence, the ML companion, logging). The scoring engine reaches these through
@@ -291,5 +321,8 @@ namespace ResearchProtocol
 		uint64_t(__cdecl* GetMlAudioSampleIndex)() = nullptr;
 		uint8_t(__cdecl* QueryMlNoteEvidence)(int expectedMidi, float minConfidence,
 			uint64_t minimumSampleIndex, MlNoteEvidence* evidence) = nullptr;
+		uint8_t(__cdecl* QueryRawToneComb)(double frequencyHz, RawToneComb* out) = nullptr;
+		uint8_t(__cdecl* QueryRawNoteConfirmation)(double frequencyHz, uint64_t minimumSampleIndex, uint64_t maximumSampleIndex, RawNoteConfirmation* out) = nullptr;
+		uint8_t(__cdecl* QueryRawAttacks)(uint64_t afterSampleIndex, RawPitchVerifier::RawAttackBatch* out) = nullptr;
 	};
 }

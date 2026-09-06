@@ -33,6 +33,23 @@ The exclusive-format correction is direct. It does not silently switch a failed
 exclusive Cable to shared mode. If the driver rejects its native format, the log
 reports the driver error and the stream fails visibly.
 
+## Experimental Modern Cable input
+
+Modern Cable input is parked for this release and is **off by default**. It
+remains available for testing through **Enable Modern Cable input for testing
+(experimental)** in the settings app, or `ModernCableInput = on` under
+`[Mod Settings]` in `RSMods.ini`. Restart Rocksmith after changing it.
+
+When off, this feature does not install its input-opening hook or request its
+system timer adjustment. An existing explicit `ModernCableInput = on` setting
+is preserved; turn it off to stop using the experimental path. When RS_ASIO is
+installed, Modern Cable input stands down.
+
+Other Windows audio input devices can use the experimental capture path.
+Third-party compatibility is unverified, so we cannot guarantee your device
+will work. This does not confirm removal of other device restrictions in
+Rocksmith.
+
 ## Controls
 
 | Action | Player 1 | Player 2 |

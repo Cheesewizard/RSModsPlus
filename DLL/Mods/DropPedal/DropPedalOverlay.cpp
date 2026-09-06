@@ -12,8 +12,6 @@ namespace
 	constexpr unsigned int DROP_PEDAL_DOWN_TEXT = 0xFF6BE06B;
 	constexpr unsigned int DROP_PEDAL_UP_TEXT = 0xFFFFC24D;
 	constexpr unsigned int DROP_PEDAL_DISABLED_TEXT = 0xFFC8C8C8;
-	constexpr unsigned long long INPUT_SHOW_MILLISECONDS = 6000;
-	constexpr unsigned long long INPUT_FADE_MILLISECONDS = 1500;
 
 	struct OverlayTextColors
 	{
@@ -63,10 +61,6 @@ namespace
 		return 0xFF000000 | color;
 	}
 
-	unsigned int ApplyAlpha(unsigned int color, unsigned int alpha)
-	{
-		return (color & 0x00FFFFFF) | (alpha << 24);
-	}
 }
 
 void DropPedal::Overlay::LoadSettings()
@@ -103,7 +97,6 @@ void DropPedal::Overlay::Render(ID3DXFont* font, const Resolution& windowSize)
 		RenderTuning(font, windowSize, Player::Two, 1);
 	}
 
-	RenderInputStatus(font, windowSize, showsPlayerTwoRow);
 }
 
 void DropPedal::Overlay::RenderTuning(
@@ -125,52 +118,6 @@ void DropPedal::Overlay::RenderTuning(
 		static_cast<int>(windowSize.width / 96.0f),
 		top,
 		static_cast<int>(windowSize.width / 3.0f),
-		top + static_cast<int>(windowSize.height / 27.0f));
-}
-
-void DropPedal::Overlay::RenderInputStatus(
-	ID3DXFont* font,
-	const Resolution& windowSize,
-	bool isMultiplayer)
-{
-	if (GameState::currentMenu != "MainMenu") return;
-
-	const unsigned long long noticeTick = DropPedal::GetInputNoticeTick();
-	if (noticeTick == 0) return;
-
-	// The input route is established before the overlay font is ready, so the notice
-	// timer begins on the first frame that can render it. A later state change resets it.
-	if (noticeTick != lastSeenNoticeTick)
-	{
-		lastSeenNoticeTick = noticeTick;
-		inputDisplayStartTick = 0;
-	}
-
-	if (inputDisplayStartTick == 0)
-	{
-		inputDisplayStartTick = GetTickCount64();
-	}
-
-	const unsigned long long elapsed = GetTickCount64() - inputDisplayStartTick;
-	if (elapsed >= INPUT_SHOW_MILLISECONDS + INPUT_FADE_MILLISECONDS) return;
-
-	UpdateInputStatusCache(font);
-
-	const float fade = elapsed < INPUT_SHOW_MILLISECONDS
-		? 1.0f
-		: 1.0f - (float)(elapsed - INPUT_SHOW_MILLISECONDS) / INPUT_FADE_MILLISECONDS;
-
-	const int left = static_cast<int>(windowSize.width / 96.0f);
-	const int top = static_cast<int>(windowSize.height / (isMultiplayer ? 10.8f : 18.0f));
-
-	DrawShadowedText(
-		font,
-		windowSize,
-		inputLine,
-		ApplyAlpha(overlayTextColors.status, static_cast<unsigned int>(255 * fade)),
-		left,
-		top,
-		left + static_cast<int>(windowSize.width / 3.0f),
 		top + static_cast<int>(windowSize.height / 27.0f));
 }
 
@@ -234,23 +181,6 @@ void DropPedal::Overlay::UpdateTuningCache(ID3DXFont* font, Player player)
 	cachedTuningColorRevisions[playerIndex] = overlayTextColorRevision;
 	hasCachedTuningState[playerIndex] = true;
 	font->PreloadTextA(tuningLine.c_str(), static_cast<int>(tuningLine.length()));
-}
-
-void DropPedal::Overlay::UpdateInputStatusCache(ID3DXFont* font)
-{
-	const bool isInputShifterActive = DropPedal::IsInputShifterActive();
-	if (hasCachedInputState
-		&& isInputShifterActive == cachedInputShifterActive
-		&& font == cachedInputFont)
-	{
-		return;
-	}
-
-	inputLine = isInputShifterActive ? "Input: Ready" : "Input: Waiting for capture";
-	cachedInputShifterActive = isInputShifterActive;
-	cachedInputFont = font;
-	hasCachedInputState = true;
-	font->PreloadTextA(inputLine.c_str(), static_cast<int>(inputLine.length()));
 }
 
 void DropPedal::Overlay::DrawShadowedText(

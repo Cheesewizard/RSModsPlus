@@ -12,7 +12,6 @@ namespace DropPedalHooks
 	bool IsInputShifterActive();
 	bool TryGetAuthoredTrueTuning(float& trueTuning);
 	void ReportInputShifterUnavailable();
-	unsigned long long GetInputNoticeTick();
 	void HandleArrangementTuning();
 	void ResetSongState();
 }

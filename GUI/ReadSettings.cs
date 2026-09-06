@@ -321,7 +321,7 @@ namespace RSMods
             if (identifierToGrab == DropPedalOverlayStatusColorIdentifier)
                 return "FFFFFF";
             if (identifierToGrab == ModernCableInputIdentifier)
-                return "on";
+                return "off";
             if (identifierToGrab == MonitorOutputIdentifier)
                 return "off";
             if (identifierToGrab == AudioDiagnosticsOverlayIdentifier)

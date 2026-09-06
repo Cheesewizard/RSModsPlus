@@ -5273,7 +5273,7 @@
             this.groupBox_RSModsPlus_CableInput.Size = new System.Drawing.Size(1110, 150);
             this.groupBox_RSModsPlus_CableInput.TabIndex = 0;
             this.groupBox_RSModsPlus_CableInput.TabStop = false;
-            this.groupBox_RSModsPlus_CableInput.Text = "Real Tone Cable: modern input";
+            this.groupBox_RSModsPlus_CableInput.Text = "Modern Cable input (experimental)";
             //
             // checkBox_ModernCableInput
             //
@@ -5282,7 +5282,7 @@
             this.checkBox_ModernCableInput.Name = "checkBox_ModernCableInput";
             this.checkBox_ModernCableInput.Size = new System.Drawing.Size(322, 17);
             this.checkBox_ModernCableInput.TabIndex = 0;
-            this.checkBox_ModernCableInput.Text = "Use the modern low-latency cable input (recommended)";
+            this.checkBox_ModernCableInput.Text = "Enable Modern Cable input for testing (experimental)";
             this.checkBox_ModernCableInput.UseVisualStyleBackColor = true;
             this.checkBox_ModernCableInput.CheckedChanged += new System.EventHandler(this.Save_ModernCableInput);
             this.checkBox_ModernCableInput.MouseLeave += new System.EventHandler(this.ToolTips_Hide);
@@ -5294,7 +5294,7 @@
             this.label_RSModsPlus_CableInputInfo.Name = "label_RSModsPlus_CableInputInfo";
             this.label_RSModsPlus_CableInputInfo.Size = new System.Drawing.Size(1080, 60);
             this.label_RSModsPlus_CableInputInfo.TabIndex = 1;
-            this.label_RSModsPlus_CableInputInfo.Text = "Opens the Real Tone Cable through a modern Windows audio path: event-driven at the driver's own period, no Rocksmith.ini edits, and it works alongside an audio interface used as the output.\r\nStands down automatically when RS_ASIO is installed, so RS_ASIO users are not affected. Changes require restarting Rocksmith.";
+            this.label_RSModsPlus_CableInputInfo.Text = "Experimental Windows audio input path, off by default. Other Windows input devices can use this path, but third-party compatibility is unverified; your device may not work.\r\nWhen off, this feature leaves input opening unchanged. Stands down when RS_ASIO is installed. Changes require restarting Rocksmith.";
             //
             // checkBox_AudioDiagnosticsOverlay
             //

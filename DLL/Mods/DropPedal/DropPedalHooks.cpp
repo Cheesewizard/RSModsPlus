@@ -9,7 +9,6 @@ namespace
 	std::atomic<bool> isInputShifterActive{ false };
 	std::atomic<bool> tuningRestorePending{ false };
 	bool hasReportedInputShifterUnavailable = false;
-	std::atomic<unsigned long long> inputNoticeTick{ 0 };
 	unsigned long long inputCaptureWaitStartTick = 0;
 
 	// The reference builder converts an arrangement's cent offset into the frequency
@@ -405,7 +404,6 @@ namespace
 void DropPedalHooks::Install()
 {
 	inputCaptureWaitStartTick = GetTickCount64();
-	inputNoticeTick.store(inputCaptureWaitStartTick, std::memory_order_relaxed);
 	LOG_INFO("Drop pedal input path: waiting for capture." << std::endl);
 
 	const uintptr_t referenceBuilder = Offsets::func_tuningReferenceBuilder.GetValue();
@@ -458,7 +456,6 @@ void DropPedalHooks::SetInputShifterActive(bool active)
 	const bool wasActive = isInputShifterActive.exchange(active, std::memory_order_acq_rel);
 	if (active == wasActive) return;
 
-	inputNoticeTick.store(GetTickCount64(), std::memory_order_relaxed);
 	LOG_INFO("Drop pedal input path: " << (active ? "ready" : "unavailable") << "." << std::endl);
 }
 
@@ -492,11 +489,6 @@ void DropPedalHooks::ReportInputShifterUnavailable()
 	hasReportedInputShifterUnavailable = true;
 	LOG_ERROR("Drop pedal input capture is unavailable. Pitch shifting remains inactive; "
 		"there is no tone-based fallback." << std::endl);
-}
-
-unsigned long long DropPedalHooks::GetInputNoticeTick()
-{
-	return inputNoticeTick.load(std::memory_order_relaxed);
 }
 
 void DropPedalHooks::HandleArrangementTuning()

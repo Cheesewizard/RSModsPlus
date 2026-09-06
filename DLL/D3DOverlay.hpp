@@ -45,6 +45,9 @@ namespace GameOverlay {
 	// a live signal bar and packet rate. Gated by OverlayToggles "audio_diag" and the
 	// RSMods.ini AudioDiagnosticsOverlay switch; draws in menus and songs.
 	void DisplayAudioDiagnostics();
+	// True when DisplayAudioDiagnostics will draw this frame. The NBN "Input: x dB" line
+	// shares the same top-left rows and is suppressed while the signal bar is visible.
+	bool IsAudioDiagnosticsVisible();
 	void DisplayCurrentTuningForAutoTune();
 	void DisplayLoopStartEndTimes(float loopStart, float loopEnd);
 	void DisplaySongAccuracy();

@@ -703,7 +703,7 @@ namespace RSMods
             checkBox_DropPedalCustomOverlayColors.Checked = ReadSettings.ProcessSettings(ReadSettings.DropPedalCustomOverlayColorsIdentifier) == "on";
             DropPedalColors_Load();
 
-            checkBox_ModernCableInput.Checked = ReadSettings.ProcessSettings(ReadSettings.ModernCableInputIdentifier) != "off";
+            checkBox_ModernCableInput.Checked = ReadSettings.ProcessSettings(ReadSettings.ModernCableInputIdentifier) == "on";
             checkBox_MonitorOutput.Checked = ReadSettings.ProcessSettings(ReadSettings.MonitorOutputIdentifier) == "on";
             checkBox_AudioDiagnosticsOverlay.Checked = ReadSettings.ProcessSettings(ReadSettings.AudioDiagnosticsOverlayIdentifier) != "off";
             RSModsPlus_RefreshAudioStatus(null, EventArgs.Empty);

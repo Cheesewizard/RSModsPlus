@@ -1,5 +1,6 @@
 #include "ResearchProbeRuntime.hpp"
 #include "MlConfirmationState.hpp"
+#include "PickedAttackQueue.hpp"
 #include "NoteByNoteNativeScoring.hpp"
 #include "NoteByNoteScoringCore.hpp"
 
@@ -355,16 +356,6 @@ namespace
 	constexpr uintptr_t DETECTOR_GATE_QUALITY_THRESHOLD = 0x012243A0;
 	constexpr double DETECTOR_GATE_LEVEL_FALLBACK = -55.0;
 	constexpr double DETECTOR_GATE_QUALITY_FALLBACK = 50.0;
-	// Tier-0 high-fret vouch (Philip 2026-09-05). Native's own quality gate refuses a high,
-	// thin-string note (B12/MIDI71, green 19, high-e 15) whose fundamental the tier-0 DSP still
-	// reads cleanly - measured quality ~35-50, just under the ~50 gate, with the level fine. On a
-	// sustained hold where native scored in this band, tier-0's 5x-dominant fundamental
-	// confirmation is a reliable accept (the flickery ML rescue is not). The floor keeps it from
-	// vouching on a dead/absent signal (quality < ~35 is not a real read). Streak-gated for the
-	// documented tier-0 top-of-note wobble; the sub-harmonic guards inside Tier0ConfirmsExpected
-	// stop a lower note's harmonic from confirming.
-	constexpr float TIER0_VOUCH_QUALITY_FLOOR = 35.0f;
-	constexpr int32_t TIER0_VOUCH_STREAK_TICKS = 2;
 	// Only bounds the ring indexing against a corrupt read; the capacity is read, not assumed.
 	constexpr int32_t DETECTOR_RING_MAX_CAPACITY = 4096;
 	// Native-drive step 4 (decomp-nd-query-core-2026-08-25): the ND
@@ -420,19 +411,9 @@ namespace
 	// for THIS hold: ~10 frames is ~100 ms at the observed ~95 ring frames/s.
 	constexpr float ONSET_EVIDENCE_LEVEL_FLOOR_DB = -65.0f;
 	constexpr uint32_t ONSET_EVIDENCE_MIN_FRAMES = 10;
-	// Rising-edge requirement for onset-flag evidence (2026-08-29, issue #58: a chord
-	// that rings out was satisfying repeat-strum sections with no re-pick). The detector
-	// stamps its onset flag on a loud sustained ring too, so the flag alone is not proof
-	// of a fresh attack. A real re-pick INJECTS energy - the flagged frame's level rises
-	// above the ring just before it - while a decaying ring (or a prior strum's falling
-	// tail) sits flat or falling. Require that rise, measured at ring-frame resolution
-	// (~95/s) against the frame ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES earlier. This is the
-	// finer-grained cousin of the level-spike gate: it keeps the onset-flag path's whole
-	// reason for existing (a soft re-strum over a loud ring moves the tick-to-tick meter
-	// less than DETECTOR_SPIKE_JUMP_DB, so the coarse gate misses it) while refusing a
-	// ring, because at frame resolution a pick transient is a sharp local rise even when
-	// the tick average barely moves. RISE_DB is a first, conservative value; the reject
-	// path logs the measured rise so the threshold can be locked from a live pass.
+	// Plain picks use the raw-audio attack stream.
+	// Other techniques retain their four-frame comparison. An onset flag without
+	// a measurable rise is insufficient: the detector also flags ringing strings.
 	constexpr int32_t ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES = 4;
 	constexpr float ONSET_EVIDENCE_RISE_DB = 1.5f;
 	// Bound per-tick scan work when the cursor falls far behind (a hitch between
@@ -932,11 +913,6 @@ namespace
 	// NativeOnly. Native still detects; the rescue only adds accepts, it never blocks.
 	bool MlMayRescueNow() { return CurrentTechniqueStrategy() != DetectionStrategy::NativeOnly; }
 
-	// Native single-note accept needs an ML co-sign only in the strict MlOnly test mode; in
-	// Blend and NativeOnly native's own accept stands (Blend adds ML as rescue+guarded veto,
-	// not a required co-sign, so ML latency or a weak ML read never stalls a correct note).
-	bool NativeAcceptNeedsMlCosign() { return CurrentTechniqueStrategy() == DetectionStrategy::MlOnly; }
-
 	// Live native-vs-ML agreement sampler + per-session CSV. Defined further down, next to the
 	// shadow loggers where the passive native/ML queries live; forward-declared here so the
 	// hold-phase sampler can call it.
@@ -1122,6 +1098,14 @@ namespace
 	int32_t onsetScanRingIndex = -1;
 	uint32_t onsetScanFramesSinceLatch = 0;
 	bool hasOnsetScanAnchor = false;
+	NoteByNote::PickedAttackQueue pickedAttacks;
+	NoteByNote::PickedAttack acceptedPick;
+	uintptr_t acceptedPickRecord = 0;
+	uint64_t pickDiagnosticSample = 0;
+	uint64_t pickScanSample = 0;
+	uint32_t pickSampleRate = 0;
+
+
 	float heldEpoch = 0.0f;
 	void* heldPlayerSong = nullptr;
 	uint64_t holdTickCount = 0;
@@ -1156,7 +1140,6 @@ namespace
 	int32_t reattackStreak = 0;
 	Research::MlConfirmationState mlConfirmationState;
 	int32_t bendRescueStreak = 0;      // consecutive ticks tier-0/ML confirm the bend reached its target
-	int32_t tier0VouchStreak = 0;      // consecutive ticks tier-0 confirms a high-fret note native under-scored
 
 	// Flow-work instrumentation (docs/designs/nbn-flow-until-miss.md phase 1): measure the
 	// per-note cost that makes fast play choppy - the coordinated PlayerSong/fretboard rebuild
@@ -2169,9 +2152,12 @@ namespace
 			&& capacity <= DETECTOR_RING_MAX_CAPACITY;
 	}
 
-	// Pins the onset-evidence cursor to the ring's current write position. Called at
-	// hold establishment and at every dense relatch, so only frames written AFTER the
-	// latch can become attack evidence for the new hold.
+	bool IsPlainPickedTarget()
+	{
+		return expectedMidi >= 0 && selectedChordId == -1 && !isBendTarget
+			&& !isBendChildTarget && !isLegatoTarget && !isConfirmingLegatoRun;
+	}
+
 	void ResetChordOnsetEvidenceAnchor()
 	{
 		onsetScanFramesSinceLatch = 0;
@@ -2185,12 +2171,190 @@ namespace
 		hasOnsetScanAnchor = true;
 	}
 
-	// The onset-flag half of the chord attack evidence (the spike gate is the other
+	bool TryMeasureOnsetRise(uintptr_t ring, int32_t index, int32_t capacity,
+		float level, float& rise)
+	{
+		rise = 0.0f;
+		if (!std::isfinite(level) || capacity <= ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES) return false;
+		const int32_t baseline = (index - ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES + capacity) % capacity;
+		float priorLevel = 0.0f;
+		if (!TryRead(ring + static_cast<uintptr_t>(baseline) * DETECTOR_RING_STRIDE
+			+ RING_FRAME_LEVEL, priorLevel) || !std::isfinite(priorLevel)) return false;
+		rise = level - priorLevel;
+		return true;
+	}
+
+	bool ReadPickedAttackBaseline(NoteByNote::PickedAttack& attack, int midi, float& power)
+	{
+		if (midi < 0 || midi > 127 || attack.sampleRate == 0) return false;
+		const int slot = midi == attack.candidateMidi ? 0 : 1;
+		if (attack.baselineMidi[slot] == midi)
+		{
+			power = attack.baselinePower[slot];
+			return true;
+		}
+		const double frequency = 440.0 * std::pow(2.0, (midi - 69.0) / 12.0);
+		const uint64_t count = static_cast<uint64_t>((frequency >= 330.0 ? 0.02f : 0.15f) * attack.sampleRate);
+		if (attack.minimumSample <= count) return false;
+		ResearchProtocol::RawNoteConfirmation raw;
+		if (!ResearchProbeRuntime::QueryRawNoteConfirmation(frequency, raw,
+			attack.minimumSample - count, attack.minimumSample)) return false;
+		attack.baselineMidi[slot] = midi;
+		attack.baselinePower[slot] = raw.attackPower;
+		attack.baselineMinusPower[slot] = raw.attackMinusPower;
+		attack.baselinePlusPower[slot] = raw.attackPlusPower;
+		power = raw.attackPower;
+		return true;
+	}
+
+	void ConfirmLatestPickedAttack(uint64_t maximumSample = 0)
+	{
+		auto* attack = pickedAttacks.Latest();
+		if (attack == nullptr || attack->confirmedMidi >= 0) return;
+		const int candidates[] = { attack->candidateMidi, QueryNativeLoudestPlayedNote() };
+		for (int index = 0; index < 2; ++index)
+		{
+			const int midi = candidates[index];
+			if (midi < 0 || midi > 127 || (index != 0 && midi == candidates[0])) continue;
+			ResearchProtocol::RawNoteConfirmation raw;
+			const double frequency = 440.0 * std::pow(2.0, (midi - 69.0) / 12.0);
+			if (!ResearchProbeRuntime::QueryRawNoteConfirmation(frequency, raw, attack->minimumSample, maximumSample)
+				|| raw.confirmed == 0) continue;
+			if (raw.attackChange < 0.2f) continue;
+			float baseline = 0.0f;
+			if (!ReadPickedAttackBaseline(*attack, midi, baseline)) continue;
+			const int slot = midi == attack->candidateMidi ? 0 : 1;
+			const float targetRise = std::sqrt(raw.attackPower) - std::sqrt(baseline);
+			const float minusRise = std::sqrt(raw.attackMinusPower) - std::sqrt(attack->baselineMinusPower[slot]);
+			const float plusRise = std::sqrt(raw.attackPlusPower) - std::sqrt(attack->baselinePlusPower[slot]);
+			const float neighbourRise = minusRise > plusRise ? minusRise : plusRise;
+			if (neighbourRise > 1e-3f && neighbourRise > (targetRise > 0.0f ? targetRise : 0.0f)) continue;
+			const auto strategy = CurrentTechniqueStrategy();
+			if (strategy != DetectionStrategy::NativeOnly)
+			{
+				ResearchProtocol::MlNoteEvidence ml;
+				const bool available = ResearchProbeRuntime::QueryMlNoteEvidence(
+					midi, 0.5f, attack->minimumMlSample, ml);
+				if (strategy == DetectionStrategy::MlOnly
+					&& (!available || ml.verdict != ResearchProtocol::MlNoteVerdict::Confirmed)) continue;
+				if (available && ml.verdict == ResearchProtocol::MlNoteVerdict::Conflicting
+					&& ml.confidence >= ML_BLEND_VETO_CONF && ml.observedMidi >= 0
+					&& (ml.observedMidi - midi) % 12 != 0) continue;
+			}
+			attack->confirmedMidi = midi;
+			attack->confirmedSample = raw.endSampleIndex;
+			LOG_INFO("(NBN PICK BUFFER) Confirmed attack=" << attack->time << " midi=" << midi
+				<< " samples=" << attack->minimumSample << ".." << raw.endSampleIndex
+				<< " change=" << raw.attackChange << " targetRise=" << targetRise << " neighbourRise=" << neighbourRise
+				<< " queued=" << pickedAttacks.Count() << std::endl);
+			return;
+		}
+	}
+
+	void TickPickedAttackStream()
+	{
+		RawPitchVerifier::RawAttackBatch batch;
+		if (!ResearchProbeRuntime::QueryRawAttacks(pickScanSample, batch)) return;
+		const double now = static_cast<double>(batch.endSampleIndex) / batch.sampleRate;
+		if (batch.count != 0 && (batch.endSampleIndex < pickDiagnosticSample
+			|| batch.endSampleIndex - pickDiagnosticSample >= batch.sampleRate))
+		{
+			const auto& latest = batch.frames[batch.count - 1];
+			LOG_INFO("(NBN RAW ATTACK) sample=" << latest.endSampleIndex
+				<< " inputDb=" << latest.inputLevelDb
+				<< " queued=" << pickedAttacks.Count() << std::endl);
+			pickDiagnosticSample = batch.endSampleIndex;
+		}
+		if (batch.reset != 0 || pickScanSample == 0 || pickSampleRate != batch.sampleRate || batch.endSampleIndex < pickScanSample
+			|| (expectedMidi >= 0 && !IsPlainPickedTarget()))
+		{
+			pickedAttacks.Clear();
+			pickScanSample = batch.endSampleIndex;
+			pickSampleRate = batch.sampleRate;
+			return;
+		}
+		if (batch.count != 0 && batch.frames[0].endSampleIndex - pickScanSample > batch.sampleRate / 100)
+		{
+			LOG_INFO("(NBN PICK BUFFER) Raw attack scan overrun; clearing uncertain attacks." << std::endl);
+			pickedAttacks.Clear();
+			pickScanSample = batch.endSampleIndex;
+			return;
+		}
+		const unsigned expired = pickedAttacks.Expire(now);
+		if (expired != 0) LOG_INFO("(NBN PICK BUFFER) Expired " << expired << " old attacks." << std::endl);
+		for (uint32_t index = 0; index < batch.count; ++index)
+		{
+			const auto& frame = batch.frames[index];
+			pickScanSample = frame.endSampleIndex;
+			const uint64_t attackSample = frame.attackSampleIndex;
+			if (attackSample == 0) continue;
+			bool changed = false;
+			const int observedMidi = QueryNativeLoudestPlayedNote();
+			const int candidates[] = { expectedMidi, observedMidi };
+			for (int midi : candidates)
+			{
+				if (midi < 0 || midi > 127) continue;
+				ResearchProtocol::RawNoteConfirmation change;
+				const double frequency = 440.0 * std::pow(2.0, (midi - 69.0) / 12.0);
+				ResearchProbeRuntime::QueryRawNoteConfirmation(frequency, change, attackSample,
+					attackSample + batch.sampleRate / (frequency < 330.0 ? 20 : 50));
+				if (change.attackChange >= 0.2f) { changed = true; break; }
+			}
+			if (!changed)
+			{
+				LOG_INFO("(NBN RAW ATTACK) Rejected sustain fluctuation sample=" << attackSample << std::endl);
+				continue;
+			}
+			NoteByNote::PickedAttack attack;
+			attack.minimumSample = attackSample;
+			attack.sampleRate = batch.sampleRate;
+			const double time = static_cast<double>(attackSample) / batch.sampleRate;
+			attack.time = time;
+			ConfirmLatestPickedAttack(attack.minimumSample);
+			attack.minimumMlSample = ResearchProbeRuntime::GetMlAudioSampleIndex();
+			attack.candidateMidi = expectedMidi;
+			float baseline = 0.0f;
+			ReadPickedAttackBaseline(attack, attack.candidateMidi, baseline);
+			ReadPickedAttackBaseline(attack, QueryNativeLoudestPlayedNote(), baseline);
+			const auto* pending = pickedAttacks.Latest();
+			if (pending != nullptr && pending->confirmedMidi < 0)
+			{
+				LOG_INFO("(NBN PICK BUFFER) Unresolved attack=" << pending->time
+					<< " ended by next attack=" << time << std::endl);
+			}
+			if (!pickedAttacks.Push(attack))
+			{
+				LOG_INFO("(NBN PICK BUFFER) Attack queue full or timestamp repeated; rejected attack=" << time << std::endl);
+			}
+			else LOG_INFO("(NBN PICK BUFFER) Captured attack=" << time << " phase=" << static_cast<int>(gatePhase)
+				<< " sample=" << attack.minimumSample << std::endl);
+		}
+		ConfirmLatestPickedAttack();
+	}
+
+	bool TakeBufferedPick()
+	{
+		if (acceptedPickRecord == selectedRecord) return true;
+		const unsigned before = pickedAttacks.Count();
+		const bool taken = pickedAttacks.Take(expectedMidi, acceptedPick);
+		const unsigned mismatched = before - pickedAttacks.Count() - (taken ? 1 : 0);
+		if (mismatched != 0)
+		{
+			LOG_INFO("(NBN PICK BUFFER) Discarded " << mismatched << " attacks with a different pitch; expected="
+				<< expectedMidi << std::endl);
+		}
+		if (!taken) return false;
+		acceptedPickRecord = selectedRecord;
+		LOG_INFO("(NBN PICK BUFFER) Consumed attack=" << acceptedPick.time
+			<< " midi=" << acceptedPick.confirmedMidi << " record=" << selectedRecord << std::endl);
+		return true;
+	}
+
+	// The onset-flag half of the attack evidence (the spike gate is the other
 	// half; see sawSpikeDuringHold). Walks every ring frame written since the last
 	// scan and latches evidence when a post-latch frame carries the ring's own onset
-	// flag at a credible level. Runs once per scoring tick from LogDetectorGates,
-	// unthrottled, chord holds only.
-	void TickChordOnsetEvidence()
+	// flag at a credible level. Also runs while a repeated picked note waits to arm.
+	void TickOnsetEvidence()
 	{
 		uintptr_t ring = 0;
 		int32_t writeIndex = 0;
@@ -2228,21 +2392,14 @@ namespace
 			uint8_t onsetFlag = 0;
 			float level = 0.0f;
 			if (!TryRead(frame + RING_FRAME_ONSET_FLAG, onsetFlag) || onsetFlag == 0) continue;
+
 			if (!TryRead(frame + RING_FRAME_LEVEL, level) || !std::isfinite(level)
 				|| level < ONSET_EVIDENCE_LEVEL_FLOOR_DB)
 			{
 				continue;
 			}
-			// Rising-edge gate (#58): the flagged frame must be louder than the ring a few
-			// frames earlier, or this is a decaying ring / a prior strum's tail, not a
-			// fresh re-pick. Reject on an unreadable baseline too - require positive proof.
-			int32_t baseIndex = index - ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES;
-			if (baseIndex < 0) baseIndex += capacity;
-			float priorLevel = 0.0f;
-			const bool haveBaseline = TryRead(ring
-				+ static_cast<uintptr_t>(baseIndex) * DETECTOR_RING_STRIDE + RING_FRAME_LEVEL,
-				priorLevel) && std::isfinite(priorLevel);
-			const float rise = haveBaseline ? (level - priorLevel) : 0.0f;
+			float rise = 0.0f;
+			const bool haveBaseline = TryMeasureOnsetRise(ring, index, capacity, level, rise);
 			if (!haveBaseline || rise < ONSET_EVIDENCE_RISE_DB)
 			{
 				// One line per tick so a loud ring's many onset frames cannot flood the
@@ -2250,21 +2407,29 @@ namespace
 				if (!loggedRingRejectThisTick)
 				{
 					loggedRingRejectThisTick = true;
+					float history[ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES] = {};
+					for (int32_t offset = 1; offset <= ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES; ++offset)
+					{
+						const int32_t priorIndex = (index - offset + capacity) % capacity;
+						if (!TryRead(ring + static_cast<uintptr_t>(priorIndex) * DETECTOR_RING_STRIDE
+							+ RING_FRAME_LEVEL, history[offset - 1])) history[offset - 1] = std::nanf("");
+					}
 					LOG_INFO("(NBN LAS ONSET EVIDENCE) Rejected onset flag as a ring (no"
 						<< " rising edge): level " << std::fixed << std::setprecision(1)
 						<< level << " dB, rise " << std::showpos << rise << std::noshowpos
-						<< " dB over " << ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES << " frames"
-						<< " (need >= " << ONSET_EVIDENCE_RISE_DB << "), "
+						<< " dB; baseline=" << (IsPlainPickedTarget() ? "local-valley" : "four-frames-back")
+						<< " (need >= " << ONSET_EVIDENCE_RISE_DB << ") previousLevels=["
+						<< history[0] << "," << history[1] << "," << history[2] << "," << history[3] << "], "
 						<< onsetScanFramesSinceLatch << " frames after latch." << std::endl);
 				}
 				continue;
 			}
 			sawSpikeDuringHold = true;
-			LOG_INFO("(NBN LAS ONSET EVIDENCE) Fresh attack frame accepted as chord attack"
+			LOG_INFO("(NBN LAS ONSET EVIDENCE) Fresh attack frame accepted as attack"
 				<< " evidence: onset flag set at level " << std::fixed
 				<< std::setprecision(1) << level << " dB (rise " << std::showpos << rise
-				<< std::noshowpos << " dB over " << ONSET_EVIDENCE_RISE_LOOKBACK_FRAMES
-				<< " frames), " << onsetScanFramesSinceLatch << " ring frames after the hold"
+				<< std::noshowpos << " dB; baseline="
+				<< (IsPlainPickedTarget() ? "local-valley" : "four-frames-back") << "), " << onsetScanFramesSinceLatch << " ring frames after the hold"
 				<< " latched. The level-spike gate stayed silent (a re-strum over a loud"
 				<< " ring moves the meter less than " << DETECTOR_SPIKE_JUMP_DB << " dB)."
 				<< std::endl);
@@ -2272,6 +2437,7 @@ namespace
 		}
 		onsetScanRingIndex = writeIndex;
 	}
+
 
 	// The clock every decompiled window leaf gates on, resolved through the same
 	// chain as the gate sample above.
@@ -2486,9 +2652,9 @@ namespace
 		// Runs for EVERY hold since the ND acceptance gates on fresh-attack
 		// evidence (2026-08-25 night, Philip: the native answer to ring
 		// carryover is the game's own attack stamp, not an invented guard).
-		if (gatePhase == GatePhase::Holding && !sawSpikeDuringHold)
+		if (gatePhase == GatePhase::Holding && !IsPlainPickedTarget() && !sawSpikeDuringHold)
 		{
-			TickChordOnsetEvidence();
+			TickOnsetEvidence();
 		}
 
 		// Hold-phase shadow sampler (2026-09-01 late): the accept/reject shadow points
@@ -3039,6 +3205,7 @@ namespace
 
 	void ClearSelection()
 	{
+		acceptedPickRecord = 0;
 		gatePhase = GatePhase::Idle;
 		selectedRecord = 0;
 		selectedRecordTime = 0.0f;
@@ -3776,12 +3943,56 @@ namespace
 		return true;
 	}
 
+	// Log-only: compare window lengths on one snapshot before evaluating attack-pitch hypotheses.
+	volatile bool g_sharpCorridorLog = true;
+	void LogCentsComb(int expectedMidi)
+	{
+		const double expectedFrequency = 440.0 * std::pow(2.0, (expectedMidi - 69.0) / 12.0);
+		ResearchProtocol::RawToneComb comb;
+		if (!ResearchProbeRuntime::QueryRawToneComb(expectedFrequency, comb))
+		{
+			LOG_INFO("(NBN TIER0 COMB) exp=" << expectedMidi << " snapshot=unavailable" << std::endl);
+			return;
+		}
+		constexpr int WINDOW_MS[] = { 50, 100, 150 };
+		for (int window = 0; window < 3; ++window)
+		{
+			int peakBin = 0;
+			float corridorMax = 0.0f;
+			float outsideMax = 0.0f;
+			std::ostringstream bins;
+			bins << std::scientific << std::setprecision(6);
+			for (int bin = 0; bin < 17; ++bin)
+			{
+				const float power = comb.powers[window][bin];
+				if (power > comb.powers[window][peakBin]) peakBin = bin;
+				const float cents = -50.0f + bin * 12.5f;
+				if (cents >= 25.0f && cents <= 80.0f)
+				{
+					if (power > corridorMax) corridorMax = power;
+				}
+				else if (power > outsideMax)
+				{
+					outsideMax = power;
+				}
+				if (bin != 0) bins << ',';
+				bins << power;
+			}
+			LOG_INFO("(NBN TIER0 COMB) exp=" << expectedMidi
+				<< " endSample=" << comb.endSampleIndex << " rate=" << comb.sampleRate
+				<< " windowMs=" << WINDOW_MS[window] << " samples=" << comb.sampleCounts[window]
+				<< " peakBinCents=" << (-50.0f + peakBin * 12.5f)
+				<< std::scientific << std::setprecision(6)
+				<< " rms=" << comb.rms[window] << " peakPow=" << comb.powers[window][peakBin]
+				<< " corridorMax=" << corridorMax << " outsideMax=" << outsideMax
+				<< " bins=" << bins.str() << std::defaultfloat << std::endl);
+		}
+	}
+
 	// Wrong-note latch state, shared by the veto AND the rescue (2026-09-01 night): a
 	// recent veto for this midi means wrong-note evidence was positively seen, and every
 	// acceptance path must then demand stronger positive evidence than usual. Single
 	// slot - NBN serializes notes.
-	int g_tier0LatchMidi = -1;
-	ULONGLONG g_tier0LatchTick = 0;
 
 	// One +/-25-cent-widened power probe at an arbitrary frequency - the shared shape of
 	// every sub-harmonic guard (hoisted from the rescue 2026-09-01 late so the veto can
@@ -3901,317 +4112,6 @@ namespace
 		return true;
 	}
 
-	bool Tier0VetoesAccept(int expectedMidi)
-	{
-		if (!g_tier0Enforcement || expectedMidi < 0) return false;
-		// DECISION MEASUREMENT: the exact original, validated geometry - 0.15s window,
-		// center-frequency probes only. The 2026-09-01 wide/long variants of this
-		// measurement are NOT allowed to decide the veto: live same-night proof (Speaker
-		// Eb, deliberate one-fret-sharp wrongs) that they dilute the wrong-note
-		// signature into the escape zone - the 0.15s center measurement read the same
-		// strums at 17x inversion over an empty target while the widened one declined
-		// to veto, and the bin family band then accepted the wrong note.
-		ResearchProtocol::RawToneEvidence evidence;
-		const double frequency =
-			440.0 * std::pow(2.0, (static_cast<double>(expectedMidi) - 69.0) / 12.0);
-		// HARMONIC DECISION BAND (2026-09-01 late, the low-E blindness). Below ~160 Hz
-		// the 0.15s rectangular lobe (~6.7 Hz) is as wide as or wider than a semitone
-		// (4.9 Hz at open low E), so the wrong note's own energy lands INSIDE the
-		// expected fundamental bin: every low-E wrong this session read tgt ~= -1 ~= +1
-		// mush and sailed through the "genuinely sounding" escape - the veto never
-		// fired below 123 Hz. Physics offers the exit: at the 2nd and 3rd harmonics the
-		// semitone spacing doubles and triples (9.8/14.7 Hz at low E - fully resolved),
-		// and the low strings put most of their energy there anyway (the same fact that
-		// broke the rescue's octave guard). So below the band edge the SAME dual
-		// signature is decided on summed 2f+3f evidence; each query's +/-1/+/-2 bins
-		// land exactly on the neighbour NOTE's own 2nd/3rd harmonics, so the sums pair
-		// per semitone offset. Midi 52 (164.8 Hz) stays on the fundamental path - its
-		// vetoes measured clean this session.
-		const bool harmonicDecision = frequency < 160.0;
-		float harmonicMinTarget = 0.0f;
-		if (harmonicDecision)
-		{
-			ResearchProtocol::RawToneEvidence second;
-			ResearchProtocol::RawToneEvidence third;
-			if (!ResearchProbeRuntime::QueryRawToneEvidence(frequency * 2.0, 0.15f, second)
-				|| !ResearchProbeRuntime::QueryRawToneEvidence(frequency * 3.0, 0.15f, third))
-			{
-				return false;                          // no evidence -> fail open
-			}
-			evidence.targetPower = second.targetPower + third.targetPower;
-			evidence.minusOnePower = second.minusOnePower + third.minusOnePower;
-			evidence.plusOnePower = second.plusOnePower + third.plusOnePower;
-			evidence.minusTwoPower = second.minusTwoPower + third.minusTwoPower;
-			evidence.plusTwoPower = second.plusTwoPower + third.plusTwoPower;
-			evidence.totalRms = second.totalRms;
-			harmonicMinTarget = (std::min)(second.targetPower, third.targetPower);
-		}
-		else if (!ResearchProbeRuntime::QueryRawToneEvidence(frequency, 0.15f, evidence))
-		{
-			return false;                              // no evidence -> fail open
-		}
-		float worstNeighbour = evidence.minusOnePower;
-		if (evidence.plusOnePower > worstNeighbour) worstNeighbour = evidence.plusOnePower;
-		if (evidence.minusTwoPower > worstNeighbour) worstNeighbour = evidence.minusTwoPower;
-		if (evidence.plusTwoPower > worstNeighbour) worstNeighbour = evidence.plusTwoPower;
-		// Wrong-note LATCH (2026-09-01 night, from the live decay-tail slip). The veto
-		// fires cleanly while a wrong note is loud (measured this session: 25-500x
-		// inversions across seven consecutive evaluations), but as the wrong note
-		// DECAYS the raw evidence collapses to near-parity (tgt 4e-4, worst 7e-4 at
-		// the slip) - below every veto threshold by design - while the engine's biased
-		// bins still testify a clean expected-family run, and the family band accepts
-		// the dying wrong note. So a veto LATCHES: after any veto for this expected
-		// midi, ambiguity is no longer enough to accept - only POSITIVE presence of
-		// the expected fundamental (target genuinely sounding AND not out-gunned, or
-		// the wide-band override below) unlatches. A decaying wrong note can never
-		// produce positive presence; a correct note's sustain produces it within a few
-		// evaluations of the pick, which is exactly when it should accept.
-		int& latchMidi = g_tier0LatchMidi;
-		ULONGLONG& latchTick = g_tier0LatchTick;
-		const ULONGLONG nowTick = GetTickCount64();
-		const bool latched = latchMidi == expectedMidi && nowTick - latchTick <= 600;
-		// Positive presence in the harmonic band demands BOTH harmonic bins lit, not
-		// their sum (2026-09-01, first synthetic battery finding): E2's 3rd harmonic IS
-		// B3 - a mash containing the open low E lit expected-47's 2f bin dead-center
-		// (247.2 vs 246.9 Hz) and the sum passed as "genuinely sounding". A real note
-		// cannot avoid lighting 2f AND 3f; a twelfth-collision phantom lights exactly
-		// one.
-		const bool positivelyPresent = evidence.targetPower >= 5e-4f
-			&& worstNeighbour <= evidence.targetPower * 3.0f
-			&& (!harmonicDecision || harmonicMinTarget >= 1e-4f);
-		auto refreshLatch = [&]() { latchMidi = expectedMidi; latchTick = nowTick; };
-
-		// SUB-HARMONIC VETO (2026-09-01, the -12 sweep hole: 7 of 19 octave-below wrongs
-		// accepted, every other offset 0/135). A note an octave below CONTAINS the
-		// expected note - its 2nd harmonic lands exactly on the target bin and its 4th on
-		// the corroboration bin, so both the engine's folded bin run and every
-		// target-presence rule here read "correct" (the energy really is there). The
-		// rescue has carried these guards since last night; the run path never consults
-		// them - this is that same trio on the veto, so every accept path is covered:
-		//   - f/2 or f/3 at or above the target = a lower note's fundamental is the
-		//     loudest thing in the series - the "target" is its harmonic. Veto.
-		//   - betrayal probe: the sub-octave's 3rd harmonic lands at 1.5f, which NOTHING
-		//     in the expected note's own series occupies. Unlike the rescue, the veto
-		//     gates EVERY accept, and a decaying previous note a fifth above (the song's
-		//     own 59->52 step) also lights 1.5f - so here betrayal additionally requires
-		//     trace f/2 energy (the real phantom measured subOct at 0.033x target; a
-		//     ringing tail leaves nothing at f/2).
-		// Fundamental path only: in the harmonic band targetPower is a 2f+3f sum in a
-		// different frame, and that band already demands two-bin corroboration.
-		// Entry bar is the 1e-6 audible floor, NOT 1e-5: the first verification sweep
-		// (2026-09-01) still accepted 8 sub-octave wrongs because a ringing injected
-		// note reads only ~2e-4 at its own fundamental and 1e-6..1e-5 at its 2nd
-		// harmonic (the target bin) - a 1e-5 gate skipped the check for every one of
-		// them, and the "note alone is ringing" rule below then failed open. Each rule
-		// keeps an absolute 2e-5 floor on the probe it trusts, so noise-floor ratios
-		// still cannot veto.
-		if (!harmonicDecision && evidence.targetPower >= 1e-6f)
-		{
-			float subOctPower = 0.0f;
-			float subTwelfthPower = 0.0f;
-			float fifthAbovePower = 0.0f;
-			if (QueryTier0WideProbePower(frequency * 0.5, subOctPower)
-				&& QueryTier0WideProbePower(frequency / 3.0, subTwelfthPower)
-				&& QueryTier0WideProbePower(frequency * 1.5, fifthAbovePower))
-			{
-				// Thresholds measured at the exp=59 slip (2026-09-01): a ringing
-				// sub-octave reads subOct=0.83x and fifthAbove=0.21x its own 2nd
-				// harmonic; a correct note reads 0.000000 in both bins. Same numbers as
-				// the rescue guards so the two paths agree on what a sub-octave is.
-				const bool lowerFundamental =
-					(subOctPower >= 2e-5f && subOctPower >= evidence.targetPower * 0.4f)
-					|| (subTwelfthPower >= 2e-5f && subTwelfthPower >= evidence.targetPower * 0.4f);
-				const bool subOctaveBetrayal =
-					fifthAbovePower >= 1e-5f
-					&& fifthAbovePower >= evidence.targetPower * 0.1f
-					&& subOctPower >= evidence.targetPower * 0.02f;
-#if defined(_DEBUG)
-				// Diagnostic while the -12 hole is being calibrated: the two verification
-				// sweeps failed IDENTICALLY with zero sub-harmonic vetoes, so the block
-				// runs but never trips - print what the probes actually read so the next
-				// threshold change is measured, not guessed.
-				static ULONGLONG lastSubProbeLogTick = 0;
-				if (nowTick - lastSubProbeLogTick >= 250)
-				{
-					lastSubProbeLogTick = nowTick;
-					LOG_INFO("(NBN TIER0) SUBPROBE exp=" << expectedMidi
-						<< std::fixed << std::setprecision(6)
-						<< " tgt=" << evidence.targetPower
-						<< " subOct=" << subOctPower
-						<< " subTwelfth=" << subTwelfthPower
-						<< " fifthAbove=" << fifthAbovePower
-						<< " worst=" << worstNeighbour << std::endl);
-				}
-#endif
-				if (lowerFundamental || subOctaveBetrayal)
-				{
-					refreshLatch();                    // positive wrong-note evidence
-					static ULONGLONG lastSubHarmonicLogTick = 0;
-					if (nowTick - lastSubHarmonicLogTick >= 250)
-					{
-						lastSubHarmonicLogTick = nowTick;
-						LOG_INFO("(NBN TIER0) VETO exp=" << expectedMidi
-							<< std::fixed << std::setprecision(6)
-							<< " tgt=" << evidence.targetPower
-							<< " subOct=" << subOctPower
-							<< " subTwelfth=" << subTwelfthPower
-							<< " fifthAbove=" << fifthAbovePower
-							<< " sig=" << (lowerFundamental ? "sub-harmonic" : "sub-octave-betrayal")
-							<< " - a lower note is sounding, accept refused." << std::endl);
-					}
-					return true;
-				}
-			}
-		}
-
-		if (worstNeighbour < 1e-6f && evidence.targetPower < 1e-6f)
-		{
-			// TOTAL SILENCE in the decision bins (2026-09-01, second synthetic battery
-			// finding): the engine's accept run trusts ring frames up to 0.2s old, so a
-			// wrong sound that ENDS just before the run completes is judged purely on
-			// stored, biased testimony - the measured mash slip accepted at
-			// tgt=0/-1=0/+1=0/rms=0.01, live audio gone. An accept with zero live
-			// corroboration is refused outright; no latch (nothing wrong was observed
-			// either). A genuinely ringing correct note is never silent here.
-			static ULONGLONG lastSilentLogTick = 0;
-			if (nowTick - lastSilentLogTick >= 250)
-			{
-				lastSilentLogTick = nowTick;
-				LOG_INFO("(NBN TIER0) VETO exp=" << expectedMidi
-					<< " sig=silent-window - the live route cannot corroborate the"
-					<< " detector's stored frames, accept refused." << std::endl);
-			}
-			return true;
-		}
-		if (worstNeighbour < 1e-6f && !latched)
-		{
-			// Quiet neighbours + audible target = the note alone is ringing: fail open -
-			// EXCEPT in the harmonic band with only ONE bin lit (2026-09-01, third
-			// synthetic battery finding): the decayed mash left twelfth-collision
-			// residue in the 2f bin alone, which read as "the note alone is audible"
-			// and slipped the accept through while the live route held nothing of the
-			// expected note's actual series. One-bin residue is not corroboration.
-			if (!harmonicDecision || harmonicMinTarget >= 1e-4f) return false;
-			static ULONGLONG lastUncorrobLogTick = 0;
-			if (nowTick - lastUncorrobLogTick >= 250)
-			{
-				lastUncorrobLogTick = nowTick;
-				LOG_INFO("(NBN TIER0) VETO exp=" << expectedMidi
-					<< std::fixed << std::setprecision(6)
-					<< " tgt=" << evidence.targetPower
-					<< " minH=" << harmonicMinTarget
-					<< " sig=uncorroborated-single-bin - accept refused." << std::endl);
-			}
-			return true;
-		}
-		// A genuine wrong note shows BOTH signatures at once (measured live): the
-		// neighbour strongly inverted (50-230x) AND the target bin essentially EMPTY
-		// (7e-5..3e-4). A correct note fighting pollution - the Speaker-Mode shifter's
-		// phase-vocoder residue, sympathetic ring - shows a mild inversion (1.7-5x) but
-		// with SUBSTANTIAL target energy (>=1.5e-3 measured on the stuck famous-note
-		// class), and must never veto. Requiring both conditions separates the classes
-		// cleanly: near-parity alone (a 1.2x bar) vetoed correct notes whose fundamental
-		// was clearly present.
-		// The inversion bar is 3x - except when the target is TINY (< 1e-4, far below
-		// the 1.5e-3+ every polluted-correct note measured), where 2x suffices: the
-		// gen-6 sweep's one slip was a +1 wrong the engine's -1 bias folded onto the
-		// expected bin (dom=[59,59,59] from a ringing 60) with the raw route at
-		// worst=2.9x a 1.3e-5 target - a whisker under 3x. Clean corrects in the same
-		// sweep read worst at 0.12-0.2x target: 10x of headroom below the 2x bar.
-		const float inversionBar = evidence.targetPower < 1e-4f ? 2.0f : 3.0f;
-		bool vetoSignature = evidence.targetPower < 5e-4f
-			&& worstNeighbour > evidence.targetPower * inversionBar
-			&& worstNeighbour >= 1e-6f;
-		if (harmonicDecision && !positivelyPresent)
-		{
-			// Low-band rule of record (2026-09-01, after three successive synthetic
-			// battery slips walked through three successive threshold cracks - loud
-			// collision, silent window, sub-threshold residue): below 160 Hz the
-			// engine's detector is at its most gullible (it fabricated a clean
-			// [47,47,47] run from an E2+C3 mash), so an accept REQUIRES positive
-			// two-bin corroboration - both the 2f and 3f bins carrying the expected
-			// note. Anything less refuses this tick. A correct note cannot avoid
-			// producing that evidence; no phantom, mash, or residue can produce it.
-			if (!vetoSignature)
-			{
-				static ULONGLONG lastNoCorrobLogTick = 0;
-				if (nowTick - lastNoCorrobLogTick >= 250)
-				{
-					lastNoCorrobLogTick = nowTick;
-					LOG_INFO("(NBN TIER0) VETO exp=" << expectedMidi
-						<< std::fixed << std::setprecision(6)
-						<< " tgt=" << evidence.targetPower
-						<< " minH=" << harmonicMinTarget
-						<< " worst=" << worstNeighbour
-						<< " sig=no-corroboration band=2f+3f - accept refused."
-						<< std::endl);
-				}
-				return true;
-			}
-		}
-		if (!vetoSignature)
-		{
-			if (!latched) return false;
-			if (positivelyPresent) { latchMidi = -1; return false; }   // real note arrived
-			// Latched and still ambiguous: give the wide-band override its look below
-			// (an off-center fundamental is also positive presence), else keep refusing.
-		}
-		// The original signature says WRONG. One override, and only in the safe
-		// direction: the wide (+/-25 cent) adaptive-window measurement may cancel the
-		// veto ONLY by positively proving the expected note is strongly sounding -
-		// target at or above the measured polluted-correct level AND its own
-		// neighbours quiet. This is the high-fret class the center bin misses
-		// (intonation/vibrato pushing the fundamental off a 6.7 Hz bin); a wrong note
-		// cannot manufacture that evidence, because its energy IS the loud neighbour.
-		ResearchProtocol::RawToneEvidence wide;
-		if (!harmonicDecision && QueryTier0EvidenceWideTarget(expectedMidi, wide))
-		{
-			float wideWorst = wide.minusOnePower;
-			if (wide.plusOnePower > wideWorst) wideWorst = wide.plusOnePower;
-			if (wide.minusTwoPower > wideWorst) wideWorst = wide.minusTwoPower;
-			if (wide.plusTwoPower > wideWorst) wideWorst = wide.plusTwoPower;
-			if (wide.targetPower >= 1.5e-3f
-				&& wideWorst < wide.targetPower * 5.0f)
-			{
-				latchMidi = -1;                        // positive presence unlatches too
-				static ULONGLONG lastOverrideLogTick = 0;
-				if (nowTick - lastOverrideLogTick >= 250)
-				{
-					lastOverrideLogTick = nowTick;
-					LOG_INFO("(NBN TIER0) VETO-OVERRIDE exp=" << expectedMidi
-						<< std::fixed << std::setprecision(6)
-						<< " centerTgt=" << evidence.targetPower
-						<< " centerWorst=" << worstNeighbour
-						<< " wideTgt=" << wide.targetPower
-						<< " wideWorst=" << wideWorst
-						<< " - off-center fundamental positively present, veto cancelled."
-						<< std::endl);
-				}
-				return false;
-			}
-		}
-		refreshLatch();
-		static ULONGLONG lastVetoLogTick = 0;
-		const bool shouldLogVeto = vetoSignature || nowTick - lastVetoLogTick >= 250;
-		if (shouldLogVeto)
-		{
-			lastVetoLogTick = nowTick;
-			LOG_INFO("(NBN TIER0) VETO exp=" << expectedMidi
-				<< std::fixed << std::setprecision(6)
-				<< " tgt=" << evidence.targetPower
-				<< " worstNeighbour=" << worstNeighbour
-				<< " -1=" << evidence.minusOnePower << " +1=" << evidence.plusOnePower
-				<< " -2=" << evidence.minusTwoPower << " +2=" << evidence.plusTwoPower
-				<< (vetoSignature
-					? (harmonicDecision ? " sig=wrong-note-harmonic" : " sig=wrong-note")
-					: " sig=latched-ambiguity")
-				<< (harmonicDecision ? " band=2f+3f" : "")
-				<< " minH=" << harmonicMinTarget
-				<< " - accept refused." << std::endl);
-		}
-		return true;
-	}
-
 	// Tier-0 positive RESCUE (2026-08-31, from Philip's field observation: a correct note
 	// that would not register on the first pick registered when he slightly MUTED the
 	// fret). Root cause: other strings' ring - a distant pitch dominating the analysis
@@ -4231,15 +4131,7 @@ namespace
 		const double frequency =
 			440.0 * std::pow(2.0, (static_cast<double>(expectedMidi) - 69.0) / 12.0);
 		if (!QueryTier0EvidenceWideTarget(expectedMidi, evidence)) return false;
-		// While the wrong-note latch is armed for this midi (a veto fired within the
-		// last 600ms), the rescue demands the measured polluted-correct energy level
-		// instead of the bare noise floor: the multi-string mash that follows a blocked
-		// wrong note lights the expected bin with other strings' harmonics at exactly
-		// the weak-positive level the floor was letting through (measured live:
-		// tgt 9.3e-4 rescue-accepted a latched wrong during a mash).
-		const bool latchArmed = g_tier0LatchMidi == expectedMidi
-			&& GetTickCount64() - g_tier0LatchTick <= 600;
-		if (evidence.targetPower < (latchArmed ? 1.5e-3f : 1e-5f)) return false;
+		if (evidence.targetPower < 1e-5f) return false;
 		float worstNeighbour = evidence.minusOnePower;
 		if (evidence.plusOnePower > worstNeighbour) worstNeighbour = evidence.plusOnePower;
 		if (evidence.minusTwoPower > worstNeighbour) worstNeighbour = evidence.minusTwoPower;
@@ -4299,7 +4191,6 @@ namespace
 			return false;
 		}
 
-		g_tier0LatchMidi = -1;             // genuine positive confirmation unlatches
 		LOG_INFO("(NBN TIER0) RESCUE exp=" << expectedMidi
 			<< std::fixed << std::setprecision(6)
 			<< " tgt=" << evidence.targetPower
@@ -4311,10 +4202,6 @@ namespace
 			<< " - raw fundamental confirmed despite the bin verdict." << std::endl);
 		return true;
 	}
-
-	// A/B toggle for the single-note dominance gate (2026-08-31). Default ON (features ship
-	// enabled); the bridge can flip it live so the raw permissive matcher can be compared.
-	volatile bool g_singleNoteDominanceGate = true;
 
 	// CHORD tier-0 rescue (2026-09-03). Default ON (features ship enabled); the guards are
 	// strict enough - EVERY expected tone present + dominant, on a FRESH strum, only after
@@ -4368,384 +4255,6 @@ namespace
 			}
 		}
 		return true;   // every expected tone present and dominant
-	}
-
-	// Native's own boundary look-back constant (0.2f @ 0x119AD60): the retrospective span
-	// 0x4E6A70 walks when the note window has no usable transport bound - which is exactly
-	// the frozen-transport situation NBN creates. Bounding our scan by it restores the
-	// temporal precision native gets from its clock window: wrong-note frames age out of
-	// the accept surface in 0.2s instead of poisoning the whole hold.
-	constexpr double NATIVE_WINDOW_LOOKBACK_SECONDS = 0.2;
-
-	// The permissive native matcher 0x4E7B30 collapses to "the expected bin has ANY energy"
-	// for a single note (full decomp: atlas single-note-matcher-0x4E7B30-decomp). Native
-	// precision is temporal (the sub-second clock window), which the freeze removes, so the
-	// matcher needs an explicit dominance companion - the exact check the matcher's own
-	// decomp prescribes for N=1 ("require the expected bin to be the argmax of the
-	// histogram"). This is the POSITIVE form: a frame supports the accept only when the
-	// expected family [expected-1, expected] IS the dominant peak, or carries at least
-	// half the dominant's energy (a correct note masked by a louder still-ringing
-	// neighbour string). The family width is DATA, not caution: in every live capture,
-	// synthetic and real guitar alike, a correctly played note's dominant reads expected
-	// or exactly expected-1 (the low-freq bias), never expected-2 - and a note played one
-	// fret BELOW the target reads expected-2 through the same bias, so a [expected-2]
-	// edge is precisely the hole that let neighbour frets through (measured live on
-	// exp=51: played-flat frames at domPeak=49 passed). With [expected-1, expected] the
-	// remaining floor is +/-1 semitone - the peak list is semitone-quantized with +/-1
-	// error at guitar frequencies, so adjacent frets are genuinely inseparable in these
-	// features; that is native parity, and going tighter needs raw audio (issue #18/#29).
-	// The earlier veto form ("override only when expected is essentially absent") passed
-	// the synthetic sweep but leaked with a real guitar: real playing lights up enough
-	// residual bins that "essentially absent" almost never fires. Ambiguous frames now
-	// REJECT - safe under the freeze, because the scan re-evaluates every scoring tick
-	// and simply waits for a frame the note actually dominates. Reads the game's own
-	// spectral peak list (RING_FRAME_PAIRS), so it works with "Pitch: Off".
-	// Per-frame dominance verdict for the persistence run. Three-way, because live capture
-	// data showed binary pass/fail starves real notes:
-	//  - PASS: the dominant peak reads expected or expected-1 (the reads a sounding correct
-	//    note actually produces), or the expected family holds >= 50% of the dominant's
-	//    energy (a correct note under a louder still-ringing neighbour string).
-	//  - SOFT: no counter-evidence but not proof either. An EMPTY frame (lead silence /
-	//    below the -55dB level gate; silence must never veto a run); a WEAK frame whose
-	//    dominant carries less than 10% of the loudest peak anywhere in the look-back
-	//    window (decay-tail junk: residual harmonics "dominate" such frames at ~1% of the
-	//    attack's energy and produced accepts like dom=[45] and phantom dom=[39] on
-	//    frames with domE under 1.0 while real notes measure 60-250 - too weak to testify
-	//    for OR against, so weak frames neither pass nor veto); or a strong dominant at
-	//    expected+1: the semitone quantization jitters +/-1 at the low strings (a correct
-	//    low E reads {38,39,40} across frames, measured live), so the high tail cannot be
-	//    treated as a different note - but it is also what a +2-fret wrong note reads, so
-	//    it must not accept ALONE.
-	//  - FAIL: any other STRONG dominant - INCLUDING expected-2. No correct note ever
-	//    read expected-2 in any capture, but a -2-fret wrong note reads {exp-3..exp-1}
-	//    and leaked through repeated strums while exp-2 was merely Soft: its own-pitch
-	//    frames must veto the run (measured: -2 leaked on strums 3-6 at exp=39/42 with
-	//    exp-2 Soft; +2/+3 held everywhere).
-	// There is deliberately NO family-energy escape anymore: "expected family >= 50% of
-	// the dominant" leaked twice (real-guitar residual bins at 27%+ of rich spectra, then
-	// weak-frame accepts at dom=[45]); the freeze waits, so a masked correct note simply
-	// accepts a few frames later when it actually dominates.
-	enum class FrameVerdict { Fail, Soft, Pass };
-
-	FrameVerdict SingleNoteFrameDominanceVerdict(uintptr_t ring, int32_t writeCursor,
-		int32_t capacity, int32_t frameOffset, int expectedMidi, float windowMaxEnergy,
-		int& outDomMidi, float& outDomEnergy, float& outFamilyEnergy)
-	{
-		outDomMidi = -1;
-		outDomEnergy = 0.0f;
-		outFamilyEnergy = 0.0f;
-		int32_t idx = writeCursor - frameOffset;
-		if (idx < 0) idx += capacity;
-		const uintptr_t frame = ring + static_cast<uintptr_t>(idx) * DETECTOR_RING_STRIDE;
-		int32_t count = 0;
-		if (!TryRead(frame + RING_FRAME_PAIR_COUNT, count) || count <= 0)
-		{
-			return FrameVerdict::Soft;                  // empty frame: silence is not disproof
-		}
-		if (count > 48) count = 48;
-		int domMidi = -1;
-		float domEnergy = 0.0f;
-		float expectedFamilyEnergy = 0.0f;
-		for (int32_t i = 0; i < count; ++i)
-		{
-			int32_t midi = -1;
-			float energy = 0.0f;
-			if (!TryRead(frame + RING_FRAME_PAIRS + static_cast<uintptr_t>(i) * 8, midi)
-				|| !TryRead(frame + RING_FRAME_PAIRS + static_cast<uintptr_t>(i) * 8 + 4, energy)
-				|| midi < 0 || midi >= 128 || !std::isfinite(energy) || energy <= 0.0f)
-			{
-				continue;
-			}
-			if (energy > domEnergy) { domEnergy = energy; domMidi = midi; }
-			// Expected family: the expected bin and the -1 low-freq-bias neighbour.
-			if (midi >= expectedMidi - 1 && midi <= expectedMidi && energy > expectedFamilyEnergy)
-			{
-				expectedFamilyEnergy = energy;
-			}
-		}
-		outDomMidi = domMidi;
-		outDomEnergy = domEnergy;
-		outFamilyEnergy = expectedFamilyEnergy;
-		if (domMidi < 0 || domEnergy <= 0.0f) return FrameVerdict::Soft;
-		if (domEnergy < windowMaxEnergy * 0.1f) return FrameVerdict::Soft;  // too weak to testify
-
-		// FALSIFIED EXPERIMENT (2026-08-31, keep for the record): a "high-register bias
-		// anchor" briefly made the expected-1 read the ONLY proof above MIDI 45, on the
-		// observation that eleven measured correct notes all read expected-1 up there. It
-		// STARVED a perfectly played E4 (G string fret 9): that note reads dead-on at 64
-		// with huge energy (dom=[64,64,64], domE up to 780, ndLoudest=64) on every frame.
-		// The flat read bias is real but NOT consistent per pitch - it varies per
-		// note/string - so an at-pitch read can never be treated as evidence of a sharp
-		// wrong. Consequence: the +/-1 semitone floor genuinely cannot be beaten in these
-		// semitone-quantized features; that discrimination needs raw cable audio
-		// (cent-resolution - the tier-0 Goertzel plan on ticket #29).
-		if (domMidi >= expectedMidi - 1 && domMidi <= expectedMidi) return FrameVerdict::Pass;
-		if (domMidi == expectedMidi + 1) return FrameVerdict::Soft;
-		return FrameVerdict::Fail;
-	}
-
-	// The SINGLE-NOTE accept, adapted for the freeze (2026-08-30, from the full decomp of the
-	// native path GamePlaysongLAS +0xF0 -> 0x7E2640 -> 0x7B8820 -> 0x4E9470 -> scan 0x4E6A70 ->
-	// onset gate 0x4E4B60 + matcher 0x4E7B30). Native accepts when the TRANSPORT clock state+0xD08
-	// is inside the note's short time window AND the matcher sees expected energy PRESENT. The
-	// matcher is deliberately permissive (a lone note passes when the expected bin has ANY energy);
-	// native stays honest only because that window is a fraction of a second. Under the NBN freeze
-	// state+0xD08 stalls (proven audio-vs-transport clock split), so the window never closes and
-	// the permissive check accepts stray leakage from a wrong fret. A 1:1 native port is therefore
-	// IMPOSSIBLE here - the discrimination lived in a window the freeze removes.
-	//
-	// So we keep the game's own inputs - the spectral peak list the matcher histograms, and the
-	// ring onset flag +0x7B5 (the real 0x4E4B60 attack gate) - but replace "expected present" with
-	// "expected DOMINATES the spectrum": the loudest bin must be in expected's harmonic family
-	// (ExpectedInHarmonicFamily / TryFrameDominantBin). That is the discrimination native got for
-	// free from its short window, restored explicitly. Works with "Pitch: Off" because it reads the
-	// raw spectrum, never the pitch estimate. Driven by our hold-latch ring time (audio-stamped
-	// frame timestamps keep advancing while frozen), exactly like the chord port. This is a
-	// deliberate, DOCUMENTED divergence from native, forced by the freeze - not a guess.
-	bool NativeSingleNoteHitSinceLatch(int expectedMidi, double sinceRingTime)
-	{
-		if (expectedMidi < 0) return false;
-		uintptr_t root = 0, arrangement = 0, det = 0, state = 0, ring = 0;
-		if (!TryRead(DETECTION_ROOT, root) || root == 0) return false;
-		if (!TryRead(root + MATCHER_ARRANGEMENT_SLOT, arrangement) || arrangement == 0) return false;
-		if (!TryRead(arrangement + MATCHER_DET_SLOT, det) || det == 0) return false;
-		if (!TryRead(det + MATCHER_STATE_SLOT, state) || state == 0) return false;
-		if (!TryRead(state + DETECTOR_RING_BUFFER, ring) || ring == 0) return false;
-		int32_t writeCursor = 0, capacity = 0, validCount = 0;
-		if (!TryRead(state + DETECTOR_RING_INDEX, writeCursor)
-			|| !TryRead(state + DETECTOR_RING_CAPACITY, capacity)
-			|| !TryRead(state + DETECTOR_RING_VALID_COUNT, validCount)
-			|| capacity <= 0 || capacity > DETECTOR_RING_MAX_CAPACITY
-			|| writeCursor < 0 || writeCursor >= capacity || validCount <= 0)
-		{
-			return false;
-		}
-		if (validCount > capacity) validCount = capacity;
-		int32_t scanLimit = validCount < NATIVE_SCAN_MAX_FRAMES ? validCount : NATIVE_SCAN_MAX_FRAMES;
-
-		auto frameTimeAt = [&](int32_t frameOffset, double& ts) -> bool
-		{
-			int32_t idx = writeCursor - frameOffset;
-			if (idx < 0) idx += capacity;
-			return TryRead(ring + static_cast<uintptr_t>(idx) * DETECTOR_RING_STRIDE
-				+ RING_FRAME_TIMESTAMP, ts) && std::isfinite(ts);
-		};
-
-		// Native's boundary-path temporal bound: only frames within the last 0.2s (the game's
-		// own look-back constant) are eligible, walked back from the head frame's AUDIO time.
-		// The earlier port scanned everything since the hold latch - an unbounded, growing
-		// span where one permissive frame-match anywhere wins; with a real guitar (many bins
-		// always lit) that surface leaked wrong frets constantly. sinceRingTime still floors
-		// the walk so nothing from before this note's latch ever counts.
-		double headTs = 0.0;
-		if (!frameTimeAt(0, headTs)) return false;
-		const double oldestEligibleTs = headTs - NATIVE_WINDOW_LOOKBACK_SECONDS;
-		auto frameEligible = [&](int32_t frameOffset, double& ts) -> bool
-		{
-			return frameTimeAt(frameOffset, ts) && ts > sinceRingTime && ts > oldestEligibleTs;
-		};
-
-		// Onset gate (FUN_004E4B60 boundary path): a fresh committed attack (+0x7B5) must
-		// appear within the look-back - a RECENT attack, not any attack since the latch.
-		bool onsetFound = false;
-		for (int32_t frameOffset = 0; frameOffset < scanLimit; ++frameOffset)
-		{
-			double frameTs = 0.0;
-			if (!frameEligible(frameOffset, frameTs)) break;
-			int32_t idx = writeCursor - frameOffset;
-			if (idx < 0) idx += capacity;
-			uint8_t onsetFlag = 0;
-			if (TryRead(ring + static_cast<uintptr_t>(idx) * DETECTOR_RING_STRIDE
-				+ RING_FRAME_ONSET_FLAG, onsetFlag) && onsetFlag != 0)
-			{
-				onsetFound = true;
-				break;
-			}
-		}
-		if (!onsetFound) return false;
-
-		// Scan (FUN_004E6A70 boundary path): the native single-note matcher (0x4E7B30) must
-		// accept at some frame INSIDE the 0.2s look-back, and - because the N=1 matcher is a
-		// bare presence test (decomp) - the accept must be corroborated by DOMINANCE over a
-		// short PERSISTENCE run. A single dominant frame is not enough: a strum's attack
-		// transient is broadband for its first frame or two, and the peak-picker can
-		// momentarily drop the dominant into the expected family on exactly those frames -
-		// so every re-strum of a wrong note was a fresh dice roll, and repeated strumming
-		// leaked consistently. The run is the matched frame plus its two older neighbours
-		// (~30ms), judged with the three-way verdict above rather than all-must-pass:
-		// binary all-pass starved real notes on the measured low-E jitter and lead-silence
-		// frames. Cost is at most ~2 ring frames of extra latency right after the attack -
-		// the freeze waits, later ticks re-scan, imperceptible in practice mode.
-		constexpr int32_t DOMINANCE_PERSIST_FRAMES = 3;
-
-		// The loudest spectral peak anywhere in the eligible look-back: the verdict's
-		// weak-frame floor normalizes against it, so "weak" tracks the player's own level
-		// (a strum's decay junk is ~1% of its attack) instead of a hard-coded energy.
-		float windowMaxEnergy = 0.0f;
-		for (int32_t frameOffset = 0; frameOffset < scanLimit; ++frameOffset)
-		{
-			double frameTs = 0.0;
-			if (!frameEligible(frameOffset, frameTs)) break;
-			int32_t idx = writeCursor - frameOffset;
-			if (idx < 0) idx += capacity;
-			const uintptr_t frame = ring + static_cast<uintptr_t>(idx) * DETECTOR_RING_STRIDE;
-			int32_t count = 0;
-			if (!TryRead(frame + RING_FRAME_PAIR_COUNT, count) || count <= 0) continue;
-			if (count > 48) count = 48;
-			for (int32_t i = 0; i < count; ++i)
-			{
-				float energy = 0.0f;
-				if (TryRead(frame + RING_FRAME_PAIRS + static_cast<uintptr_t>(i) * 8 + 4, energy)
-					&& std::isfinite(energy) && energy > windowMaxEnergy)
-				{
-					windowMaxEnergy = energy;
-				}
-			}
-		}
-
-		// Current-sound verdict run: the NEWEST three eligible frames - what is sounding
-		// RIGHT NOW - judged once per tick, independent of where the matcher fires. The
-		// run was previously anchored at the matched frame and looked only OLDER, which
-		// starved a measured real case: a correct note reading cleanly at expected-1
-		// leaves the expected bin empty on its strong frames (the exact-bin matcher
-		// cannot fire there) and the matcher instead fires on a weak jitter frame deeper
-		// in the look-back, whose older neighbours are junk - while the strong PASS
-		// evidence sat in newer frames the run never examined. Accept therefore means:
-		// expected energy appeared somewhere recent (the matcher), AND the current sound
-		// supports expected (no Fail, at least one Pass, in the newest three frames).
-		int domMidi[DOMINANCE_PERSIST_FRAMES] = { -1, -1, -1 };
-		float domEnergy[DOMINANCE_PERSIST_FRAMES] = {};
-		float familyEnergy[DOMINANCE_PERSIST_FRAMES] = {};
-		bool anyFail = false;
-		int passCount = 0;
-		for (int32_t k = 0; k < DOMINANCE_PERSIST_FRAMES; ++k)
-		{
-			double probeTs = 0.0;
-			if (k >= scanLimit || !frameEligible(k, probeTs))
-			{
-				continue;                            // ineligible frame -> Soft
-			}
-			const FrameVerdict verdict = SingleNoteFrameDominanceVerdict(ring, writeCursor,
-				capacity, k, expectedMidi, windowMaxEnergy, domMidi[k], domEnergy[k],
-				familyEnergy[k]);
-			if (verdict == FrameVerdict::Fail) { anyFail = true; break; }
-			if (verdict == FrameVerdict::Pass) { ++passCount; }
-		}
-		const bool currentSoundSupportsExpected = !anyFail && passCount >= 1;
-
-		// Strong-run accept, matcher-independent: two or more PASS frames among the newest
-		// three (the expected family dominating the current sound with real energy) is
-		// stronger evidence than the exact-bin matcher's "any energy at the expected bin".
-		// Needed because the detector's -1 read bias can put a correct note's ENTIRE energy
-		// into the expected-1 bin (measured live at expected=51: clean strong 50-dominant
-		// frames, bin 51 empty on every frame), so the exact-bin matcher never fires at all
-		// and the note starves. Discrimination is unchanged: a >= 2-fret wrong produces a
-		// Fail frame or no Pass frames either way; the +/-1 semitone floor is identical.
-		// The onset gate above still applies - a fresh attack is always required.
-		// The tier-0 veto is evaluated at most once per scoring tick (2026-09-01): both
-		// accept paths consult the same 0.15s of ring audio, and a veto must no longer
-		// abort the tick outright - the positive rescue at the bottom still gets its
-		// look. (Veto and rescue are near-mutually-exclusive on the same evidence, but
-		// they query moments apart; the old early-return silently disabled the rescue
-		// for the whole tick.)
-		int tier0VetoState = -1;                       // -1 unknown, 0 clear, 1 vetoed
-		auto tier0VetoedThisTick = [&]() -> bool
-		{
-			if (tier0VetoState < 0)
-			{
-				tier0VetoState = Tier0VetoesAccept(expectedMidi) ? 1 : 0;
-			}
-			return tier0VetoState == 1;
-		};
-
-		if (g_singleNoteDominanceGate && !anyFail && passCount >= 2
-			&& !tier0VetoedThisTick())
-		{
-			LOG_INFO("(NBN SNSCAN) single-note hit expected=" << expectedMidi
-				<< " via dominant current-sound run (matcher-independent: dom=[" << domMidi[0]
-				<< "," << domMidi[1] << "," << domMidi[2] << "] domE=[" << std::fixed
-				<< std::setprecision(1) << domEnergy[0] << "," << domEnergy[1] << ","
-				<< domEnergy[2] << "])." << std::endl);
-#if defined(_DEBUG)
-			LogTier0ShadowEvidence(expectedMidi, "ACCEPT(run)");
-			LogTier1ShadowPitch(expectedMidi);
-#endif
-			return true;
-		}
-
-		for (int32_t frameOffset = 0; frameOffset < scanLimit; ++frameOffset)
-		{
-			double frameTs = 0.0;
-			if (!frameEligible(frameOffset, frameTs)) break;
-			if (CallNativeSingleNoteMatcher(expectedMidi, frameOffset) != 1) continue;
-
-			if (!g_singleNoteDominanceGate)
-			{
-				LOG_INFO("(NBN SNSCAN) single-note hit expected=" << expectedMidi
-					<< " at frame " << frameOffset << " (raw permissive matcher, gate A/B off)."
-					<< std::endl);
-				return true;
-			}
-
-			if (!currentSoundSupportsExpected)
-			{
-				// The matcher fired somewhere in the look-back but the current sound does
-				// not support expected. The bin verdict cannot change within this tick, so
-				// stop scanning and fall through to the tier-0 rescue: distant string ring
-				// FAILs the bin run on a genuinely correct note (Philip's mute-to-register
-				// symptom), and only the raw evidence can tell that apart from a wrong
-				// note. Throttled - this fires per tick while a wrong note rings.
-				static ULONGLONG lastRejectLogTick = 0;
-				const ULONGLONG nowTick = GetTickCount64();
-				if (nowTick - lastRejectLogTick >= 250)
-				{
-					lastRejectLogTick = nowTick;
-					LOG_INFO("(NBN SNSCAN) matcher accepted expected=" << expectedMidi
-						<< " at frame " << frameOffset << " but the current sound does not"
-						<< " support it: dom=[" << domMidi[0] << "," << domMidi[1] << ","
-						<< domMidi[2] << "] domE=[" << std::fixed << std::setprecision(1)
-						<< domEnergy[0] << "," << domEnergy[1] << "," << domEnergy[2]
-						<< "] famE=[" << familyEnergy[0] << "," << familyEnergy[1]
-						<< "," << familyEnergy[2] << "] - rejected." << std::endl);
-#if defined(_DEBUG)
-					LogTier0ShadowEvidence(expectedMidi, "REJECT");
-					LogTier1ShadowPitch(expectedMidi);
-#endif
-				}
-				break;
-			}
-
-			if (g_singleNoteDominanceGate && tier0VetoedThisTick())
-			{
-				// Vetoed, but do not abort the tick: fall through to the rescue below,
-				// which requires the opposite evidence and so stays a safe last look.
-				break;
-			}
-			LOG_INFO("(NBN SNSCAN) single-note hit expected=" << expectedMidi
-				<< " via native matcher 0x4E7B30 at frame " << frameOffset
-				<< " (0.2s window, current-sound dominant: dom=[" << domMidi[0] << ","
-				<< domMidi[1] << "," << domMidi[2] << "] domE=[" << std::fixed
-				<< std::setprecision(1) << domEnergy[0] << "," << domEnergy[1] << ","
-				<< domEnergy[2] << "] famE=[" << familyEnergy[0] << "," << familyEnergy[1]
-				<< "," << familyEnergy[2] << "])." << std::endl);
-#if defined(_DEBUG)
-			LogTier0ShadowEvidence(expectedMidi, "ACCEPT(matcher)");
-			LogTier1ShadowPitch(expectedMidi);
-#endif
-			return true;
-		}
-
-		// Tier-0 rescue: the bin paths could not accept (distant ring FAILing the run, or
-		// the -1 read bias leaving the exact bin empty), but a fresh attack was present and
-		// the raw route positively confirms the expected fundamental. See
-		// Tier0ConfirmsExpected for the guards.
-		if (g_singleNoteDominanceGate && g_tier0Enforcement && Tier0ConfirmsExpected(expectedMidi))
-		{
-			LOG_INFO("(NBN SNSCAN) single-note hit expected=" << expectedMidi
-				<< " via tier-0 raw confirmation (bin gate could not decide)." << std::endl);
-			return true;
-		}
-		return false;
 	}
 
 	// Native-drive phase A: the StartAt core (0x4749C0), the game's own
@@ -5333,6 +4842,9 @@ namespace
 		trackedOwner = nullptr;
 		hasLastUpdateTime = false;
 		isEpochConfirmed = false;
+		pickedAttacks.Clear();
+		pickScanSample = 0;
+		pickSampleRate = 0;
 		confirmedViaGrid = false;
 		hasNativeSectionRangeFailureLogged = false;
 		hasPendingBoundary = false;
@@ -6258,62 +5770,9 @@ namespace
 	{
 		if (onset < 0 || expectedMidi < 0) return false;
 		if (!isBendTarget && onset != expectedMidi) return false;
-		// ML disagreement veto (single notes only). NativeOnly never vetoes. Blend vetoes only
-		// when ML is CONFIDENTLY seeing a genuinely different note - never on an octave-equivalent
-		// read (the model's known low-note octave ambiguity, e.g. calling an open low E an A-string
-		// E an octave up, which was blocking a correct native open E), and never on Pending (ML
-		// latency must not stall a correct native accept). MlOnly is the strict A/B mode: any
-		// conflict or a not-yet-ready read blocks. The shadow sampler still records disagreements.
-		const DetectionStrategy strat = CurrentTechniqueStrategy();
-		if (strat != DetectionStrategy::NativeOnly
-			&& !isBendTarget && !isLegatoTarget && selectedChordId == -1 && !isConfirmingLegatoRun)
+		if (IsPlainPickedTarget())
 		{
-			ResearchProtocol::MlNoteEvidence evidence;
-			if (ResearchProbeRuntime::QueryMlNoteEvidence(expectedMidi, 0.5f,
-				mlConfirmationState.GetMinimumSampleIndex(), evidence))
-			{
-				bool veto = false;
-				const char* reason = "";
-				if (evidence.verdict == ResearchProtocol::MlNoteVerdict::Conflicting)
-				{
-					const bool octaveEquivalent = evidence.observedMidi >= 0
-						&& evidence.observedMidi != expectedMidi
-						&& ((evidence.observedMidi - expectedMidi) % 12 == 0);
-					if (!octaveEquivalent)
-					{
-						if (strat == DetectionStrategy::MlOnly)
-						{
-							veto = true; reason = "conflicting-pitch(ml-only)";
-						}
-						else if (evidence.confidence >= ML_BLEND_VETO_CONF)
-						{
-							veto = true; reason = "conflicting-pitch(confident)";
-						}
-					}
-				}
-				else if (evidence.verdict == ResearchProtocol::MlNoteVerdict::Pending
-					&& strat == DetectionStrategy::MlOnly)
-				{
-					veto = true; reason = "awaiting-current-target-audio(ml-only)";
-				}
-				if (veto)
-				{
-					static ULONGLONG lastConflictLogTick = 0;
-					const ULONGLONG nowTick = GetTickCount64();
-					if (nowTick - lastConflictLogTick >= 250)
-					{
-						lastConflictLogTick = nowTick;
-						LOG_INFO("(NBN ML GATE) Plain-note acceptance held: expected="
-							<< expectedMidi << " observed=" << evidence.observedMidi
-							<< " confidence=" << evidence.confidence << " ageMs="
-							<< evidence.ageSeconds * 1000.0 << " audioSample="
-							<< evidence.analyzedSampleIndex << " minimumSample="
-							<< mlConfirmationState.GetMinimumSampleIndex()
-							<< " reason=" << reason << std::endl);
-					}
-					return false;
-				}
-			}
+			return acceptedPickRecord == selectedRecord && acceptedPick.confirmedMidi == expectedMidi;
 		}
 		if (onset == expectedMidi) return true;
 		if (!isBendTarget) return false;
@@ -6795,6 +6254,13 @@ namespace
 
 	void CompleteHeldCommit(void* owner, float updateTime, const LiveNote& selected, const char* reason)
 	{
+		if (IsPlainPickedTarget())
+		{
+			LOG_INFO("(NBN PICK BUFFER) Committed record=" << selectedRecord
+				<< " attack=" << acceptedPick.time << " sample=" << acceptedPick.confirmedSample
+				<< " remaining=" << pickedAttacks.Count() << std::endl);
+		}
+		acceptedPickRecord = 0;
 		consumedRecords.insert(selectedRecord);
 		// Note-by-note (2026-08-18): only the committed record is consumed. The old
 		// group-consumption existed because run continuations were played under this
@@ -6851,6 +6317,7 @@ namespace
 
 	void HandleAfterUpdate(void* owner, float updateTime)
 	{
+		TickPickedAttackStream();
 		if (gatePhase == GatePhase::Idle) return;
 
 		LiveNote selected;
@@ -7087,6 +6554,17 @@ namespace
 					PerformOwnedRelease(owner,
 						"the dense successor committed while its native hit decision was blocked");
 					FaultWithoutRelease("The dense successor committed before a new input was armed");
+					return;
+				}
+
+				if (IsPlainPickedTarget())
+				{
+					if (TakeBufferedPick())
+					{
+						gatePhase = GatePhase::CommitBeforeRelease;
+						commitTickCount = 0;
+						wasCommitOverrideLogged = false;
+					}
 					return;
 				}
 
@@ -7410,57 +6888,10 @@ namespace
 					// further onset is the player picking into the run rather than a new
 					// gesture, and must not restart or complete it.
 					int onset = -1;
-					if (!isConfirmingLegatoRun && !isBendTarget && !isLegatoTarget)
+					if (IsPlainPickedTarget())
 					{
-						// The native scan proposes a picked-note onset. IsAcceptedOnset applies
-						// the shared ML disagreement veto before this proposal can commit.
-						if (hasHoldLatchRingTime
-							&& NativeSingleNoteHitSinceLatch(expectedMidi, holdLatchRingTime)
-							// Strict MlOnly test mode promotes ML to a required co-sign; Blend and
-							// NativeOnly let native's own accept stand (Blend adds ML as
-							// rescue + guarded veto, not a required co-sign).
-							&& (!NativeAcceptNeedsMlCosign() || MlConfirmsHeldNote()))
-						{
-							onset = expectedMidi;
-						}
-						else if (isMlStuckRescueEnabled && MlMayRescueNow() && MlConfirmsHeldNote())
-						{
-							onset = expectedMidi;
-							LOG_INFO("(NBN LAS ML RESCUE) Picked-note hold accepted: two distinct"
-								<< " post-target audio predictions confirm expected "
-								<< expectedMidi << "." << std::endl);
-						}
-						else if (g_tier0Enforcement
-							&& CurrentTechniqueStrategy() != DetectionStrategy::MlOnly)
-						{
-							// Tier-0 high-fret vouch: native's quality gate refused a note whose
-							// fundamental the DSP still reads cleanly (the 35-50 band, e.g. B12).
-							// Reliable where the ML rescue flickers. Only when native scored in the
-							// band on THIS hold (not a dead signal), and streak-gated for wobble.
-							DetectorGateSample vouchSample;
-							const bool inVouchBand = TryReadDetectorGates(vouchSample)
-								&& !vouchSample.passesQuality
-								&& std::isfinite(vouchSample.quality)
-								&& vouchSample.quality >= TIER0_VOUCH_QUALITY_FLOOR;
-							if (inVouchBand && Tier0ConfirmsExpected(expectedMidi))
-							{
-								if (++tier0VouchStreak >= TIER0_VOUCH_STREAK_TICKS)
-								{
-									tier0VouchStreak = 0;
-									onset = expectedMidi;
-									LOG_INFO("(NBN LAS TIER0 VOUCH) High-fret hold accepted: native"
-										<< " quality " << std::fixed << std::setprecision(0)
-										<< vouchSample.quality << " under its gate, but tier-0 confirms"
-										<< " the fundamental at expected " << expectedMidi << " for "
-										<< TIER0_VOUCH_STREAK_TICKS << " ticks (DSP is reliable where"
-										<< " the ML rescue flickers on high notes)." << std::endl);
-								}
-							}
-							else
-							{
-								tier0VouchStreak = 0;
-							}
-						}
+						if (!TakeBufferedPick()) return;
+						onset = expectedMidi;
 					}
 					else if (!isConfirmingLegatoRun)
 					{

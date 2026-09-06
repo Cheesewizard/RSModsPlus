@@ -55,8 +55,16 @@ namespace Audio::CableInput
 		uint64_t dropouts = 0;         // packets discarded because the game's audio thread fell behind
 		double measuredInputMs = 0.0;  // MEASURED: mean sample age when the game takes a packet (see ReportMeasuredInputAge)
 		bool measuredValid = false;    // at least one measurement has been taken this stream
+		// ASIO path (RS_ASIO present). The AsioHook tap on RS_ASIO's capture client is the
+		// only observer, so the signal meter, packet rate and stall state above come from it.
+		uint32_t tapPacketFrames = 0;  // frames per packet the tap sees (the ASIO buffer size)
+		uint32_t tapSampleRate = 0;
 	};
 	Diagnostics GetDiagnostics();
+
+	// Per-packet signal feed from the shared Player-1 input tap for every capture path.
+	// The capture client does not also feed this meter. Audio thread; never blocks.
+	void ReportTapPacket(float peak, bool silent, uint32_t frames, uint32_t sampleRate);
 
 	// Feeds the measured input latency. Called on the audio thread with the MEAN age, in ms,
 	// of the samples in a packet at the moment the game's capture call received it (device
@@ -67,6 +75,8 @@ namespace Audio::CableInput
 	// Raw inputs of the tap's measurement (clock delta in 100 ns units, packet frames), for
 	// the evidence line in Poll.
 	void ReportMeasuredInputRaw(int64_t delta100ns, uint32_t frames);
+	// True when RS_ASIO owns the input; its timestamps must not be interpreted as WASAPI timestamps.
+	bool IsAsioPath();
 
 	// RSMods.ini [Mod Settings] AudioDiagnosticsOverlay (default on).
 	bool IsOverlayEnabled();

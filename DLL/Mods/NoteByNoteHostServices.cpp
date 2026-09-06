@@ -12,6 +12,8 @@
 #include <atomic>
 #include <cmath>
 #include <string>
+#include <sstream>
+#include <windows.h>
 
 namespace NoteByNoteHostServices
 {
@@ -182,11 +184,19 @@ namespace NoteByNoteHostServices
 		// is distinct from a disagreement.
 		using ResearchProtocol::MlNoteVerdict;
 
+		// physicalTarget is the expected note in the UN-shifted (physical fret) frame
+		// (expectedMidi - appliedShift). FretNet reads the physical frame on a pick ATTACK - the
+		// Drop Pedal shifter's delay line passes the transient un-shifted before it settles to the
+		// shifted expectedMidi - so a string reading EITHER frame is the note the player is fretting.
+		// outTargetConfidence reports how confidently the expected note was read on its own string,
+		// regardless of whether a louder OTHER string made the reduced verdict Conflicting.
 		MlNoteVerdict EvaluateMlNote(const MlStringFretReader::StringFret& sample,
-			int expectedMidi, float minConfidence, int& observedMidi, float& confidence)
+			int expectedMidi, int physicalTarget, float minConfidence,
+			int& observedMidi, float& confidence, float& outTargetConfidence)
 		{
 			observedMidi = -1;
 			confidence = 0.0f;
+			outTargetConfidence = -1.0f;
 			if (expectedMidi < 0 || !std::isfinite(minConfidence)
 				|| minConfidence <= 0.0f || minConfidence > 1.0f) return MlNoteVerdict::Unknown;
 			static const int openMidi[6] = { 40, 45, 50, 55, 59, 64 };
@@ -199,7 +209,7 @@ namespace NoteByNoteHostServices
 				const float value = sample.conf[stringIndex];
 				if (fret < 0 || fret > 19 || !std::isfinite(value) || value < 0.0f || value > 1.0f) continue;
 				const int pitch = openMidi[stringIndex] + fret;
-				if (pitch == expectedMidi)
+				if (pitch == expectedMidi || pitch == physicalTarget)
 				{
 					if (value > targetConfidence) targetConfidence = value;
 				}
@@ -209,6 +219,7 @@ namespace NoteByNoteHostServices
 					otherMidi = pitch;
 				}
 			}
+			outTargetConfidence = targetConfidence;
 			if (targetConfidence >= minConfidence && targetConfidence >= otherConfidence)
 			{
 				observedMidi = expectedMidi;
@@ -238,19 +249,90 @@ namespace NoteByNoteHostServices
 			if (evidence == nullptr) return 0;
 			*evidence = {};
 			MlStringFretReader::StringFret sample;
-			if (!MlStringFretReader::TryGet(sample, 0.6)) return 0;
+			const char* readReason = nullptr;
+			const bool haveSample = MlStringFretReader::TryGet(sample, 0.6, &readReason);
+			const int appliedShift = DropPedal::GetAppliedInputShiftSemitones();
+			static uint64_t lastLogTick = 0;
+			const uint64_t now = GetTickCount64();
+			if (now - lastLogTick >= 100)
+			{
+				lastLogTick = now;
+				std::ostringstream pitches;
+				constexpr int OPEN_MIDI[] = { 40, 45, 50, 55, 59, 64 };
+				for (int stringIndex = 0; stringIndex < 6; ++stringIndex)
+				{
+					if (stringIndex != 0) pitches << ',';
+					pitches << stringIndex << ':'
+						<< (sample.fret[stringIndex] >= 0 ? OPEN_MIDI[stringIndex] + sample.fret[stringIndex] : -1)
+						<< ':' << sample.conf[stringIndex];
+				}
+				LOG_INFO("(NBN FRETNET READ) exp=" << expectedMidi
+					<< " physicalTarget=" << expectedMidi - appliedShift
+					<< " read=" << readReason << " sample=" << sample.analyzedSampleIndex
+					<< " minimumSample=" << minimumSampleIndex << " age=" << sample.ageSeconds
+					<< " shift=" << sample.shift << " appliedShift=" << appliedShift
+					<< " threshold=" << minConfidence << " string:midi:conf=" << pitches.str() << std::endl);
+			}
+			if (!haveSample) return 0;
 			evidence->analyzedSampleIndex = sample.analyzedSampleIndex;
 			evidence->sampleRate = sample.sampleRate;
 			evidence->ageSeconds = sample.ageSeconds;
-			if (sample.analyzedSampleIndex <= minimumSampleIndex
-				|| sample.shift != DropPedal::GetAppliedInputShiftSemitones())
+			if (sample.analyzedSampleIndex <= minimumSampleIndex || sample.shift != appliedShift)
 			{
 				evidence->verdict = MlNoteVerdict::Pending;
 				return 1;
 			}
-			evidence->verdict = EvaluateMlNote(sample, expectedMidi, minConfidence,
-				evidence->observedMidi, evidence->confidence);
+			// FretNet reads the physical fret frame during a pick attack (before the shifter settles
+			// the pitch), so the expected note can appear as either expectedMidi or its un-shifted
+			// physical value; both count as the note the player is fretting.
+			const int physicalTarget = expectedMidi - appliedShift;
+			evidence->verdict = EvaluateMlNote(sample, expectedMidi, physicalTarget, minConfidence,
+				evidence->observedMidi, evidence->confidence, evidence->targetConfidence);
 			return 1;
+		}
+
+		uint8_t __cdecl HostQueryRawToneComb(double frequencyHz, ResearchProtocol::RawToneComb* out)
+		{
+			if (out == nullptr) return 0;
+			*out = {};
+			static thread_local RawPitchVerifier::AudioSnapshot snapshot;
+			if (!RawPitchVerifier::CaptureSnapshot(snapshot)) return 0;
+			constexpr float WINDOWS[] = { 0.05f, 0.10f, 0.15f };
+			for (int window = 0; window < 3; ++window)
+			{
+				for (int bin = 0; bin < 17; ++bin)
+				{
+					const double frequency = frequencyHz * std::pow(2.0, (-50.0 + bin * 12.5) / 1200.0);
+					if (!RawPitchVerifier::MeasureSnapshot(snapshot, frequency, WINDOWS[window],
+						out->powers[window][bin], out->rms[window], out->sampleCounts[window])) return 0;
+				}
+			}
+			out->endSampleIndex = snapshot.endSampleIndex;
+			out->sampleRate = snapshot.sampleRate;
+			return 1;
+		}
+
+		uint8_t __cdecl HostQueryRawNoteConfirmation(double frequencyHz, uint64_t minimumSampleIndex, uint64_t maximumSampleIndex, ResearchProtocol::RawNoteConfirmation* out)
+		{
+			if (out == nullptr) return 0;
+			*out = {};
+			RawPitchVerifier::NoteConfirmation evidence;
+			const bool available = RawPitchVerifier::QueryNoteConfirmation(frequencyHz, evidence, minimumSampleIndex, maximumSampleIndex);
+			out->endSampleIndex = evidence.endSampleIndex;
+			out->sampleRate = evidence.sampleRate;
+			out->targetPower = evidence.targetPower;
+			out->attackChange = evidence.attackChange;
+			out->attackPower = evidence.attackPower;
+			out->attackMinusPower = evidence.attackMinusPower;
+			out->attackPlusPower = evidence.attackPlusPower;
+			out->neighbourPower = evidence.neighbourPower;
+			out->confirmed = evidence.confirmed ? 1 : 0;
+			return available ? 1 : 0;
+		}
+
+		uint8_t __cdecl HostQueryRawAttacks(uint64_t afterSampleIndex, RawPitchVerifier::RawAttackBatch* out)
+		{
+			return out != nullptr && RawPitchVerifier::QueryAttacks(afterSampleIndex, *out) ? 1 : 0;
 		}
 
 		const ResearchProtocol::HostApi hostApi =
@@ -266,7 +348,10 @@ namespace NoteByNoteHostServices
 			&HostQueryMlPitch,
 			&HostIsMlPitchServiceAlive,
 			&HostGetMlAudioSampleIndex,
-			&HostQueryMlNoteEvidence
+			&HostQueryMlNoteEvidence,
+			&HostQueryRawToneComb,
+			&HostQueryRawNoteConfirmation,
+			&HostQueryRawAttacks
 		};
 	}
 

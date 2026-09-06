@@ -14,6 +14,9 @@ namespace ResearchProbeRuntime
 	// Semitones to add to a native onset to bring it into expectedMidi's tuning frame; 0 unless
 	// DropPedal's input pitch shifter is active. See HostApi::GetInputOnsetShiftSemitones.
 	int GetInputOnsetShiftSemitones();
+	bool QueryRawToneComb(double frequencyHz, ResearchProtocol::RawToneComb& out);
+	bool QueryRawNoteConfirmation(double frequencyHz, ResearchProtocol::RawNoteConfirmation& out, uint64_t minimumSampleIndex = 0, uint64_t maximumSampleIndex = 0);
+
 	// Tier-0 raw-audio tone evidence for the Player 1 route (HostApi::QueryRawToneEvidence).
 	// False when the host predates the entry or not enough audio has been observed.
 	bool QueryRawToneEvidence(double frequencyHz, float windowSeconds,
@@ -31,6 +34,7 @@ namespace ResearchProbeRuntime
 	bool QueryMlNoteEvidence(int expectedMidi, float minConfidence,
 		uint64_t minimumSampleIndex, ResearchProtocol::MlNoteEvidence& evidence);
 	void PublishExpectedAttackEvent(const ResearchProtocol::ExpectedAttackEvent& event);
+	bool QueryRawAttacks(uint64_t afterSampleIndex, RawPitchVerifier::RawAttackBatch& out);
 	void Shutdown();
 }
 

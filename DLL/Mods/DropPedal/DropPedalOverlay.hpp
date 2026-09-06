@@ -29,17 +29,8 @@ namespace DropPedal
 		std::array<std::string, PLAYER_COUNT> tuningLines;
 		std::array<unsigned int, PLAYER_COUNT> tuningTextColors{};
 
-		bool hasCachedInputState = false;
-		bool cachedInputShifterActive = false;
-		ID3DXFont* cachedInputFont = nullptr;
-		std::string inputLine;
-		unsigned long long lastSeenNoticeTick = 0;
-		unsigned long long inputDisplayStartTick = 0;
-
 		void RenderTuning(ID3DXFont* font, const Resolution& windowSize, Player player, int row);
-		void RenderInputStatus(ID3DXFont* font, const Resolution& windowSize, bool isMultiplayer);
 		void UpdateTuningCache(ID3DXFont* font, Player player);
-		void UpdateInputStatusCache(ID3DXFont* font);
 		void DrawShadowedText(
 			ID3DXFont* font,
 			const Resolution& windowSize,

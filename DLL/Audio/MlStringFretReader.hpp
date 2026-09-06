@@ -29,7 +29,7 @@ namespace MlStringFretReader
 	// Latest companion result via seqlock read. False when the companion is not
 	// running or its newest result is older than maxAgeSeconds. Never blocks; opens
 	// the mapping lazily and throttles retries so a missing companion costs nothing.
-	bool TryGet(StringFret& out, double maxAgeSeconds = 0.5);
+	bool TryGet(StringFret& out, double maxAgeSeconds = 0.5, const char** failureReason = nullptr);
 
 	// Pitch class for a sounding fret offset; shifted open strings can have negative offsets.
 	std::string NoteNameForStringFret(int stringIndex, int fret);

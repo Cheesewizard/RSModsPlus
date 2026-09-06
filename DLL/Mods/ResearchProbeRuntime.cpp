@@ -24,7 +24,10 @@ bool ResearchProbeRuntime::Initialize(const ResearchProtocol::HostApi* hostApi)
 		|| hostApi->PublishExpectedAttackEvent == nullptr
 		|| hostApi->QueryMlNoteEvidence == nullptr
 		|| hostApi->GetMlAudioSampleIndex == nullptr
-		|| hostApi->Log == nullptr)
+		|| hostApi->Log == nullptr
+		|| hostApi->QueryRawToneComb == nullptr
+		|| hostApi->QueryRawNoteConfirmation == nullptr
+		|| hostApi->QueryRawAttacks == nullptr)
 	{
 		return false;
 	}
@@ -74,6 +77,21 @@ int ResearchProbeRuntime::GetInputOnsetShiftSemitones()
 	return hostApi->GetInputOnsetShiftSemitones();
 }
 
+bool ResearchProbeRuntime::QueryRawNoteConfirmation(double frequencyHz, ResearchProtocol::RawNoteConfirmation& out, uint64_t minimumSampleIndex, uint64_t maximumSampleIndex)
+{
+	out = {};
+	const auto hostApi = GetHostApi();
+	return hostApi != nullptr && hostApi->QueryRawNoteConfirmation(frequencyHz, minimumSampleIndex, maximumSampleIndex, &out) != 0;
+}
+
+bool ResearchProbeRuntime::QueryRawToneComb(double frequencyHz, ResearchProtocol::RawToneComb& out)
+{
+	out = {};
+	const auto hostApi = GetHostApi();
+	if (hostApi == nullptr) return false;
+	return hostApi->QueryRawToneComb(frequencyHz, &out) != 0;
+}
+
 bool ResearchProbeRuntime::QueryRawToneEvidence(double frequencyHz, float windowSeconds,
 	ResearchProtocol::RawToneEvidence& out)
 {
@@ -114,4 +132,11 @@ bool ResearchProbeRuntime::QueryMlNoteEvidence(int expectedMidi, float minConfid
 	if (hostApi == nullptr) return false;
 	return hostApi->QueryMlNoteEvidence(expectedMidi, minConfidence,
 		minimumSampleIndex, &evidence) != 0;
+}
+
+bool ResearchProbeRuntime::QueryRawAttacks(uint64_t afterSampleIndex, RawPitchVerifier::RawAttackBatch& out)
+{
+	out = {};
+	const auto hostApi = GetHostApi();
+	return hostApi != nullptr && hostApi->QueryRawAttacks(afterSampleIndex, &out) != 0;
 }
