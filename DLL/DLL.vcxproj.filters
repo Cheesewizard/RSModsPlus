@@ -1,5 +1,5 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<?xml version='1.0' encoding='utf-8'?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
   <ItemGroup>
     <Filter Include="Source Files">
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
@@ -222,6 +222,18 @@
     <ClCompile Include="Mods\RiffRepeater.cpp">
       <Filter>Mods</Filter>
     </ClCompile>
+	<ClCompile Include="Mods\NoteByNoteProbe.cpp">
+		<Filter>Mods</Filter>
+	</ClCompile>
+    <ClCompile Include="Mods\NoteByNoteHookHost.cpp">
+		<Filter>Mods</Filter>
+	</ClCompile>
+    <ClCompile Include="Mods\NoteByNoteMenu.cpp">
+      <Filter>Mods</Filter>
+    </ClCompile>
+    <ClCompile Include="Mods\NoteByNoteHudLabel.cpp">
+      <Filter>Mods</Filter>
+    </ClCompile>
     <ClCompile Include="Mods\AudioDevices.cpp">
       <Filter>Mods</Filter>
     </ClCompile>
@@ -256,6 +268,9 @@
       <Filter>CrowdControl\Effects</Filter>
     </ClCompile>
     <ClCompile Include="D3D/D3DHooks.cpp">
+      <Filter>D3D</Filter>
+    </ClCompile>
+    <ClCompile Include="D3D/NoteByNoteHighwayRenderer.cpp">
       <Filter>D3D</Filter>
     </ClCompile>
     <ClCompile Include="CC\Effects\WavyNotesEffect.cpp">
@@ -322,6 +337,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Audio\AsioHook.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Audio\CableInput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Audio\MlServiceLauncher.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp">
@@ -417,6 +438,9 @@
       <Filter>D3D</Filter>
     </ClInclude>
     <ClInclude Include="D3D/D3DHooks.hpp">
+      <Filter>D3D</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D/NoteByNoteHighwayRenderer.hpp">
       <Filter>D3D</Filter>
     </ClInclude>
     <ClInclude Include="D3D/D3D.hpp">
@@ -529,6 +553,24 @@
     </ClInclude>
     <ClInclude Include="Mods\RiffRepeater.hpp">
       <Filter>Mods\Headers</Filter>
+    </ClInclude>
+	<ClInclude Include="Mods\NoteByNoteProbe.hpp">
+		<Filter>Mods\Headers</Filter>
+	</ClInclude>
+    <ClInclude Include="Mods\NoteByNoteNativeScoring.hpp">
+		<Filter>Mods\Headers</Filter>
+	</ClInclude>
+    <ClInclude Include="Mods\NoteByNoteMenu.hpp">
+      <Filter>Mods\Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Mods\NoteByNoteHudLabel.hpp">
+      <Filter>Mods\Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Mods\NoteByNoteController.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Mods\NoteByNoteProtocol.hpp">
+      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Mods\AudioDevices.hpp">
       <Filter>Mods\Headers</Filter>
@@ -681,6 +723,12 @@
       <Filter>Audio</Filter>
     </ClInclude>
     <ClInclude Include="Audio\AsioHook.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\CableInput.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\MlServiceLauncher.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp">

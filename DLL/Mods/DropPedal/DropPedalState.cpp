@@ -12,10 +12,8 @@ namespace
 	// game-loop threads.
 	std::atomic<int> targetSemitones[DropPedal::PLAYER_COUNT] = {};
 
-	// From [Drop Pedal] in RSMods.ini, read once at startup. Values follow the ini's
-	// lowercase convention (on / off / automatic).
+	// From [Drop Pedal] in RSMods.ini, read once at startup.
 	bool isConfiguredEnabled = false;
-	std::string engineSetting = "automatic";
 
 	// Pitch mode lives in the session rather than in the settings map, because the
 	// settings reload during boot and would otherwise wipe a hotkey transition.
@@ -53,42 +51,18 @@ namespace
 	}
 }
 
-void DropPedalState::Configure(const std::string& enabledSetting, const std::string& selectedEngine)
+void DropPedalState::Configure(const std::string& enabledSetting)
 {
 	isConfiguredEnabled = enabledSetting == "on";
+	if (isConfiguredEnabled) return;
 
-	if (selectedEngine == "automatic" || selectedEngine == "asio" || selectedEngine == "cable")
-	{
-		engineSetting = selectedEngine;
-		if (!isConfiguredEnabled)
-		{
-			pitchMode.store(DropPedal::PitchMode::Off, std::memory_order_relaxed);
-			isSpeakerTargetSynchronized.store(false, std::memory_order_relaxed);
-		}
-		return;
-	}
-
-	engineSetting.clear();
-	isConfiguredEnabled = false;
 	pitchMode.store(DropPedal::PitchMode::Off, std::memory_order_relaxed);
 	isSpeakerTargetSynchronized.store(false, std::memory_order_relaxed);
-	LOG_ERROR("Drop pedal disabled because [Drop Pedal] Engine is invalid: "
-		<< selectedEngine << ". Expected automatic, asio or cable." << std::endl);
 }
 
 bool DropPedalState::IsConfiguredEnabled()
 {
 	return isConfiguredEnabled;
-}
-
-bool DropPedalState::IsAsioEngine()
-{
-	return engineSetting == "asio";
-}
-
-bool DropPedalState::IsCableEngine()
-{
-	return engineSetting == "cable";
 }
 
 bool DropPedalState::IsEnabled()
@@ -109,25 +83,31 @@ DropPedal::PitchMode DropPedalState::GetPitchMode()
 bool DropPedalState::TryCyclePitchMode(DropPedal::PitchMode& nextMode)
 {
 	const auto currentMode = GetPitchMode();
-	if (isGameplayInProgress.load(std::memory_order_relaxed)
-		&& currentMode != DropPedal::PitchMode::Off)
+	const bool isGameplay = isGameplayInProgress.load(std::memory_order_relaxed);
+	if (isGameplay && currentMode == DropPedal::PitchMode::SpeakerMode)
 	{
 		nextMode = currentMode;
 		return false;
 	}
-
-	switch (currentMode)
+	if (isGameplay && currentMode == DropPedal::PitchMode::DropPedal)
 	{
-		case DropPedal::PitchMode::DropPedal:
-			nextMode = DropPedal::PitchMode::SpeakerMode;
-			break;
-		case DropPedal::PitchMode::SpeakerMode:
-			nextMode = DropPedal::PitchMode::Off;
-			break;
-		case DropPedal::PitchMode::Off:
-		default:
-			nextMode = DropPedal::PitchMode::DropPedal;
-			break;
+		nextMode = DropPedal::PitchMode::Off;
+	}
+	else
+	{
+		switch (currentMode)
+		{
+			case DropPedal::PitchMode::DropPedal:
+				nextMode = DropPedal::PitchMode::SpeakerMode;
+				break;
+			case DropPedal::PitchMode::SpeakerMode:
+				nextMode = DropPedal::PitchMode::Off;
+				break;
+			case DropPedal::PitchMode::Off:
+			default:
+				nextMode = DropPedal::PitchMode::DropPedal;
+				break;
+		}
 	}
 
 	pitchMode.store(nextMode, std::memory_order_relaxed);

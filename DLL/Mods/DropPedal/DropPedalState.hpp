@@ -7,10 +7,8 @@
 
 namespace DropPedalState
 {
-	void Configure(const std::string& enabledSetting, const std::string& engineSetting);
+	void Configure(const std::string& enabledSetting);
 	bool IsConfiguredEnabled();
-	bool IsAsioEngine();
-	bool IsCableEngine();
 	bool IsEnabled();
 	bool IsSpeakerModeEnabled();
 	DropPedal::PitchMode GetPitchMode();
