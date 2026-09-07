@@ -23,6 +23,7 @@
 		<Compile Include="MachineLearning\ChartExpectationReader.cs" />
 		<Compile Include="MachineLearning\NoteEvidence.cs" />
 		<Compile Include="MachineLearning\MlService.cs" />
+		<Compile Include="MachineLearning\MlServiceConnection.cs" />
 		<Compile Include="MachineLearning\CqtTransform.cs" />
 		<Compile Include="MachineLearning\SampleRateConverter.cs" />
 		<EmbeddedResource Include="MachineLearning\CqtBasis.bin" LogicalName="RSModsPlus.MachineLearning.CqtBasis.bin" />

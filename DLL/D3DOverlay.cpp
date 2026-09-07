@@ -6,10 +6,10 @@
 #include "Mods/FakeGuitar/FakeGuitarInjector.hpp"
 #include "D3D/NoteByNoteHighwayRenderer.hpp"
 #include "Audio/MlStringFretReader.hpp"
-#include "Audio/MlFretDisplay.hpp"
 #include "Research/ResearchBridge.hpp"
 #include "Audio/CableInput.hpp"
 #include "OverlayToggles.hpp"
+#include "Mods/ExtendedRangeMode.hpp"
 
 /// <returns>Size of Rocksmith Window</returns>
 Resolution GameOverlay::GetWindowSize() {
@@ -491,7 +491,7 @@ void GameOverlay::DisplayNoteByNoteCornerStatus()
 				const int cellColor = code == 1 ? agreeColor
 					: (code == 0 ? disagreeColor : oneSidedColor);
 				const int cellLeft = cellRight - cellStep;
-				DX9DrawTextW(L"■", cellColor, cellLeft, stripTop, cellRight, stripBottom,
+				DX9DrawTextW(L"Ã¢â€“Â ", cellColor, cellLeft, stripTop, cellRight, stripBottom,
 					pDevice, stripFont, DT_RIGHT | DT_NOCLIP, FW_BOLD);
 				cellRight -= cellStep;
 			}
@@ -570,86 +570,136 @@ void GameOverlay::DisplayAudioDiagnostics()
 // "ml_fret" (ships on; .ini + bridge controllable).
 void GameOverlay::DisplayMlStringFretOverlay()
 {
+	if (!NoteByNoteProbe::IsAutomaticEnabledFast()) return;
+	if (!GameState::Menus::IsInSongModes() || GameState::Menus::IsInRiffRepeaterMenus()) return;
 	if (!OverlayToggles::Get("ml_fret")) return;
 
-	// MIDI -> note name (73 -> "C#5"), matching the bend meter's convention.
-	static const char* const kNoteNames[12] =
-		{ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-	const auto midiName = [](int midi) -> std::string
-	{
-		if (midi < 0) return "--";
-		return std::string(kNoteNames[midi % 12]) + std::to_string(midi / 12 - 1);
-	};
+	ResearchProtocol::NoteByNoteState state;
+	const bool haveState = NoteByNoteNativeScoring::TryGetResearchState(state) && state.isInitialized;
+	const auto& feedback = state.detectionFeedback;
+	const auto now = GetTickCount64();
+	auto nativeColor = haveState
+		? NoteByNote::GetDetectorColor(feedback.nativeRole, feedback.tick, now) : 0xFFFFFFFF;
+	auto mlColor = haveState
+		? NoteByNote::GetDetectorColor(feedback.mlRole, feedback.tick, now) : 0xFFFFFFFF;
+	const auto enhancedColor = haveState
+		? NoteByNote::GetDetectorColor(feedback.enhancedRole, feedback.tick, now) : 0xFFFFFFFF;
+	const bool showDecision = haveState
+		&& (nativeColor != 0xFFFFFFFF || enhancedColor != 0xFFFFFFFF || mlColor != 0xFFFFFFFF);
+	const int targetMidi = haveState ? state.expectedMidi : -1;
+	const int targetString = haveState && state.selectedChordId == -1 ? state.selectedString : -1;
+	const int targetFret = haveState ? state.selectedFret : -1;
+	const int matchingMidi = haveState && state.isBendTarget ? state.bendAcceptMidi : targetMidi;
+	int heard = -1;
+	if (showDecision) heard = feedback.nativeMidi;
+	else if (haveState && state.detectorSampleValid && state.detectorPassesLevel)
+		heard = state.detectorLoudestMidi;
+	if (!showDecision && targetString >= 0 && NoteByNote::MatchesDetectorTarget(heard, matchingMidi))
+		nativeColor = NoteByNote::GetDetectorColor(NoteByNote::DetectorRole::Confirmed, now, now);
+	const std::string nativeText = NoteByNote::FormatPitch(heard);
+	const std::string enhancedText = NoteByNote::FormatPitch(showDecision ? feedback.enhancedMidi : -1);
 
-	const int baseX = static_cast<int>(WindowSize.width / 96.0f);
-	const int baseY = static_cast<int>(WindowSize.height / 5.2f);
-	const int rowH = std::max(18, static_cast<int>(WindowSize.height / 26.0f));
-	const int rightEdge = static_cast<int>(WindowSize.width);
-	const int mlY = baseY + rowH;
-
-	// --- Line 1: the game's OWN detection (the "original" readout). detectorQuality is the
-	// value its accept gate compares against 50; a note can read the correct pitch here yet
-	// sit below that gate, which is exactly when native refuses a note ML confirms. ---
-	ResearchProtocol::NoteByNoteState st;
-	const bool haveState = ResearchBridge::TryGetNoteByNoteState(st) && st.isInitialized;
-	std::ostringstream nativeLine;
-	nativeLine << "Native:";
-	int nativeColor = 0xFFFFFFFF; // white
-	if (haveState && st.detectorSampleValid != 0)
+	MlStringFretReader::StringFret sample;
+	std::string mlText;
+	if (showDecision)
 	{
-		const int heard = st.soundingMidi >= 0.0f
-			? static_cast<int>(st.soundingMidi + 0.5f)
-			: st.detectorLoudestMidi;
-		nativeLine << "  " << midiName(heard)
-			<< "  q" << static_cast<int>(st.detectorQuality + 0.5f) << "/50";
-		if (st.expectedMidi >= 0)
-			nativeLine << "   exp " << midiName(st.expectedMidi);
-		// Amber = a hold is waiting and the read is below the accept gate: the precise
-		// "game heard it but refused it" moment ML exists to rescue.
-		if (st.ownsNativeHold != 0 && st.detectorQuality < 50.0f)
-			nativeColor = 0xFFFFCC66;
+		mlText = NoteByNote::FormatPitch(feedback.mlMidi);
+	}
+	else if (!MlStringFretReader::TryGet(sample))
+	{
+		mlText = "(service offline)";
 	}
 	else
 	{
-		nativeLine << "  --";
-		nativeColor = 0xFF999999;
+		bool displayedPitches[12] = {};
+		const int appliedShift = DropPedal::GetAppliedInputShiftSemitones();
+		for (int stringIndex = 0; stringIndex < 6; ++stringIndex)
+		{
+			const int midi = NoteByNote::GetStringFretMidi(stringIndex, sample.fret[stringIndex]);
+			if (targetString >= 0 && sample.shift == appliedShift
+				&& (NoteByNote::MatchesDetectorTarget(midi, matchingMidi, sample.conf[stringIndex])
+					|| NoteByNote::MatchesDetectorTarget(midi, matchingMidi - appliedShift, sample.conf[stringIndex])))
+			{
+				mlColor = NoteByNote::GetDetectorColor(NoteByNote::DetectorRole::Confirmed, now, now);
+			}
+			if (midi < 0 || displayedPitches[midi % 12]) continue;
+			displayedPitches[midi % 12] = true;
+			if (!mlText.empty()) mlText += "  ";
+			mlText += NoteByNote::FormatPitch(midi);
+		}
+		if (mlText.empty()) mlText = "--";
 	}
-	DX9DrawText(nativeLine.str(), nativeColor, baseX, baseY, rightEdge, baseY + rowH,
-		pDevice, { NULL, NULL }, DT_LEFT | DT_NOCLIP);
 
-	// --- Line 2: the FretNet ML companion's read of the same audio, directly under it. ---
-	MlStringFretReader::StringFret sf;
-	if (!MlStringFretReader::TryGet(sf))
+	std::string targetText = NoteByNote::FormatPitch(targetMidi);
+	if (targetString >= 0 && targetFret >= 0)
 	{
-		DX9DrawText("ML: (service offline)", 0xFF888888, baseX, mlY, rightEdge, mlY + rowH,
-			pDevice, { NULL, NULL }, DT_LEFT | DT_NOCLIP);
-		return;
+		int physicalOpenMidi = -1;
+		static bool reportedMissingPhysicalTuning = false;
+		if (DropPedal::TryGetPhysicalOpenStringMidi(targetString, physicalOpenMidi))
+		{
+			reportedMissingPhysicalTuning = false;
+			const int physicalTargetMidi = physicalOpenMidi + targetFret;
+			targetText = NoteByNote::FormatPosition(targetString, targetFret, physicalOpenMidi)
+				+ " (" + NoteByNote::FormatPitch(physicalTargetMidi) + ")";
+			if (state.isBendTarget && state.bendAcceptMidi >= 0 && targetMidi >= 0)
+				targetText += " bend to "
+					+ NoteByNote::FormatPitch(physicalTargetMidi + state.bendAcceptMidi - targetMidi);
+		}
+		else
+		{
+			targetText = "(tuning unavailable)";
+			if (!reportedMissingPhysicalTuning)
+			{
+				LOG_ERROR("(NBN HUD) Physical string tuning unavailable for target label." << std::endl);
+				reportedMissingPhysicalTuning = true;
+			}
+		}
 	}
-	if (haveState && st.ownsNativeHold && st.selectedChordId == -1 && !st.isBendTarget
-		&& sf.shift == DropPedal::GetAppliedInputShiftSemitones())
+	else if (haveState && state.selectedChordId >= 0)
 	{
-		// Resolve equivalent pitches only in this display copy; scoring keeps its evidence.
-		MlFretDisplay::ResolveExpectedPosition(sf, st.selectedString,
-			st.selectedFret, st.expectedMidi, 0.5f);
+		char chord[256] = {};
+		if (NoteByNoteNativeScoring::TryDescribeChordTarget(state.selectedRecord, chord, sizeof(chord)))
+			targetText = chord;
 	}
-	static const char* const kStringLabels[6] = { "E", "A", "D", "G", "B", "e" };
-	std::ostringstream mlLine;
-	mlLine << "ML:";
-	bool anyString = false;
-	for (int s = 0; s < 6; ++s)
+
+	const int baseX = static_cast<int>(WindowSize.width / 96.0f);
+	const int baseY = static_cast<int>(WindowSize.height / 5.2f);
+	const int textHeight = std::max(14, static_cast<int>(WindowSize.height / 80.0f));
+	const int rowHeight = textHeight * 2;
+	const int valueX = baseX + textHeight * 7;
+	const int rightEdge = static_cast<int>(WindowSize.width);
+	int targetValueX = valueX;
+	if (targetString >= 0 && targetString < 6)
 	{
-		if (sf.physFret[s] < 0) continue;
-		anyString = true;
-		mlLine << "  " << kStringLabels[s] << sf.physFret[s]
-			<< "=" << MlStringFretReader::NoteNameForStringFret(s, sf.fret[s]);
+		RSColor stringColor;
+		const bool hasStringColor = ERMode::TryGetActiveStringColor(targetString, stringColor);
+		static bool reportedMissingStringColor = false;
+		if (hasStringColor)
+		{
+			reportedMissingStringColor = false;
+			const int y = baseY + rowHeight * 3;
+			DX9DrawTextW(L"\u25A0", D3DCOLOR_COLORVALUE(stringColor.r, stringColor.g, stringColor.b, 1.0f),
+				valueX, y, valueX + textHeight, y + rowHeight, pDevice, textHeight, DT_LEFT | DT_NOCLIP);
+			targetValueX += textHeight + textHeight / 2;
+		}
+		else if (!reportedMissingStringColor)
+		{
+			LOG_ERROR("(NBN HUD) Active string colour unavailable; target swatch omitted." << std::endl);
+			reportedMissingStringColor = true;
+		}
 	}
-	if (!anyString) mlLine << "  (silent)";
-	if (sf.shift != 0)
-		mlLine << "   [shift " << (sf.shift > 0 ? "+" : "") << sf.shift << "]";
-	DX9DrawText(mlLine.str(), 0xFF66CCFF, baseX, mlY, rightEdge, mlY + rowH,
-		pDevice, { NULL, NULL }, DT_LEFT | DT_NOCLIP);
+	const char* labels[] = { "Native:", "Enhanced:", "ML:", "Target:" };
+	const std::string values[] = { nativeText, enhancedText, mlText, targetText };
+	const uint32_t colors[] = { nativeColor, enhancedColor, mlColor, 0xFFFFFFFF };
+	for (int row = 0; row < 4; ++row)
+	{
+		const int y = baseY + row * rowHeight;
+		DX9DrawText(labels[row], colors[row], baseX, y, valueX, y + rowHeight,
+			pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
+		DX9DrawText(values[row], colors[row], row == 3 ? targetValueX : valueX, y, rightEdge, y + rowHeight,
+			pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
+	}
 }
-
 // The bend visualizer (Philip, 2026-08-18): a tuner-style ladder at the screen's
 // right edge while a bend gesture is the target. Five rungs - the bend target in
 // the middle context of two semitones above and below - and the sounding pitch

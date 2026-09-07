@@ -302,6 +302,7 @@
     </ProjectReference>
     <Compile Include="MlModelVerifier.cs" />
     <Compile Include="MlServiceHost.cs" />
+    <Compile Include="UI.MlService.cs" />
     <Compile Include="RuntimeBootstrap.cs" />
     <Reference Include="System.IO.Compression" />
     <EmbeddedResource Include="$(IntermediateOutputPath)BundledRuntime.zip">

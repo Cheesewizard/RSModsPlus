@@ -179,6 +179,7 @@ namespace RSMods
         private void Startup_InitWinForms()
         {
             InitializeComponent();
+            InitializeMlServiceControls();
             Text = $"{Text}-{Assembly.GetExecutingAssembly().GetName().Version}"; // Show version number in the title of the application.
         }
 

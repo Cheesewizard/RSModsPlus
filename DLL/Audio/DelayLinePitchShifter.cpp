@@ -496,9 +496,9 @@ namespace Audio
 		}
 	}
 
-	void DelayLinePitchShifter::Process(float* samples, uint32_t frameCount)
+	bool DelayLinePitchShifter::Process(float* samples, uint32_t frameCount)
 	{
-		if (ring.empty()) return;
+		if (ring.empty()) return false;
 
 		const float pitchRatio = ratio.load(std::memory_order_relaxed);
 		if (pitchRatio == 1.0f)
@@ -522,7 +522,7 @@ namespace Audio
 			if (!shouldDetectPitch) samplesSinceDetect = DETECT_INTERVAL_SAMPLES - 1;
 			candidateVotes = 0;
 			liveDelayFrames.store(0.0f, std::memory_order_relaxed);
-			return;
+			return false;
 		}
 
 		const double drift = 1.0 - (double)pitchRatio;
@@ -661,6 +661,7 @@ namespace Audio
 			const float sample = static_cast<float>(readDelay);
 			liveDelayFrames.store(current <= 0.0f ? sample : current + 0.02f * (sample - current), std::memory_order_relaxed);
 		}
+		return true;
 	}
 
 	uint32_t DelayLinePitchShifter::GetLatencyFrames() const

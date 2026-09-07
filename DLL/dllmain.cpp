@@ -3,6 +3,7 @@
 #include "Mods/NoteByNoteNativeScoring.hpp"
 #include "Research/ResearchBridge.hpp"
 #include "Audio/MlServiceLauncher.hpp"
+#include "Audio/AudioLifecycleTrace.hpp"
 
 #if defined(_DEBUG) || defined(_WWISE_LOGS)
 bool debug = true;
@@ -264,6 +265,9 @@ unsigned WINAPI MainThread() {
 
 	while (!GameState::GameClosing) {
 		Sleep(250);
+#if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
+		Audio::LifecycleTrace::Poll();
+#endif
 		MlServiceLauncher::EnsureStarted();
 
 		if (GameState::GameLoaded) {
@@ -276,6 +280,9 @@ unsigned WINAPI MainThread() {
 
 	MlServiceLauncher::Shutdown();
 	ResearchBridge::Shutdown();
+#if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
+	Audio::LifecycleTrace::Poll();
+#endif
 
 	return 0;
 }

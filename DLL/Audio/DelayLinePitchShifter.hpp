@@ -42,7 +42,7 @@ namespace Audio
 		bool TryGetDetectedMidi(int& midi) const;
 
 		void Prepare(const CaptureFormat& format) override;
-		void Process(float* samples, uint32_t frameCount) override;
+		bool Process(float* samples, uint32_t frameCount) override;
 		uint32_t GetLatencyFrames() const override;
 		// The delay the shifter is adding right now (smoothed), in frames; 0 when passing through.
 		float GetLiveDelayFrames() const { return liveDelayFrames.load(std::memory_order_relaxed); }

@@ -728,10 +728,16 @@
     <ClInclude Include="Audio\AsioHook.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
+    <ClInclude Include="Audio\CaptureProcessingGate.hpp">
+      <Filter>Audio</Filter>
+    </ClInclude>
     <ClInclude Include="Audio\CableInput.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
     <ClInclude Include="Audio\MlServiceLauncher.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\MlServiceControl.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp">

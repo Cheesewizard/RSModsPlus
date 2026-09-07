@@ -435,6 +435,25 @@ bool DropPedal::TryGetChartMatchShiftSemitones(int& shiftSemitones)
 	return true;
 }
 
+bool DropPedal::TryGetPhysicalOpenStringMidi(int stringIndex, int& midi)
+{
+	static constexpr int OPEN_MIDI[] = { 40, 45, 50, 55, 59, 64 };
+	midi = -1;
+	if (stringIndex < 0 || stringIndex >= 6) return false;
+	int stringTunings[6];
+	if (!TryReadChartTuning(stringTunings)) return false;
+	for (const int tuning : stringTunings)
+	{
+		if (tuning < MIN_CHART_TUNING_SEMITONES || tuning > MAX_CHART_TUNING_SEMITONES) return false;
+	}
+	midi = OPEN_MIDI[stringIndex] + stringTunings[stringIndex];
+	if (GetPitchMode() != PitchMode::Off)
+	{
+		midi += DropPedalState::GetBaseTuningSemitones(Player::One) - GetChartReference(stringTunings);
+	}
+	return true;
+}
+
 std::string DropPedal::GetTuningName(Player player)
 {
 	return DropPedalState::GetTuningName(player);

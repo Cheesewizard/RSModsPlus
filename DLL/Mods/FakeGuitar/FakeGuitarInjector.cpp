@@ -182,10 +182,10 @@ namespace FakeGuitar
 					std::memory_order_relaxed);
 			}
 
-			void Process(float* samples, uint32_t frameCount) override
+			bool Process(float* samples, uint32_t frameCount) override
 			{
 				// Not armed: leave the real cable samples untouched.
-				if (!synthEnabled.load(std::memory_order_acquire)) return;
+				if (!synthEnabled.load(std::memory_order_acquire)) return false;
 
 				if (flushRequested.exchange(false, std::memory_order_acq_rel))
 				{
@@ -198,6 +198,7 @@ namespace FakeGuitar
 				const uint32_t sr = sampleRate.load(std::memory_order_relaxed);
 				for (uint32_t frame = 0; frame < frameCount; ++frame)
 					samples[frame] = NextSample(sr);
+				return true;
 			}
 
 			uint32_t GetLatencyFrames() const override { return 0; }

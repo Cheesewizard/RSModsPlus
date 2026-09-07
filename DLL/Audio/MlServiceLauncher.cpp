@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MlServiceLauncher.hpp"
+#include "MlServiceControl.hpp"
 #include "../Log.hpp"
 
 #include <windows.h>
@@ -11,27 +12,94 @@ namespace
 	bool attempted = false;
 	HANDLE serviceJob = nullptr;
 	HANDLE serviceProcess = nullptr;
+	HANDLE controlMapping = nullptr;
+	HANDLE restartEvent = nullptr;
+	MlServiceControl::Status* control = nullptr;
+	bool controlAttempted = false;
+	bool restarting = false;
+	uint64_t startedTick = 0;
+	MlServiceControl::State serviceState = MlServiceControl::State::Stopped;
+	DWORD serviceError = 0;
+
+	void PublishStatus()
+	{
+		if (control == nullptr) return;
+		InterlockedIncrement(&control->sequence);
+		control->version = 1;
+		control->tick = GetTickCount64();
+		control->processId = GetCurrentProcessId();
+		control->state = serviceState;
+		control->error = serviceError;
+		InterlockedIncrement(&control->sequence);
+	}
+
+	void InitializeControl()
+	{
+		if (controlAttempted) return;
+		controlAttempted = true;
+		const auto suffix = std::to_wstring(GetCurrentProcessId());
+		controlMapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
+			sizeof(MlServiceControl::Status), (L"Local\\RSModsPlus.MlControl.v1." + suffix).c_str());
+		if (controlMapping != nullptr)
+			control = static_cast<MlServiceControl::Status*>(MapViewOfFile(controlMapping, FILE_MAP_WRITE, 0, 0, sizeof(MlServiceControl::Status)));
+		restartEvent = CreateEventW(nullptr, FALSE, FALSE, (L"Local\\RSModsPlus.MlRestart.v1." + suffix).c_str());
+		if (control == nullptr || restartEvent == nullptr)
+		{
+			LOG_ERROR("[MlServiceLauncher] Cannot create ML status/restart controls, error=" << GetLastError() << std::endl);
+		}
+	}
 }
 
 void MlServiceLauncher::EnsureStarted()
 {
+	InitializeControl();
+	if (restartEvent != nullptr && WaitForSingleObject(restartEvent, 0) == WAIT_OBJECT_0 && !restarting)
+	{
+		restarting = true;
+		serviceState = MlServiceControl::State::Restarting;
+		serviceError = 0;
+		if (serviceJob != nullptr) CloseHandle(serviceJob);
+		serviceJob = nullptr;
+		LOG_INFO("[MlServiceLauncher] ML restart requested from settings." << std::endl);
+	}
 	if (serviceProcess != nullptr && WaitForSingleObject(serviceProcess, 0) == WAIT_OBJECT_0)
 	{
 		DWORD exitCode = 0;
 		GetExitCodeProcess(serviceProcess, &exitCode);
-		LOG_ERROR("[MlServiceLauncher] Bundled ML service exited, code=" << exitCode
-			<< ". See %LOCALAPPDATA%\\RSModsPlus\\Logs\\ml-service.log and startup-error.log." << std::endl);
+		if (!restarting)
+		{
+			LOG_ERROR("[MlServiceLauncher] Bundled ML service exited, code=" << exitCode
+				<< ". See %LOCALAPPDATA%\\RSModsPlus\\Logs\\ml-service.log and startup-error.log." << std::endl);
+		}
 		CloseHandle(serviceProcess);
 		serviceProcess = nullptr;
+		serviceError = exitCode;
+		serviceState = MlServiceControl::State::Stopped;
 	}
-	if (attempted) return;
+	if (restarting)
+	{
+		if (serviceProcess != nullptr) { PublishStatus(); return; }
+		restarting = false;
+		attempted = false;
+	}
+	if (attempted)
+	{
+		if (serviceProcess != nullptr)
+			serviceState = GetTickCount64() - startedTick < 1000 ? MlServiceControl::State::Starting : MlServiceControl::State::Waiting;
+		PublishStatus();
+		return;
+	}
 	attempted = true;
+	serviceState = MlServiceControl::State::Failed;
+	serviceError = 0;
 
 	wchar_t gamePath[32768] = {};
 	const DWORD length = GetModuleFileNameW(nullptr, gamePath, static_cast<DWORD>(std::size(gamePath)));
 	if (length == 0 || length >= std::size(gamePath))
 	{
+		serviceError = length == 0 ? GetLastError() : ERROR_INSUFFICIENT_BUFFER;
 		LOG_ERROR("[MlServiceLauncher] Cannot resolve the game installation directory." << std::endl);
+		PublishStatus();
 		return;
 	}
 	const auto directory = std::filesystem::path(gamePath).parent_path() / L"RSMods";
@@ -41,17 +109,22 @@ void MlServiceLauncher::EnsureStarted()
 		|| !std::filesystem::is_regular_file(directory.parent_path() / L"rsmodsplus.dll", error))
 	{
 		LOG_ERROR("[MlServiceLauncher] Bundled ML service is missing. Install the complete matching release package." << std::endl);
+		serviceError = ERROR_FILE_NOT_FOUND;
+		PublishStatus();
 		return;
 	}
 
+	if (serviceJob != nullptr) CloseHandle(serviceJob);
 	serviceJob = CreateJobObjectW(nullptr, nullptr);
 	JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
 	limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 	if (serviceJob == nullptr || !SetInformationJobObject(serviceJob, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
 	{
-		LOG_ERROR("[MlServiceLauncher] Cannot establish game-owned ML service lifetime, error=" << GetLastError() << std::endl);
+		serviceError = GetLastError();
+		LOG_ERROR("[MlServiceLauncher] Cannot establish game-owned ML service lifetime, error=" << serviceError << std::endl);
 		if (serviceJob != nullptr) CloseHandle(serviceJob);
 		serviceJob = nullptr;
+		PublishStatus();
 		return;
 	}
 
@@ -62,28 +135,41 @@ void MlServiceLauncher::EnsureStarted()
 	if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
 		CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &process))
 	{
-		LOG_ERROR("[MlServiceLauncher] Cannot start bundled ML service, error=" << GetLastError() << std::endl);
+		serviceError = GetLastError();
+		LOG_ERROR("[MlServiceLauncher] Cannot start bundled ML service, error=" << serviceError << std::endl);
 		CloseHandle(serviceJob);
 		serviceJob = nullptr;
+		PublishStatus();
 		return;
 	}
 	if (!AssignProcessToJobObject(serviceJob, process.hProcess) || ResumeThread(process.hThread) == static_cast<DWORD>(-1))
 	{
-		LOG_ERROR("[MlServiceLauncher] Cannot bind/start bundled ML service, error=" << GetLastError() << std::endl);
+		serviceError = GetLastError();
+		LOG_ERROR("[MlServiceLauncher] Cannot bind/start bundled ML service, error=" << serviceError << std::endl);
 		TerminateProcess(process.hProcess, 1);
 		CloseHandle(process.hThread);
 		CloseHandle(process.hProcess);
 		CloseHandle(serviceJob);
 		serviceJob = nullptr;
+		PublishStatus();
 		return;
 	}
 	CloseHandle(process.hThread);
 	serviceProcess = process.hProcess;
+	startedTick = GetTickCount64();
+	serviceState = MlServiceControl::State::Starting;
+	PublishStatus();
 	LOG_INFO("[MlServiceLauncher] Started bundled C# FretNet service with embedded model; bound to game lifetime." << std::endl);
 }
 
 void MlServiceLauncher::Shutdown()
 {
+	if (control != nullptr) UnmapViewOfFile(control);
+	control = nullptr;
+	if (controlMapping != nullptr) CloseHandle(controlMapping);
+	controlMapping = nullptr;
+	if (restartEvent != nullptr) CloseHandle(restartEvent);
+	restartEvent = nullptr;
 	if (serviceJob != nullptr)
 	{
 		CloseHandle(serviceJob);

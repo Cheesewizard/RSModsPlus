@@ -1101,6 +1101,12 @@ namespace
 	NoteByNote::PickedAttackQueue pickedAttacks;
 	NoteByNote::PickedAttack acceptedPick;
 	uintptr_t acceptedPickRecord = 0;
+	NoteByNote::DetectionFeedback detectionFeedback;
+	uint64_t feedbackPickSample = 0;
+	uint64_t feedbackMinimumMlSample = 0;
+	uint64_t feedbackMaximumMlSample = 0;
+	uintptr_t mlRescueRecord = 0;
+	NoteByNote::DetectionFeedback enhancedRescueFeedback;
 	uint64_t pickDiagnosticSample = 0;
 	uint64_t pickScanSample = 0;
 	uint32_t pickSampleRate = 0;
@@ -2211,7 +2217,8 @@ namespace
 	{
 		auto* attack = pickedAttacks.Latest();
 		if (attack == nullptr || attack->confirmedMidi >= 0) return;
-		const int candidates[] = { attack->candidateMidi, QueryNativeLoudestPlayedNote() };
+		const int nativeMidi = QueryNativeLoudestPlayedNote();
+		const int candidates[] = { attack->candidateMidi, nativeMidi };
 		for (int index = 0; index < 2; ++index)
 		{
 			const int midi = candidates[index];
@@ -2230,19 +2237,37 @@ namespace
 			const float neighbourRise = minusRise > plusRise ? minusRise : plusRise;
 			if (neighbourRise > 1e-3f && neighbourRise > (targetRise > 0.0f ? targetRise : 0.0f)) continue;
 			const auto strategy = CurrentTechniqueStrategy();
+			NoteByNote::DetectionFeedback feedback;
+			feedback.nativeMidi = nativeMidi;
+			feedback.enhancedMidi = midi;
 			if (strategy != DetectionStrategy::NativeOnly)
 			{
 				ResearchProtocol::MlNoteEvidence ml;
 				const bool available = ResearchProbeRuntime::QueryMlNoteEvidence(
 					midi, 0.5f, attack->minimumMlSample, ml);
+				if (available)
+				{
+					feedback.mlMidi = ml.observedMidi;
+					if (ml.verdict == ResearchProtocol::MlNoteVerdict::Confirmed)
+					{
+						feedback.mlMidi = midi;
+						feedback.mlRole = NoteByNote::DetectorRole::Confirmed;
+					}
+				}
 				if (strategy == DetectionStrategy::MlOnly
 					&& (!available || ml.verdict != ResearchProtocol::MlNoteVerdict::Confirmed)) continue;
 				if (available && ml.verdict == ResearchProtocol::MlNoteVerdict::Conflicting
 					&& ml.confidence >= ML_BLEND_VETO_CONF && ml.observedMidi >= 0
-					&& (ml.observedMidi - midi) % 12 != 0) continue;
+					&& (ml.observedMidi - midi) % 12 != 0)
+				{
+					continue;
+				}
 			}
+			NoteByNote::SetPickedDetectorRoles(feedback, nativeMidi == midi,
+				feedback.mlRole == NoteByNote::DetectorRole::Confirmed);
 			attack->confirmedMidi = midi;
 			attack->confirmedSample = raw.endSampleIndex;
+			attack->feedback = feedback;
 			LOG_INFO("(NBN PICK BUFFER) Confirmed attack=" << attack->time << " midi=" << midi
 				<< " samples=" << attack->minimumSample << ".." << raw.endSampleIndex
 				<< " change=" << raw.attackChange << " targetRise=" << targetRise << " neighbourRise=" << neighbourRise
@@ -2311,6 +2336,10 @@ namespace
 			const double time = static_cast<double>(attackSample) / batch.sampleRate;
 			attack.time = time;
 			ConfirmLatestPickedAttack(attack.minimumSample);
+			detectionFeedback = {};
+			feedbackPickSample = attack.minimumSample;
+			mlRescueRecord = 0;
+			enhancedRescueFeedback = {};
 			attack.minimumMlSample = ResearchProbeRuntime::GetMlAudioSampleIndex();
 			attack.candidateMidi = expectedMidi;
 			float baseline = 0.0f;
@@ -2615,6 +2644,12 @@ namespace
 				}
 				spikeBurstTicksRemaining = DETECTOR_SPIKE_BURST_TICKS;
 				g_lastAttackSpikeTick = GetTickCount64();
+				if (!IsPlainPickedTarget())
+				{
+					detectionFeedback = {};
+					mlRescueRecord = 0;
+					enhancedRescueFeedback = {};
+				}
 				LOG_INFO("(NBN LAS SPIKE) jump=" << std::fixed << std::setprecision(1)
 					<< (sample.level - lastTickDetectorLevel)
 					<< " exp=" << expectedMidi
@@ -2801,6 +2836,7 @@ namespace
 
 		if (isMlStuckRescueEnabled && MlMayRescueNow() && allowAccept && MlConfirmsHeldNote())
 		{
+			mlRescueRecord = selectedRecord;
 			reattackWindowTicks = 0;
 			reattackStreak = 0;
 			LOG_INFO("(NBN LAS ML RESCUE) Stuck hold accepted: two distinct post-target"
@@ -2870,6 +2906,13 @@ namespace
 		const int requiredStreak = rawConfirms ? 2 : REATTACK_STREAK_TICKS;
 		if (++reattackStreak < requiredStreak) return -1;
 		if (!allowAccept) return -1;
+		if (rawConfirms)
+		{
+			enhancedRescueFeedback.targetRecord = selectedRecord;
+			enhancedRescueFeedback.enhancedMidi = expectedMidi;
+			enhancedRescueFeedback.nativeMidi = sample.currentNote;
+			enhancedRescueFeedback.enhancedRole = NoteByNote::DetectorRole::Confirmed;
+		}
 
 		reattackWindowTicks = 0;
 		reattackStreak = 0;
@@ -3205,6 +3248,8 @@ namespace
 
 	void ClearSelection()
 	{
+		mlRescueRecord = 0;
+		enhancedRescueFeedback = {};
 		acceptedPickRecord = 0;
 		gatePhase = GatePhase::Idle;
 		selectedRecord = 0;
@@ -5807,8 +5852,8 @@ namespace
 	// priming threw it away (Philip, 2026-08-18: "if the user knows the riff and
 	// happens to play the right note just before the next note appears, shouldn't
 	// we allow it?"). So a primed onset is kept for the first holding tick when it
-	// is distinguishable from the previous note — the same rule as the release
-	// wait's fresh-playing shortcut — and matches the new target.
+	// is distinguishable from the previous note â€” the same rule as the release
+	// wait's fresh-playing shortcut â€” and matches the new target.
 	void StashPrimedOnset(int primedOnset)
 	{
 		pendingPrimedOnset = -1;
@@ -6252,8 +6297,70 @@ namespace
 		return true;
 	}
 
+	void RefreshDetectionFeedbackMl()
+	{
+		const auto now = GetTickCount64();
+		if (detectionFeedback.stringIndex < 0 || detectionFeedback.mlRole == NoteByNote::DetectorRole::Confirmed
+			|| NoteByNote::GetDetectorColor(NoteByNote::DetectorRole::Confirmed, detectionFeedback.tick, now)
+				== 0xFFFFFFFF) return;
+		ResearchProtocol::MlNoteEvidence evidence;
+		if (ResearchProbeRuntime::QueryMlNoteEvidence(detectionFeedback.targetMidi, 0.5f,
+			feedbackMinimumMlSample, evidence)
+			&& evidence.verdict == ResearchProtocol::MlNoteVerdict::Confirmed)
+		{
+			// Delayed inference may credit the accepted attack, but never audio recorded after it.
+			NoteByNote::CreditConfirmedMlFeedback(detectionFeedback, evidence.analyzedSampleIndex,
+				feedbackMinimumMlSample, feedbackMaximumMlSample, now);
+		}
+	}
+
+	void PublishCommittedDetectionFeedback()
+	{
+		// A queued earlier pick must not recolour a newer attack that has already reset the HUD.
+		if (IsPlainPickedTarget() && acceptedPickRecord == selectedRecord
+			&& acceptedPick.minimumSample < feedbackPickSample) return;
+		NoteByNote::DetectionFeedback nextFeedback;
+		feedbackMinimumMlSample = mlConfirmationState.GetMinimumSampleIndex();
+		feedbackMaximumMlSample = ResearchProbeRuntime::GetMlAudioSampleIndex();
+		if (IsPlainPickedTarget() && acceptedPickRecord == selectedRecord)
+		{
+			nextFeedback = acceptedPick.feedback;
+			feedbackMinimumMlSample = acceptedPick.minimumMlSample;
+		}
+		else
+		{
+			const bool mlRescued = mlRescueRecord == selectedRecord;
+			nextFeedback.nativeMidi = QueryNativeLoudestPlayedNote();
+			nextFeedback.nativeRole = mlRescued && !isBendTarget
+				? NoteByNote::DetectorRole::Unused : NoteByNote::DetectorRole::Confirmed;
+			if (enhancedRescueFeedback.targetRecord == selectedRecord)
+			{
+				nextFeedback = enhancedRescueFeedback;
+				nextFeedback.nativeRole = nextFeedback.nativeMidi < 0 ? NoteByNote::DetectorRole::Unused
+					: nextFeedback.nativeMidi == nextFeedback.enhancedMidi
+						? NoteByNote::DetectorRole::Confirmed : NoteByNote::DetectorRole::Rejected;
+			}
+			if (mlRescued)
+			{
+				nextFeedback.mlRole = isBendTarget
+					? NoteByNote::DetectorRole::Partial : NoteByNote::DetectorRole::Confirmed;
+				nextFeedback.mlMidi = expectedMidi;
+			}
+		}
+		nextFeedback.targetRecord = selectedRecord;
+		nextFeedback.tick = GetTickCount64();
+		nextFeedback.targetMidi = isBendTarget && bendAcceptMidi >= 0 ? bendAcceptMidi : expectedMidi;
+		nextFeedback.stringIndex = selectedChordId == -1 ? selectedString : -1;
+		nextFeedback.fret = selectedChordId == -1 ? selectedFret : -1;
+		NoteByNote::PublishDetectionFeedback(detectionFeedback, nextFeedback);
+		RefreshDetectionFeedbackMl();
+	}
+
 	void CompleteHeldCommit(void* owner, float updateTime, const LiveNote& selected, const char* reason)
 	{
+		PublishCommittedDetectionFeedback();
+		mlRescueRecord = 0;
+		enhancedRescueFeedback = {};
 		if (IsPlainPickedTarget())
 		{
 			LOG_INFO("(NBN PICK BUFFER) Committed record=" << selectedRecord
@@ -6945,6 +7052,10 @@ namespace
 							{
 								bendRescueStreak = 0;
 								onset = expectedMidi;
+								enhancedRescueFeedback.targetRecord = selectedRecord;
+								enhancedRescueFeedback.enhancedMidi = bendAcceptMidi;
+								enhancedRescueFeedback.nativeMidi = QueryNativeLoudestPlayedNote();
+								enhancedRescueFeedback.enhancedRole = NoteByNote::DetectorRole::Confirmed;
 								LOG_INFO("(NBN LAS BEND RESCUE) Bend accepted: tier-0 confirms the bend"
 									<< " settled at its target " << bendAcceptMidi << " (expected "
 									<< expectedMidi << ") for " << BEND_RESCUE_STREAK
@@ -7358,6 +7469,8 @@ namespace
 						// It releases the instant the pitch climbs into the band, and never fires when the
 						// estimate is unavailable or low-confidence, so it cannot make a bend unplayable.
 						// Bend elements only; a fretted legato note is judged exactly by the polls below.
+						bool enhancedCheckedBend = false;
+						float enhancedBendMidi = -1.0f;
 						if (isBendElement && hasReachedRunPitch)
 						{
 							float vetoEstMidi = -1.0f;
@@ -7366,11 +7479,14 @@ namespace
 									static_cast<double>(expectedMidi),
 									static_cast<double>(expectedRunMidi),
 									vetoEstMidi, vetoEstConfidence)
-								&& vetoEstConfidence >= 40.0f
-								&& vetoEstMidi < static_cast<float>(expectedRunMidi)
-									- BEND_UNDERBEND_SEMITONES)
+								&& vetoEstConfidence >= 40.0f)
 							{
-								hasReachedRunPitch = false;
+								enhancedCheckedBend = true;
+								enhancedBendMidi = vetoEstMidi;
+								if (vetoEstMidi < static_cast<float>(expectedRunMidi) - BEND_UNDERBEND_SEMITONES)
+								{
+									hasReachedRunPitch = false;
+								}
 							}
 						}
 						// A bend counts the moment it reaches pitch and is not required to stay
@@ -7387,6 +7503,13 @@ namespace
 							++legatoConfirmTickCount;
 							if (legatoConfirmTickCount >= requiredPolls)
 							{
+								if (enhancedCheckedBend)
+								{
+									enhancedRescueFeedback.targetRecord = selectedRecord;
+									enhancedRescueFeedback.enhancedMidi = static_cast<int>(enhancedBendMidi + 0.5f);
+									enhancedRescueFeedback.nativeMidi = currentMidi;
+									enhancedRescueFeedback.enhancedRole = NoteByNote::DetectorRole::Partial;
+								}
 								legatoConfirmTickCount = 0;
 								++legatoRunIndex;
 								// Ticket #52: a tracker-confirmed bend never consumes an
@@ -8856,6 +8979,8 @@ ResearchProtocol::NoteByNoteState NoteByNoteNativeScoring::GetResearchState()
 	state.selectedChordId = selectedChordId;
 	state.selectedChordNotesId = selectedChordNotesId;
 	state.expectedMidi = expectedMidi;
+	RefreshDetectionFeedbackMl();
+	state.detectionFeedback = detectionFeedback;
 
 	// The current chord target's tones for the fake-guitar harness, only when the target
 	// really is a chord and the published set was read for this exact record (otherwise a
@@ -8936,6 +9061,7 @@ ResearchProtocol::NoteByNoteState NoteByNoteNativeScoring::GetResearchState()
 			: 0.0f;
 		state.detectorLoudestMidi = lastStateGateSample.currentNote;
 		state.detectorSampleValid = 1;
+		state.detectorPassesLevel = lastStateGateSample.passesLevel ? 1 : 0;
 	}
 	if ((isBendTarget || isBendRunConfirmation) && expectedMidi >= 0)
 	{
@@ -9044,6 +9170,9 @@ void NoteByNoteNativeScoring::HeapCheckpointForResearch(const char* seam)
 void NoteByNoteScoringCore::Stop()
 {
 	std::lock_guard<std::recursive_mutex> lock(controllerMutex);
+	detectionFeedback = {};
+	mlRescueRecord = 0;
+	enhancedRescueFeedback = {};
 	HeapCheckpoint("stop");
 	if (OwnsNativeHold())
 	{

@@ -304,6 +304,7 @@ docs/investigations/note-by-note-handover*.md
 artifacts/
 BuildArchive/
 build/
+!Tests/MlControl/
 DLL/Installer/
 
 # Note by Note research lives in the private RocksmithNativeAtlas repository.

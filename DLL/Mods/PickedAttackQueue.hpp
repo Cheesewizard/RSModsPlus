@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include "DetectionFeedback.hpp"
 
 namespace NoteByNote
 {
@@ -14,6 +15,7 @@ namespace NoteByNote
 		uint32_t sampleRate = 0;
 		int candidateMidi = -1;
 		int confirmedMidi = -1;
+		DetectionFeedback feedback;
 		int baselineMidi[2] = { -1, -1 };
 		float baselinePower[2] = {};
 		float baselineMinusPower[2] = {};

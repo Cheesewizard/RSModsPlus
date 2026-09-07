@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "../Audio/RawAttackEvidence.hpp"
+#include "DetectionFeedback.hpp"
 
 // Note by Note domain types: the plain data structures the scoring engine, the host, and the
 // overlay all exchange. These are shippable and carry no dependency on the research bridge or
@@ -214,6 +215,8 @@ namespace ResearchProtocol
 		uint32_t compareHistoryCount = 0;
 		// Ring of the most recent samples, oldest at [0]: 0 = disagree, 1 = agree, 2 = one-sided.
 		uint8_t compareHistory[CompareHistoryLength] = {};
+		NoteByNote::DetectionFeedback detectionFeedback;
+		uint8_t detectorPassesLevel = 0;
 	};
 
 	using ScoringUpdate = void(__stdcall*)(void* owner, float updateTime);

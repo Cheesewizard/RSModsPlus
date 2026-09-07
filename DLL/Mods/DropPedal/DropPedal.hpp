@@ -50,6 +50,7 @@ namespace DropPedal
 	// the pedal is set correctly and diverges only when the player is out of tune.
 	// False when the chart tuning is not readable yet.
 	bool TryGetChartMatchShiftSemitones(int& shiftSemitones);
+	bool TryGetPhysicalOpenStringMidi(int stringIndex, int& midi);
 	std::string GetTuningName(Player player);
 	std::string GetPitchRouteName();
 	std::string GetPhysicalTuningName();

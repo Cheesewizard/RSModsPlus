@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "AsioHook.hpp"
+#include "AudioLifecycleTrace.hpp"
 #include "ComVTable.hpp"
+#include "CaptureProcessingGate.hpp"
 #include "CableInput.hpp"
 #include "MlAudioExporter.hpp"
 #include "RawPitchVerifier.hpp"
@@ -23,6 +25,7 @@ namespace Audio::AsioHook
 		constexpr float INT24_TO_FLOAT = 1.0f / 8388608.0f;
 		constexpr float INT32_TO_FLOAT = 1.0f / 2147483648.0f;
 		constexpr uint64_t UNMARSHAL_HOOK_RETRY_INTERVAL_MILLISECONDS = 250;
+		constexpr uint64_t INPUT_STALL_MILLISECONDS = 3000;
 
 		constexpr std::array<uint8_t, 11> UNMARSHAL_CALL_PRE_PATCH =
 		{
@@ -106,9 +109,10 @@ namespace Audio::AsioHook
 		std::array<bool, INPUT_ROUTE_COUNT> configuredInputs{ false, false };
 		std::array<std::atomic<bool>, INPUT_ROUTE_COUNT> inputReady;
 		std::atomic<bool> bufferLayoutReady{ false };
-		std::atomic<bool> processingEnabled{ false };
+		CaptureProcessingGate processingGate;
 		std::atomic<bool> autoEnabledOnce{ false };
 		std::mutex registrationMutex;
+		void UpdateProcessingEnabled(bool enabled);
 
 		UnmarshalStreamComPointers_t originalUnmarshalStreamComPointers = nullptr;
 		CaptureGetBuffer_t originalCaptureGetBuffer = nullptr;
@@ -395,7 +399,7 @@ namespace Audio::AsioHook
 		{
 			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
 			{
-				if (routeCaptureClients[routeIndex].load(std::memory_order_relaxed) == captureClient)
+				if (routeCaptureClients[routeIndex].load(std::memory_order_acquire) == captureClient)
 					return static_cast<int>(routeIndex);
 			}
 			return -1;
@@ -414,8 +418,27 @@ namespace Audio::AsioHook
 			// including the stock shared stream this tap also sees.
 			UINT64 localQpc = 0;
 			UINT64* qpcOut = performanceCounterPosition ? performanceCounterPosition : &localQpc;
+#if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
+			const int traceRoute = FindCaptureRoute(self);
+			LifecycleTrace::BufferEnter(traceRoute);
+#endif
 			const HRESULT result = originalCaptureGetBuffer(
 				self, data, frameCount, flags, devicePosition, qpcOut);
+#if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
+			LifecycleTrace::BufferReturn(traceRoute, result, SUCCEEDED(result) && frameCount ? *frameCount : 0);
+#endif
+
+			if (FAILED(result) || result == AUDCLNT_S_BUFFER_EMPTY
+				|| !frameCount || *frameCount == 0) return result;
+
+			const int routeIndex = FindCaptureRoute(self);
+			if (routeIndex < 0) return result;
+			// Capture liveness exists before the game loop prepares the processor.
+			routeLastBufferTick[routeIndex].store(GetTickCount64(), std::memory_order_relaxed);
+
+			CaptureCallbackScope callback(processingGate);
+			if (!callback || FindCaptureRoute(self) != routeIndex
+				|| !inputReady[routeIndex].load(std::memory_order_acquire)) return result;
 
 			if (!CableInput::IsAsioPath() && SUCCEEDED(result) && result != AUDCLNT_S_BUFFER_EMPTY && frameCount && *frameCount > 0 && *qpcOut != 0
 				&& !(flags && (*flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)))
@@ -437,17 +460,8 @@ namespace Audio::AsioHook
 				}
 			}
 
-			if (FAILED(result) || !processingEnabled.load(std::memory_order_acquire)
-				|| !data || !*data || !frameCount || *frameCount == 0 || *frameCount > MAX_BUFFER_FRAMES)
+			if (!data || !*data || *frameCount > MAX_BUFFER_FRAMES)
 				return result;
-
-			const int routeIndex = FindCaptureRoute(self);
-			if (routeIndex < 0) return result;
-			// Liveness stamp for the churn rebind: a route whose stream still delivers
-			// buffers is alive and must never be stolen by a newer stream. Stamped before
-			// the readiness gate so a freshly rebound route mid-setup is protected too.
-			routeLastBufferTick[routeIndex].store(GetTickCount64(), std::memory_order_relaxed);
-			if (!inputReady[routeIndex].load(std::memory_order_acquire)) return result;
 
 			IInputProcessor* processor = activeProcessors[routeIndex].load(std::memory_order_relaxed);
 			IInputProcessor* source = inputSources[routeIndex].load(std::memory_order_relaxed);
@@ -467,9 +481,9 @@ namespace Audio::AsioHook
 			// timeline stays continuous). Observation is read-only: the write-back to the
 			// game's buffer still happens only when a source or processor changed samples.
 			const bool silent = flags && (*flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
-			const bool modifiesBuffer = sourceActive || (processor != nullptr && !silent);
+			const bool runsProcessor = processor != nullptr && (!silent || sourceActive);
 			const bool observesRoute = routeIndex == 0;
-			if (!modifiesBuffer && !observesRoute) return result;
+			if (!sourceActive && !runsProcessor && !observesRoute) return result;
 
 			float* converted = conversionBuffers[routeIndex].data();
 			if (silent)
@@ -489,8 +503,12 @@ namespace Audio::AsioHook
 
 			// The armed source replaces the captured input first, then the processor (e.g. the
 			// Drop Pedal shifter) transforms whatever is now in the buffer - real cable or synth.
-			if (sourceActive) source->Process(converted, *frameCount);
-			if (processor) processor->Process(converted, *frameCount);
+			bool modifiesBuffer = sourceActive && source->Process(converted, *frameCount);
+			if (processor)
+			{
+				const bool changed = processor->Process(converted, *frameCount);
+				if (!silent || sourceActive) modifiesBuffer = changed || modifiesBuffer;
+			}
 			if (observesRoute)
 			{
 				RawPitchVerifier::Observe(
@@ -534,6 +552,7 @@ namespace Audio::AsioHook
 			if (FindCaptureRoute(stream->captureClient) >= 0) return;
 
 			size_t routeIndex = INPUT_ROUTE_COUNT;
+			bool replacesCapture = false;
 			for (size_t candidate = 0; candidate < INPUT_ROUTE_COUNT; ++candidate)
 			{
 				if (configuredInputs[candidate]
@@ -584,14 +603,7 @@ namespace Audio::AsioHook
 						<< routeIndex + 1 << "'s bound stream is still delivering buffers." << std::endl);
 					return;
 				}
-				processingEnabled.store(false, std::memory_order_release);
-				inputReady[routeIndex].store(false, std::memory_order_release);
-				bufferLayoutReady.store(false, std::memory_order_release);
-				routeCaptureClients[routeIndex].store(nullptr, std::memory_order_release);
-				routeLastBufferTick[routeIndex].store(0, std::memory_order_relaxed);
-				autoEnabledOnce.store(false, std::memory_order_relaxed);
-				LOG_INFO("[AsioHook] Player " << routeIndex + 1
-					<< " capture stream went quiet and was replaced; rebinding to the newest stream." << std::endl);
+				replacesCapture = true;
 			}
 
 			const CaptureFormat format = ReadCaptureFormat(stream->input.waveFormat);
@@ -630,10 +642,18 @@ namespace Audio::AsioHook
 				return;
 			}
 
-			processingEnabled.store(false, std::memory_order_release);
+			processingGate.CloseAndWait();
 			inputReady[routeIndex].store(false, std::memory_order_relaxed);
+			bufferLayoutReady.store(false, std::memory_order_release);
+			autoEnabledOnce.store(false, std::memory_order_relaxed);
+			routeLastBufferTick[routeIndex].store(0, std::memory_order_relaxed);
 			routeFormats[routeIndex] = format;
 			routeCaptureClients[routeIndex].store(stream->captureClient, std::memory_order_release);
+			if (replacesCapture)
+			{
+				LOG_INFO("[AsioHook] Player " << routeIndex + 1
+					<< " capture stream went quiet and was replaced; rebinding to the newest stream." << std::endl);
+			}
 
 			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << " attached to existing RS_ASIO capture client "
 				<< stream->captureClient << " using " << DescribeFormat(format) << "." << std::endl);
@@ -646,6 +666,13 @@ namespace Audio::AsioHook
 			if (SUCCEEDED(result) && stream)
 			{
 				auto* audioStream = reinterpret_cast<PaWasapiStreamPrefix*>(stream);
+#if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
+				if (audioStream->input.clientParent && audioStream->captureClient)
+				{
+					LifecycleTrace::Attach(reinterpret_cast<IAudioClient*>(audioStream->input.clientProc), stream);
+					LifecycleTrace::Record(LifecycleTrace::Kind::CaptureBind, audioStream->captureClient, stream);
+				}
+#endif
 				RegisterCaptureStream(audioStream);
 			}
 			return result;
@@ -793,6 +820,9 @@ namespace Audio::AsioHook
 		installed = true;
 
 		LOG_INFO("[InputCapture] Installing the shared Drop Pedal input path." << std::endl);
+#if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
+		LifecycleTrace::Initialize();
+#endif
 		const bool hasRsAsio = RsAsioFileExists();
 		const RsAsioConfiguration configuration = hasRsAsio
 			? ReadRsAsioConfiguration()
@@ -846,6 +876,7 @@ namespace Audio::AsioHook
 
 	void Poll()
 	{
+		std::lock_guard<std::mutex> guard(registrationMutex);
 		if (isUnmarshalHookInstallPending
 			&& GetTickCount64() >= nextUnmarshalHookAttemptTick)
 		{
@@ -853,7 +884,7 @@ namespace Audio::AsioHook
 		}
 
 		if (autoEnabledOnce.load(std::memory_order_relaxed)) return;
-		if (processingEnabled.load(std::memory_order_relaxed)) return;
+		if (processingGate.IsOpen()) return;
 		if (!bufferLayoutReady.load(std::memory_order_acquire)) return;
 
 		for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
@@ -882,7 +913,7 @@ namespace Audio::AsioHook
 				<< (source ? " + source" : "") << ")." << std::endl);
 		}
 
-		SetProcessingEnabled(true);
+		UpdateProcessingEnabled(true);
 	}
 
 	void SetProcessor(size_t routeIndex, IInputProcessor* inputProcessor)
@@ -892,6 +923,11 @@ namespace Audio::AsioHook
 			LOG_ERROR("[AsioHook] Refusing to set processor for invalid route " << routeIndex << "." << std::endl);
 			return;
 		}
+		std::lock_guard<std::mutex> guard(registrationMutex);
+		if (activeProcessors[routeIndex].load(std::memory_order_relaxed) == inputProcessor) return;
+		processingGate.CloseAndWait();
+		inputReady[routeIndex].store(false, std::memory_order_release);
+		autoEnabledOnce.store(false, std::memory_order_relaxed);
 		activeProcessors[routeIndex].store(inputProcessor, std::memory_order_relaxed);
 	}
 
@@ -902,6 +938,11 @@ namespace Audio::AsioHook
 			LOG_ERROR("[AsioHook] Refusing to set input source for invalid route " << routeIndex << "." << std::endl);
 			return;
 		}
+		std::lock_guard<std::mutex> guard(registrationMutex);
+		if (inputSources[routeIndex].load(std::memory_order_relaxed) == inputSource) return;
+		processingGate.CloseAndWait();
+		inputReady[routeIndex].store(false, std::memory_order_release);
+		autoEnabledOnce.store(false, std::memory_order_relaxed);
 		inputSources[routeIndex].store(inputSource, std::memory_order_relaxed);
 	}
 
@@ -911,39 +952,54 @@ namespace Audio::AsioHook
 		inputSourceArmed[routeIndex].store(active, std::memory_order_release);
 	}
 
-	void SetProcessingEnabled(bool enabled)
+	namespace
 	{
-		if (enabled && !bufferLayoutReady.load(std::memory_order_acquire))
+		void UpdateProcessingEnabled(bool enabled)
 		{
-			LOG_ERROR("[InputCapture] Refusing to enable processing before an input capture route is attached." << std::endl);
-			return;
-		}
-
-		if (enabled)
-		{
-			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
+			if (enabled && !bufferLayoutReady.load(std::memory_order_acquire))
 			{
-				if (!configuredInputs[routeIndex]) continue;
-				if ((!activeProcessors[routeIndex].load(std::memory_order_relaxed)
-						&& !inputSources[routeIndex].load(std::memory_order_relaxed))
-					|| !routeCaptureClients[routeIndex].load(std::memory_order_acquire)
-					|| !routeFormats[routeIndex].IsUsable()
-					|| !inputReady[routeIndex].load(std::memory_order_acquire))
+				LOG_ERROR("[InputCapture] Refusing to enable processing before an input capture route is attached." << std::endl);
+				return;
+			}
+
+			if (enabled)
+			{
+				for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
 				{
-					LOG_ERROR("[AsioHook] Refusing to enable processing because Player "
-						<< routeIndex + 1 << " is not ready." << std::endl);
-					return;
+					if (!configuredInputs[routeIndex]) continue;
+					if ((!activeProcessors[routeIndex].load(std::memory_order_relaxed)
+							&& !inputSources[routeIndex].load(std::memory_order_relaxed))
+						|| !routeCaptureClients[routeIndex].load(std::memory_order_acquire)
+						|| !routeFormats[routeIndex].IsUsable()
+						|| !inputReady[routeIndex].load(std::memory_order_acquire))
+					{
+						LOG_ERROR("[AsioHook] Refusing to enable processing because Player "
+							<< routeIndex + 1 << " is not ready." << std::endl);
+						return;
+					}
 				}
 			}
-		}
 
-		processingEnabled.store(enabled, std::memory_order_release);
-		LOG_INFO("[AsioHook] Processing " << (enabled ? "enabled" : "disabled") << std::endl);
+			if (enabled) processingGate.Open();
+			else processingGate.CloseAndWait();
+			LOG_INFO("[AsioHook] Processing " << (enabled ? "enabled" : "disabled") << std::endl);
+		}
+	}
+
+	void SetProcessingEnabled(bool enabled)
+	{
+		std::lock_guard<std::mutex> guard(registrationMutex);
+		UpdateProcessingEnabled(enabled);
 	}
 
 	bool IsProcessingEnabled()
 	{
-		return processingEnabled.load(std::memory_order_acquire);
+		if (!processingGate.IsOpen()) return false;
+		for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
+		{
+			if (configuredInputs[routeIndex] && !IsInputReady(routeIndex)) return false;
+		}
+		return true;
 	}
 
 	bool IsInputConfigured(size_t routeIndex)
@@ -953,7 +1009,10 @@ namespace Audio::AsioHook
 
 	bool IsInputReady(size_t routeIndex)
 	{
-		return routeIndex < INPUT_ROUTE_COUNT && inputReady[routeIndex].load(std::memory_order_acquire);
+		if (routeIndex >= INPUT_ROUTE_COUNT || !processingGate.IsOpen()
+			|| !inputReady[routeIndex].load(std::memory_order_acquire)) return false;
+		const uint64_t lastBuffer = routeLastBufferTick[routeIndex].load(std::memory_order_relaxed);
+		return lastBuffer != 0 && GetTickCount64() - lastBuffer < INPUT_STALL_MILLISECONDS;
 	}
 }
 

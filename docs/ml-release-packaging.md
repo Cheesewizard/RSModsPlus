@@ -36,6 +36,29 @@ and rsmodsplus.dll in the main game directory.
 The existing .NET Framework requirement remains; no Python installation or separate
 model download is required.
 
+## ML connection controls
+
+The RSModsPlus settings tab refreshes ML connection status every second. Connected
+requires a live game launcher heartbeat and ML results no older than 500 ms in both
+wall time and audio time. A running service without fresh results is shown as waiting.
+Startup failures and child exit codes are displayed explicitly.
+
+**Restart ML service** sends a process-specific event to the game launcher. The
+launcher closes its existing child job, waits for child exit on its normal polling
+loop, and then starts the installed service again. Rocksmith stays running. There
+is no automatic retry or second launcher in the GUI. Controls require the matching
+updated native build; unavailable or stale game controls disable restart.
+
+The status mapping is `Local\RSModsPlus.MlControl.v1.<game PID>` (32 bytes, seqlock);
+the restart event is `Local\RSModsPlus.MlRestart.v1.<game PID>`. Both use the current
+Windows session and the game process's default security descriptor.
+
+Run `Tests/MlControl/run.cmd` for isolated cross-bitness control tests. These use
+the production native launcher, a dummy child executable, and the production C#
+client. They do not restart Rocksmith or replace installed files. UI layout was
+checked with the production panel in an isolated off-screen form. Live gameplay
+acceptance of these controls still requires installing the matching build.
+
 ## Build and package
 
 Build GUI/GUI.csproj with Configuration=Release and PostBuildEventUseInBuild=false.

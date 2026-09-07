@@ -313,9 +313,11 @@
       <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="Audio\AsioHook.hpp" />
+    <ClInclude Include="Audio\CaptureProcessingGate.hpp" />
     <ClInclude Include="Audio\CableInput.hpp" />
     <ClInclude Include="Audio\MlAudioExporter.hpp" />
     <ClInclude Include="Audio\MlServiceLauncher.hpp" />
+    <ClInclude Include="Audio\MlServiceControl.hpp" />
     <ClInclude Include="Audio\MlStringFretReader.hpp" />
     <ClInclude Include="Audio\MlFretDisplay.hpp" />
     <ClInclude Include="Audio\RawPitchVerifier.hpp" />
@@ -384,6 +386,7 @@
     <ClInclude Include="CC\Effects\HighwayScrollSpeedEffect.hpp" />
     <ClInclude Include="D3DInfo.h" />
     <ClInclude Include="D3DOverlay.hpp" />
+    <ClInclude Include="Mods\DetectionFeedback.hpp" />
     <ClInclude Include="OverlayToggles.hpp" />
     <ClInclude Include="D3D\GdiplusManager.hpp" />
     <ClInclude Include="GameState.hpp" />
@@ -936,5 +939,9 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)Research\DebugTools\WriteIdentity.ps1&quot; -Library &quot;$(ProjectDir)..\Installer\Resources\Developer\$(Configuration)\rsmodsdebug.dll&quot; -Header &quot;$(IntDir)DebugToolsIdentity.hpp&quot;" />
   </Target>
   <Import Project="Audio\ThirdParty\Aubio\Aubio.props" />
+  <ItemDefinitionGroup Condition="'$(AudioLifecycleTrace)' == 'true'">
+    <ClCompile><PreprocessorDefinitions>RSMODS_AUDIO_LIFECYCLE_TRACE;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup><ClInclude Include="Audio\AudioLifecycleTrace.hpp" /></ItemGroup>
 </Project>
 
