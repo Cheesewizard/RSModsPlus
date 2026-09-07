@@ -55,7 +55,7 @@ namespace RSMods
 			{
 				exitCode = 1;
 				File.WriteAllText(
-					Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NoteByNoteMenuInstall.log"),
+					Path.Combine(System.Windows.Forms.Application.StartupPath, "NoteByNoteMenuInstall.log"),
 					exception.ToString());
 			}
 
@@ -126,7 +126,7 @@ namespace RSMods
 
 				File.Copy(pendingCachePath, cachePath, true);
 				File.WriteAllText(
-					Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NoteByNoteMenuInstall.log"),
+					Path.Combine(System.Windows.Forms.Application.StartupPath, "NoteByNoteMenuInstall.log"),
 					$"Installed Note by Note into Riff Repeater Advanced Settings.{Environment.NewLine}"
 					+ $"Backup: {backupPath}{Environment.NewLine}"
 					+ $"Installed cache size: {new FileInfo(cachePath).Length}{Environment.NewLine}");

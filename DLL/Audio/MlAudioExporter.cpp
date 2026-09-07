@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MlAudioExporter.hpp"
+#include "../Research/ResearchBridge.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -41,7 +42,19 @@ namespace
 void MlAudioExporter::Poll(int appliedShiftSemitones)
 {
 	cachedAppliedShift.store(appliedShiftSemitones, std::memory_order_relaxed);
-	if (sharedHeader.load(std::memory_order_relaxed) != nullptr || creationFailed) return;
+	auto* current = sharedHeader.load(std::memory_order_acquire);
+	if (current != nullptr)
+	{
+		ResearchProtocol::NoteByNoteState state;
+		const bool available = ResearchBridge::TryGetNoteByNoteState(state) && state.isInitialized;
+		InterlockedIncrement(reinterpret_cast<volatile LONG*>(&current->expectationSequence));
+		current->expectedString = available ? state.selectedString : -1;
+		current->expectedMidi = available ? state.expectedMidi : -1;
+		current->expectationTick = GetTickCount();
+		InterlockedIncrement(reinterpret_cast<volatile LONG*>(&current->expectationSequence));
+		return;
+	}
+	if (creationFailed) return;
 
 	mappingHandle = CreateFileMappingA(
 		INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
@@ -68,6 +81,8 @@ void MlAudioExporter::Poll(int appliedShiftSemitones)
 	// writing, and magic goes last so the companion's validation cannot race a
 	// half-initialized header. The pointer publish below is the release the audio
 	// thread's acquire pairs with.
+	header->expectedString = -1;
+	header->expectedMidi = -1;
 	header->version = ML_AUDIO_VERSION;
 	header->magic = ML_AUDIO_MAGIC;
 	sharedRing.store(reinterpret_cast<float*>(header + 1), std::memory_order_relaxed);

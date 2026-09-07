@@ -15,14 +15,56 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Installer", "Installer\Inst
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NoteByNoteProbe", "DLL\Research\NoteByNoteProbe\NoteByNoteProbe.vcxproj", "{FC7C2237-25AF-4DCC-8363-C7F7BD5E467B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RSModsPlus", "RSModsPlus\RSModsPlus.csproj", "{C92F58F4-75B9-4AE0-A722-8F63833EE42C}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DebugTools", "DLL\Research\DebugTools\DebugTools.vcxproj", "{ECA1B03D-4580-4456-931C-54B5B6526585}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Release Public|Win32 = Release Public|Win32
+		Release Developer|Win32 = Release Developer|Win32
 		Debug with Wwise Logging|Win32 = Debug with Wwise Logging|Win32
 		Debug|Win32 = Debug|Win32
 		Release with Wwise Logging|Win32 = Release with Wwise Logging|Win32
 		Release|Win32 = Release|Win32
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Release Public|Win32.ActiveCfg = Release|Win32
+		{FC7C2237-25AF-4DCC-8363-C7F7BD5E467B}.Release Public|Win32.ActiveCfg = Release|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Release Developer|Win32.ActiveCfg = Release Developer|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Release Developer|Win32.Build.0 = Release Developer|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Debug|Win32.ActiveCfg = Debug|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Debug|Win32.Build.0 = Debug|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Debug with Wwise Logging|Win32.ActiveCfg = Debug with Wwise Logging|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Debug with Wwise Logging|Win32.Build.0 = Debug with Wwise Logging|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Release|Win32.ActiveCfg = Release|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Release|Win32.Build.0 = Release|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Release with Wwise Logging|Win32.ActiveCfg = Release with Wwise Logging|Win32
+		{ECA1B03D-4580-4456-931C-54B5B6526585}.Release with Wwise Logging|Win32.Build.0 = Release with Wwise Logging|Win32
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Release Public|Win32.ActiveCfg = Release|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Release Developer|Win32.ActiveCfg = Release|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Release Public|Win32.Build.0 = Release|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Release Developer|Win32.Build.0 = Release|Any CPU
+		{E312CF39-2170-4C1A-AC11-3A9C1C2E7399}.Release Public|Win32.ActiveCfg = Release Public|Win32
+		{E312CF39-2170-4C1A-AC11-3A9C1C2E7399}.Release Developer|Win32.ActiveCfg = Release Developer|Win32
+		{E312CF39-2170-4C1A-AC11-3A9C1C2E7399}.Release Public|Win32.Build.0 = Release Public|Win32
+		{E312CF39-2170-4C1A-AC11-3A9C1C2E7399}.Release Developer|Win32.Build.0 = Release Developer|Win32
+		{0EDA6FC0-DD23-45FF-94D4-B242D04F97A8}.Release Public|Win32.ActiveCfg = Release|x64
+		{0EDA6FC0-DD23-45FF-94D4-B242D04F97A8}.Release Developer|Win32.ActiveCfg = Release|x64
+		{0EDA6FC0-DD23-45FF-94D4-B242D04F97A8}.Release Public|Win32.Build.0 = Release|x64
+		{0EDA6FC0-DD23-45FF-94D4-B242D04F97A8}.Release Developer|Win32.Build.0 = Release|x64
+		{9E11FD67-DFFE-40F1-8E69-26D359F896EC}.Release Public|Win32.ActiveCfg = Release|Any CPU
+		{9E11FD67-DFFE-40F1-8E69-26D359F896EC}.Release Developer|Win32.ActiveCfg = Release|Any CPU
+		{FC7C2237-25AF-4DCC-8363-C7F7BD5E467B}.Release Developer|Win32.ActiveCfg = Release Developer|Win32
+		{FC7C2237-25AF-4DCC-8363-C7F7BD5E467B}.Release Developer|Win32.Build.0 = Release Developer|Win32
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Debug|Win32.ActiveCfg = Debug|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Debug|Win32.Build.0 = Debug|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Debug with Wwise Logging|Win32.ActiveCfg = Debug|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Debug with Wwise Logging|Win32.Build.0 = Debug|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Release|Win32.ActiveCfg = Release|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Release|Win32.Build.0 = Release|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Release with Wwise Logging|Win32.ActiveCfg = Release|Any CPU
+		{C92F58F4-75B9-4AE0-A722-8F63833EE42C}.Release with Wwise Logging|Win32.Build.0 = Release|Any CPU
 		{E312CF39-2170-4C1A-AC11-3A9C1C2E7399}.Debug with Wwise Logging|Win32.ActiveCfg = Debug with Wwise Logging|Win32
 		{E312CF39-2170-4C1A-AC11-3A9C1C2E7399}.Debug with Wwise Logging|Win32.Build.0 = Debug with Wwise Logging|Win32
 		{E312CF39-2170-4C1A-AC11-3A9C1C2E7399}.Debug|Win32.ActiveCfg = Debug|Win32

@@ -2884,24 +2884,61 @@ namespace
 		&ObserveRenderedAttack,
 		&StopProbe,
 		&GetState,
+		#if defined(RSMODS_PUBLIC_RELEASE)
+		nullptr,
+		#else
 		&ArmRenderSnapshot,
+		#endif
+		#if defined(RSMODS_PUBLIC_RELEASE)
+		nullptr,
+		#else
 		&ObserveNativeDraw,
+		#endif
+		#if defined(RSMODS_PUBLIC_RELEASE)
+		nullptr,
+		#else
 		&NotifyRenderFrameComplete,
+		#endif
+		#if defined(RSMODS_PUBLIC_RELEASE)
+		nullptr,
+		#else
 		&ArmNoteDrawListSnapshot,
+		#endif
+		#if defined(RSMODS_PUBLIC_RELEASE)
+		nullptr,
+		#else
 		&ObserveNoteDrawList,
+		#endif
+		#if defined(RSMODS_PUBLIC_RELEASE)
+		nullptr,
+		#else
 		&ArmScreenMapSnapshot,
+		#endif
+		#if defined(RSMODS_PUBLIC_RELEASE)
+		nullptr,
+		#else
 		&HandleProbeCommand,
+		#endif
 		&PrepareNoteDrawList,
 		&CompleteNoteDrawList,
 		&GetRequestedHooks,
 		&ObserveGenericHook,
 		&ObserveNeckPlacementStep,
+		#if defined(RSMODS_PUBLIC_RELEASE)
+		nullptr,
+		#else
 		&ObserveFullDraw,
+		#endif
 		&RequestReArmProbe
 	};
 }
 
-extern "C" __declspec(dllexport) const ResearchProtocol::ProbeApi* __cdecl RSMP_GetResearchProbeApi(
+#if defined(RSMODS_PUBLIC_RELEASE)
+#define RSMP_PROBE_EXPORT
+#else
+#define RSMP_PROBE_EXPORT __declspec(dllexport)
+#endif
+extern "C" RSMP_PROBE_EXPORT const ResearchProtocol::ProbeApi* __cdecl RSMP_GetResearchProbeApi(
 	uint32_t hostApiVersion,
 	const ResearchProtocol::HostApi* hostApi)
 {

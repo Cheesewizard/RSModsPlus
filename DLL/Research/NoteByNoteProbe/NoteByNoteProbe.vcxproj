@@ -13,6 +13,10 @@
       <Configuration>Release</Configuration>
       <Platform>Win32</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Release Developer|Win32">
+      <Configuration>Release Developer</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
     <ProjectConfiguration Include="Release with Wwise Logging|Win32">
       <Configuration>Release with Wwise Logging</Configuration>
       <Platform>Win32</Platform>
@@ -31,7 +35,7 @@
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)'=='Release' Or '$(Configuration)'=='Release with Wwise Logging'" Label="Configuration">
+  <PropertyGroup Condition="'$(Configuration)'=='Release' Or '$(Configuration)'=='Release with Wwise Logging' Or '$(Configuration)'=='Release Developer'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>

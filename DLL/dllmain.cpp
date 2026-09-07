@@ -259,12 +259,12 @@ unsigned WINAPI MainThread() {
 
 	// Spawn the FretNet ML string/fret companion once, bound to this game's lifetime.
 	// It is what Note-by-Note reads for its ML "stuck hold" rescue; making it a default
-	// removes the manual start step. No-op if a service is already running or the
-	// research tree is absent (Release / another machine).
+	// removes the manual start step. The service uses the main-folder managed library.
 	MlServiceLauncher::EnsureStarted();
 
 	while (!GameState::GameClosing) {
 		Sleep(250);
+		MlServiceLauncher::EnsureStarted();
 
 		if (GameState::GameLoaded) {
 			ModManager::HandlePostGameLoadedMods(loopState);

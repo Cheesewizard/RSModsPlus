@@ -17,6 +17,14 @@
       <Configuration>Release</Configuration>
       <Platform>Win32</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Release Public|Win32">
+      <Configuration>Release Public</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release Developer|Win32">
+      <Configuration>Release Developer</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Audio\AsioHook.cpp" />
@@ -29,13 +37,13 @@
     <ClCompile Include="Audio\SongShift\WwiseMusicHook.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Audio\SongShift\PreRenderedPitchCache.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">MaxSpeed</Optimization>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">MaxSpeed</Optimization>
@@ -44,7 +52,7 @@
     <ClCompile Include="Audio\SongShift\StreamingPitchShifter.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">MaxSpeed</Optimization>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">MaxSpeed</Optimization>
@@ -52,80 +60,80 @@
     <ClCompile Include="CC\CCEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\CCEffectList.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\BigNoteheadEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\ControlServer.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\ChangeToToneSlot.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\InvertedStringsEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\RainbowNotesEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\RemoveInstrumentEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\TurboSpeedEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\WavyNotesEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\ZoomEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="D3D/D3D.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\CCEnums.hpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="CC\CCStructs.hpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\HighwayScrollSpeedEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="D3DOverlay.cpp" />
     <ClCompile Include="OverlayToggles.cpp" />
@@ -135,126 +143,128 @@
     <ClCompile Include="Lib\ImGUI\imgui_tables.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Lib\Midi\RtMidi.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Menu.cpp" />
     <ClCompile Include="ModManager.cpp" />
     <ClCompile Include="Mods\AudioDevices.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\BugPrevention.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\LaunchOnExternalMonitor.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\Loft.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\Midi.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
 	<ClCompile Include="Mods\NoteByNoteProbe.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
 	</ClCompile>
     <ClCompile Include="Mods\NoteByNoteHookHost.cpp">
 		<PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
 		<PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-		<PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+		<PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
 		<PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
 	</ClCompile>
     <ClCompile Include="Mods\NoteByNoteMenu.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\NoteByNoteHudLabel.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\TrueTuning.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\RiffRepeater.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\VoiceOverControl.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\VolumeControl.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="ObjectUtil.cpp" />
     <ClCompile Include="CC\Effects\ShuffleTonesEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\SmallNoteheadEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="QualityOfLife.cpp" />
-    <ClCompile Include="Research\ResearchBridge.cpp">
+    <ClCompile Include="Research\DebugToolsLoader.cpp" Condition="'$(Configuration)' != 'Release Public'"><PrecompiledHeader>NotUsing</PrecompiledHeader><AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile>
+    <ClCompile Include="Research\ResearchBridge.cpp" Condition="'$(Configuration)' != 'Release Public'">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
+    <ClCompile Include="Mods\NoteByNoteController.cpp" Condition="'$(Configuration)' == 'Release Public'"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="Mods\NoteByNoteNativeScoring.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Mods\NoteByNoteHostServices.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Mods\ResearchProbeRuntime.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Research\NoteByNoteProbe\NoteByNoteResearchProbe.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="SongTimer.cpp" />
@@ -265,42 +275,42 @@
     <ClCompile Include="Wwise\Exports.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Wwise\Logging.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Wwise\MemoryMgr.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Wwise\Monitor.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Wwise\MotionEngine.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Wwise\MusicEngine.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Wwise\Root.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Wwise\SoundEngine.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="Audio\AsioHook.hpp" />
     <ClInclude Include="Audio\CableInput.hpp" />
@@ -331,32 +341,32 @@
     <ClCompile Include="D3D/D3DHooks.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="D3D/NoteByNoteHighwayRenderer.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\DisableControllers.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\RemoveNotesEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\SolidNotesEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\TransparentNotesEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="Audio\ComVTable.hpp" />
     <ClInclude Include="D3D/D3DHelper.hpp" />
@@ -412,32 +422,32 @@
     <ClCompile Include="Mods\DropPedal\DropPedal.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\FakeGuitar\FakeGuitarInjector.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\DropPedal\DropPedalHooks.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\DropPedal\DropPedalInput.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\DropPedal\DropPedalOverlay.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\DropPedal\DropPedalState.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="NoteData.h" />
     <ClInclude Include="ObjectUtil.hpp" />
@@ -468,7 +478,10 @@
     <ClInclude Include="Wwise\Types.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="Research\NoteByNoteProbe\NoteByNoteProbe.vcxproj">
+    <ProjectReference Include="Research\DebugTools\DebugTools.vcxproj" Condition="'$(Configuration)' != 'Release Public'">
+      <Project>{ECA1B03D-4580-4456-931C-54B5B6526585}</Project><LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+    <ProjectReference Include="Research\NoteByNoteProbe\NoteByNoteProbe.vcxproj" Condition="'$(Configuration)' != 'Release Public'">
       <Project>{FC7C2237-25AF-4DCC-8363-C7F7BD5E467B}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
@@ -477,53 +490,53 @@
     <ClCompile Include="CC\Effects\DrunkModeEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\FYourFCEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\KillGuitarVolumeEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="CC\Effects\KillMusicVolumeEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="MemUtil.cpp" />
     <ClCompile Include="Mods\GuitarSkeletons.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\CollectColors.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\CustomSongTitles.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\Enumeration.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\ExtendedRangeMode.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Mods\GuitarSpeak.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="Mods\CollectColors.hpp" />
     <ClInclude Include="Mods\GuitarSkeletons.hpp" />
@@ -538,43 +551,43 @@
     <ClCompile Include="Lib\ImGUI\imgui.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Lib\ImGUI\imgui_draw.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Lib\ImGUI\imgui_impl_dx9.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Lib\ImGUI\imgui_impl_win32.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Lib\ImGUI\imgui_widgets.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Lib\ImGUI\RobotoFont.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Offsets.cpp" />
     <ClCompile Include="CC\Effects\RainbowStringsEffect.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../../stdafx.h</PrecompiledHeaderFile>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">../../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="Scrapped.hpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">NotUsing</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Settings.cpp" />
   </ItemGroup>
@@ -645,7 +658,7 @@
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+  <PropertyGroup Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
@@ -669,7 +682,7 @@
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+  <ImportGroup Label="PropertySheets" Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release with Wwise Logging|Win32'" Label="PropertySheets">
@@ -690,7 +703,7 @@
     <TargetName>xinput1_3</TargetName>
     <OutDir>$(SolutionDir)Installer\Resources\$(Configuration)\</OutDir>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+  <PropertyGroup Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">
     <LinkIncremental>false</LinkIncremental>
     <PostBuildEventUseInBuild>true</PostBuildEventUseInBuild>
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);</IncludePath>
@@ -787,7 +800,7 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
       <Message>Deleting potentially problematic obj file</Message>
     </PreBuildEvent>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+  <ItemDefinitionGroup Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <PrecompiledHeader>Use</PrecompiledHeader>
@@ -884,11 +897,15 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
        up to date, and DeployToRocksmith shipped a Debug host (debug CRT, logging on) into
        the game folder - the host-side twin of the probe trap fixed the same morning. The
        historical packaging path now receives a copy from RELEASE builds only. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release Public' Or '$(Configuration)' == 'Release Developer'">
+    <OutDir>$(MSBuildThisFileDirectory)..\Installer\Resources\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)..\build\Native\$(Configuration)\</IntDir>
+  </PropertyGroup>
   <Target Name="PublishReleaseHost" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
     <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(SolutionDir)Installer\Resources\xinput1_3.dll" />
     <Copy SourceFiles="$(OutDir)$(TargetName).pdb" DestinationFiles="$(SolutionDir)Installer\Resources\xinput1_3.pdb" Condition="Exists('$(OutDir)$(TargetName).pdb')" />
   </Target>
-  <Target Name="DeployToRocksmith" AfterTargets="Build" Condition="Exists('$(RocksmithInstallDir)')">
+  <Target Name="DeployToRocksmith" AfterTargets="Build" Condition="Exists('$(RocksmithInstallDir)') And '$(Configuration)' != 'Release Public'">
     <PropertyGroup>
       <!-- Anchored to this project file, NOT $(SolutionDir): building DLL.vcxproj directly
            (msbuild on the project, no solution) leaves SolutionDir unset and the old path
@@ -909,6 +926,15 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
   <ImportGroup Label="ExtensionTargets">
     <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
   </ImportGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)' == 'Release Public'">
+    <ClCompile><PreprocessorDefinitions>RSMODS_PUBLIC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)' == 'Release Developer'">
+    <ClCompile><PreprocessorDefinitions>RSMODS_DEVELOPER_TOOLS;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+  </ItemDefinitionGroup>
+  <Target Name="GenerateDebugToolsIdentity" BeforeTargets="ClCompile" DependsOnTargets="ResolveProjectReferences" Condition="'$(Configuration)' != 'Release Public'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)Research\DebugTools\WriteIdentity.ps1&quot; -Library &quot;$(ProjectDir)..\Installer\Resources\Developer\$(Configuration)\rsmodsdebug.dll&quot; -Header &quot;$(IntDir)DebugToolsIdentity.hpp&quot;" />
+  </Target>
   <Import Project="Audio\ThirdParty\Aubio\Aubio.props" />
 </Project>
 

@@ -2956,7 +2956,7 @@ namespace RSMods
                     {
                         xs.Serialize(writer, TwitchSettings.Get.Rewards);
 
-                        string exePath = AppDomain.CurrentDomain.BaseDirectory;
+                        string exePath = System.Windows.Forms.Application.StartupPath;
                         string effectListPath = Path.Combine(exePath, "TwitchEnabledEffects.xml");
 
                         File.WriteAllText(effectListPath, sww.ToString());
@@ -3230,7 +3230,7 @@ namespace RSMods
         {
             try
             {
-                string exePath = AppDomain.CurrentDomain.BaseDirectory;
+                string exePath = System.Windows.Forms.Application.StartupPath;
                 string logPath = Path.Combine(exePath, "twitchLog.txt");
 
                 File.WriteAllText(logPath, TwitchSettings.Get.Log);

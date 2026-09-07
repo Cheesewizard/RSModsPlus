@@ -295,9 +295,29 @@
       <Version>3.1.5-CI-20200907-9</Version>
     </PackageReference>
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RSModsPlus\RSModsPlus.csproj">
+      <Project>{C92F58F4-75B9-4AE0-A722-8F63833EE42C}</Project>
+      <Name>RSModsPlus</Name>
+    </ProjectReference>
+    <Compile Include="MlModelVerifier.cs" />
+    <Compile Include="MlServiceHost.cs" />
+    <Compile Include="RuntimeBootstrap.cs" />
+    <Reference Include="System.IO.Compression" />
+    <EmbeddedResource Include="$(IntermediateOutputPath)BundledRuntime.zip">
+      <LogicalName>RSMods.BundledRuntime.zip</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+  <Target Name="BuildRuntimePayload" BeforeTargets="PrepareResources" DependsOnTargets="ResolveReferences">
+    <WriteLinesToFile File="$(IntermediateOutputPath)RuntimeReferences.txt" Lines="@(ReferenceCopyLocalPaths)" Overwrite="true" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildRuntimePayload.ps1&quot; -References &quot;$(ProjectDir)$(IntermediateOutputPath)RuntimeReferences.txt&quot; -Output &quot;$(ProjectDir)$(IntermediateOutputPath)BundledRuntime.zip&quot; -ProjectDirectory &quot;$(ProjectDir).&quot;" />
+  </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <Target Name="PlaceMainGameLibrary" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetDir)rsmodsplus.dll" DestinationFiles="$(TargetDir)..\rsmodsplus.dll" />
+  </Target>
   <PropertyGroup>
-    <PostBuildEvent>xcopy "$(ProjectDir)lib\*.*" "$(TargetDir)" /Y /I /E
+    <PostBuildEvent Condition="'$(PostBuildEventUseInBuild)' != 'false'">xcopy "$(ProjectDir)lib\*.*" "$(TargetDir)" /Y /I /E
 if not exist "$(TargetDir)\CustomMods" mkdir "$(TargetDir)\CustomMods"
 
 if exist  "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\RSMods" xcopy "$(TargetDir)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\RSMods" /Y /I /E

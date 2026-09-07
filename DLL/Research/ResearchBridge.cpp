@@ -1,5 +1,6 @@
 #include "../stdafx.h"
 #include "ResearchBridge.hpp"
+#include "DebugToolsLoader.hpp"
 
 #include "../Mods/NoteByNoteNativeScoring.hpp"
 #include "../Mods/NoteByNoteProbe.hpp"
@@ -31,10 +32,6 @@ extern "C" const ResearchProtocol::ProbeApi* __cdecl RSMP_GetResearchProbeApi(
 
 namespace
 {
-	constexpr char PIPE_NAME[] = R"(\\.\pipe\RSModsPlus.Research)";
-	constexpr char RESPONSE_ACKNOWLEDGEMENT[] = "ack";
-	constexpr ULONGLONG PIPE_IO_TIMEOUT_MILLISECONDS = 2000;
-	constexpr size_t MAX_COMMAND_BYTES = 64 * 1024;
 	constexpr size_t MAX_RETAINED_EVENTS = 2048;
 
 	struct ResearchEvent
@@ -197,7 +194,7 @@ namespace
 	uint64_t nextEventSequence = 1;
 	uint64_t loadSequence = 1;
 	std::atomic<bool> isStopping = false;
-	std::thread serverThread;
+	std::atomic<bool> debugToolsActive{ false };
 
 	// Direct memory access over the pipe, so "read this struct" and "flip this flag"
 	// experiments cost a command instead of a probe build. Lives in the bridge rather than
@@ -273,6 +270,7 @@ namespace
 
 	void PublishEvent(nlohmann::json value)
 	{
+		if (!debugToolsActive.load(std::memory_order_relaxed)) return;
 		std::lock_guard<std::mutex> lock(eventMutex);
 		value["sequence"] = nextEventSequence;
 		events.push_back({ nextEventSequence, std::move(value) });
@@ -1785,150 +1783,21 @@ namespace
 		return { { "ok", false }, { "error", "Unknown command: " + command } };
 	}
 
-	bool WritePipeBytes(HANDLE pipe, const char* data, size_t size)
+	uint32_t __cdecl HandleDebugRequest(const char* request, char* response, uint32_t capacity)
 	{
-		size_t offset = 0;
-		const auto deadline = GetTickCount64() + PIPE_IO_TIMEOUT_MILLISECONDS;
-		while (!isStopping && offset < size)
-		{
-			DWORD bytesWritten = 0;
-			const auto remaining = size - offset;
-			const auto chunkSize = static_cast<DWORD>((std::min)(remaining, static_cast<size_t>(16384)));
-			const auto didWrite = WriteFile(pipe, data + offset, chunkSize, &bytesWritten, nullptr) != FALSE;
-			if (didWrite && bytesWritten > 0)
-			{
-				offset += bytesWritten;
-				continue;
-			}
-
-			const auto error = GetLastError();
-			if ((!didWrite && error != ERROR_NO_DATA) || GetTickCount64() >= deadline) return false;
-			Sleep(1);
-		}
-		return offset == size;
-	}
-
-	void WaitForResponseAcknowledgement(HANDLE pipe)
-	{
-		std::string acknowledgement;
-		const auto deadline = GetTickCount64() + PIPE_IO_TIMEOUT_MILLISECONDS;
-		while (!isStopping && acknowledgement.size() <= sizeof(RESPONSE_ACKNOWLEDGEMENT) && GetTickCount64() < deadline)
-		{
-			char buffer[16];
-			DWORD bytesRead = 0;
-			if (ReadFile(pipe, buffer, sizeof(buffer), &bytesRead, nullptr))
-			{
-				acknowledgement.append(buffer, bytesRead);
-				const auto newline = acknowledgement.find('\n');
-				if (newline != std::string::npos)
-				{
-					acknowledgement.resize(newline);
-					if (acknowledgement == RESPONSE_ACKNOWLEDGEMENT) return;
-					return;
-				}
-				continue;
-			}
-
-			const auto error = GetLastError();
-			if (error != ERROR_NO_DATA) return;
-			Sleep(1);
-		}
-	}
-
-	void WriteResponse(HANDLE pipe, const std::string& response)
-	{
-		if (!WritePipeBytes(pipe, response.data(), response.size())) return;
-		if (!WritePipeBytes(pipe, "\n", 1)) return;
-		WaitForResponseAcknowledgement(pipe);
-	}
-
-	void ServeClient(HANDLE pipe)
-	{
-		std::string input;
-		input.reserve(4096);
-		while (!isStopping && input.size() < MAX_COMMAND_BYTES)
-		{
-			char buffer[4096];
-			DWORD bytesRead = 0;
-			if (ReadFile(pipe, buffer, sizeof(buffer), &bytesRead, nullptr))
-			{
-				input.append(buffer, bytesRead);
-				if (input.find('\n') != std::string::npos) break;
-				continue;
-			}
-
-			const auto error = GetLastError();
-			if (error == ERROR_NO_DATA)
-			{
-				Sleep(10);
-				continue;
-			}
-			if (error == ERROR_BROKEN_PIPE) break;
-			WriteResponse(pipe, nlohmann::json({ { "ok", false }, { "error", "Pipe read failed" } }).dump());
-			return;
-		}
-
-		if (input.size() >= MAX_COMMAND_BYTES)
-		{
-			WriteResponse(pipe, nlohmann::json({ { "ok", false }, { "error", "Command is too large" } }).dump());
-			return;
-		}
-
 		try
 		{
-			const auto newline = input.find('\n');
-			if (newline != std::string::npos) input.resize(newline);
-			WriteResponse(pipe, HandleCommand(nlohmann::json::parse(input)).dump());
+			const auto result = HandleCommand(nlohmann::json::parse(request)).dump();
+			if (result.size() >= capacity) return 0;
+			std::memcpy(response, result.c_str(), result.size() + 1);
+			return static_cast<uint32_t>(result.size());
 		}
 		catch (const std::exception& exception)
 		{
-			WriteResponse(pipe, nlohmann::json({ { "ok", false }, { "error", exception.what() } }).dump());
-		}
-	}
-
-	void RunServer()
-	{
-		while (!isStopping)
-		{
-			const auto pipe = CreateNamedPipeA(
-				PIPE_NAME,
-				PIPE_ACCESS_DUPLEX,
-				PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT,
-				1,
-				64 * 1024,
-				64 * 1024,
-				0,
-				nullptr);
-			if (pipe == INVALID_HANDLE_VALUE)
-			{
-				LOG_ERROR("(RESEARCH BRIDGE) CreateNamedPipe failed with error " << GetLastError()
-					<< "." << std::endl);
-				return;
-			}
-
-			bool isConnected = false;
-			while (!isStopping && !isConnected)
-			{
-				isConnected = ConnectNamedPipe(pipe, nullptr) != FALSE;
-				if (isConnected) break;
-				const auto error = GetLastError();
-				if (error == ERROR_PIPE_CONNECTED)
-				{
-					isConnected = true;
-					break;
-				}
-				if (error != ERROR_PIPE_LISTENING && error != ERROR_NO_DATA)
-				{
-					LOG_ERROR("(RESEARCH BRIDGE) ConnectNamedPipe failed with error " << error
-						<< "." << std::endl);
-					break;
-				}
-				Sleep(25);
-			}
-
-			if (isConnected) ServeClient(pipe);
-			DisconnectNamedPipe(pipe);
-			CloseHandle(pipe);
+			const auto result = nlohmann::json({ { "ok", false }, { "error", exception.what() } }).dump();
+			if (result.size() >= capacity) return 0;
+			std::memcpy(response, result.c_str(), result.size() + 1);
+			return static_cast<uint32_t>(result.size());
 		}
 	}
 }
@@ -1939,7 +1808,7 @@ void ResearchBridge::Initialize()
 	// Mirror host log lines onto the event stream while the bridge is up. The host services and the
 	// in-process controller both run without the bridge in a shipping build; this only adds the
 	// research telemetry side on top.
-	NoteByNoteHostServices::SetLogTelemetrySink(&MirrorHostLogToEvents);
+
 	std::string error;
 	// The scoring engine ships inside this module, so the controller comes up in-process at startup.
 	// A research session can still hot-swap a reloadable probe DLL over it through the reload_probe
@@ -1950,15 +1819,27 @@ void ResearchBridge::Initialize()
 			<< error << "." << std::endl);
 	}
 
-	serverThread = std::thread(RunServer);
-	watchThread = std::thread(RunMemoryWatcher);
-	LOG_INFO("(RESEARCH BRIDGE) Listening on " << PIPE_NAME << "." << std::endl);
+	const DebugHostApi api = { 1, sizeof(DebugHostApi), &HandleDebugRequest };
+	debugToolsActive.store(DebugToolsLoader::Start(api));
+	if (debugToolsActive.load())
+	{
+		NoteByNoteHostServices::SetLogTelemetrySink(&MirrorHostLogToEvents);
+		watchThread = std::thread(RunMemoryWatcher);
+		LOG_INFO("(DEBUG TOOLS) Verified private debug DLL activated the local bridge." << std::endl);
+	}
+	else
+	{
+		isNativeDrawFeedEnabled.store(false);
+		isFullDrawFeedEnabled.store(false);
+		LOG_INFO("(DEBUG TOOLS) No active debug DLL. Gameplay runs without developer endpoints." << std::endl);
+	}
 }
 
 void ResearchBridge::Shutdown()
 {
 	isStopping = true;
-	if (serverThread.joinable()) serverThread.join();
+	DebugToolsLoader::Stop();
+	debugToolsActive.store(false);
 	if (watchThread.joinable()) watchThread.join();
 	NoteByNoteHostServices::SetLogTelemetrySink(nullptr);
 

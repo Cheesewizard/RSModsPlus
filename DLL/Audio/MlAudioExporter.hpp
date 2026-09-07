@@ -44,14 +44,17 @@ namespace MlAudioExporter
 		float resultConfidence;
 		uint32_t resultPad;
 		uint64_t resultSampleIndexAtWindowEnd;
-		uint32_t reserved[4];
+		uint32_t expectationSequence;
+		int32_t expectedString;
+		int32_t expectedMidi;
+		uint32_t expectationTick;
 	};
 #pragma pack(pop)
 
 	constexpr uint32_t ML_AUDIO_MAGIC = 0x4C4D5352u; // "RSML" read as little-endian bytes
-	constexpr uint32_t ML_AUDIO_VERSION = 1;
+	constexpr uint32_t ML_AUDIO_VERSION = 2;
 	constexpr uint32_t ML_AUDIO_RING_SAMPLES = 1u << 17; // ~2.7 s at 48 kHz
-	constexpr char ML_AUDIO_MAPPING_NAME[] = "Local\\RSModsPlus.MlAudio.v1";
+	constexpr char ML_AUDIO_MAPPING_NAME[] = "Local\\RSModsPlus.MlAudio.v2";
 
 	// Game-loop pump (normal thread): creates the mapping on first call - the audio
 	// thread must never allocate or take the loader lock, so all setup happens here -

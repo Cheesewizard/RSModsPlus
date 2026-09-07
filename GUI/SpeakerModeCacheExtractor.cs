@@ -93,7 +93,7 @@ namespace RSMods
 				// WEMs, which carry only known chunks.
 				WriteWw2oggCompatibleWem(wemPath, cleanedWemPath);
 
-				var toolsDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tools");
+				var toolsDirectory = Path.Combine(RuntimeBootstrap.DirectoryPath, "tools");
 				RunTool(
 					Path.Combine(toolsDirectory, "ww2ogg.exe"),
 					$"\"{cleanedWemPath}\" -o \"{oggPath}\" --pcb \"{Path.Combine(toolsDirectory, "packed_codebooks_aoTuV_603.bin")}\"");
