@@ -33,6 +33,8 @@
     <ClCompile Include="Audio\MlServiceLauncher.cpp" />
     <ClCompile Include="Audio\MlStringFretReader.cpp" />
     <ClCompile Include="Audio\RawPitchVerifier.cpp" />
+    <ClCompile Include="Audio\SharedOutput.cpp" />
+    <ClCompile Include="Audio\GameAudioRecorder.cpp" />
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp" />
     <ClCompile Include="Audio\SongShift\WwiseMusicHook.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../../stdafx.h</PrecompiledHeaderFile>
@@ -321,6 +323,10 @@
     <ClInclude Include="Audio\MlStringFretReader.hpp" />
     <ClInclude Include="Audio\MlFretDisplay.hpp" />
     <ClInclude Include="Audio\RawPitchVerifier.hpp" />
+    <ClInclude Include="Audio\SharedOutput.hpp" />
+    <ClInclude Include="Audio\GameAudioRecorder.hpp" />
+    <ClInclude Include="Audio\AudioPacketQueue.hpp" />
+    <ClInclude Include="Audio\AudioControl.hpp" />
     <ClInclude Include="Audio\CaptureFormat.h" />
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp" />
     <ClInclude Include="Audio\SongShift\WwiseMusicHook.hpp" />
@@ -751,6 +757,7 @@
     </Link>
     <PostBuildEvent>
       <Command>
+IF /I "$(DeployToGame)"=="true" IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
 if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
 copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
 copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
@@ -790,6 +797,7 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     </Link>
     <PostBuildEvent>
       <Command>
+IF /I "$(DeployToGame)"=="true" IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
 if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
 copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
 copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
@@ -836,6 +844,7 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     </Link>
     <PostBuildEvent>
       <Command>
+IF /I "$(DeployToGame)"=="true" IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
 if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
 copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
 copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"
@@ -881,6 +890,7 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     </Link>
     <PostBuildEvent>
       <Command>
+IF /I "$(DeployToGame)"=="true" IF EXIST "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014" copy /Y "$(TargetPath)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\xinput1_3.dll"
 if not exist "$(BuildArchiveDir)" mkdir "$(BuildArchiveDir)"
 copy /Y "$(OutDir)$(TargetName).dll" "$(BuildArchiveDir)\"
 copy /Y "$(OutDir)$(TargetName).pdb" "$(BuildArchiveDir)\"

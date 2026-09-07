@@ -8,6 +8,7 @@ and new practice tools for Rocksmith 2014 on Windows.
 - **Drop Pedal** — shift your guitar to match the song.
 - **Note by Note** — practise at your own pace, with machine learning assisted note detection.
 - **Speaker Mode** — shift the song to match your guitar.
+- **Audio bridge** — mixing, recording and a steadier audio setup.
 
 [Download](https://github.com/Cheesewizard/RSModsPlus/releases) ·
 [Getting started](#getting-started) ·
@@ -82,6 +83,30 @@ physical tuning before starting; Speaker Mode locks pitch changes during gamepla
 
 <!-- MEDIA: Short before-and-after video using the same song passage, with the
 physical guitar audible. Keep the Speaker: Eb -> E (+1) readout visible. -->
+
+## Audio bridge
+
+RSModsPlus can carry Rocksmith's playback itself instead of leaving it to the
+game, which is what makes mixing, recording and device changes possible while a
+song is running. The bridge opens from the settings app and talks to the running
+game, so changes apply as you play.
+
+**Mixing.** The mixer carries the seven channels Rocksmith mixes: **master**,
+**both players**, **song**, **effects**, **voice-over** and **microphone**. Turn
+the backing track down to hear yourself, or mute a channel outright. This moves
+playback volume only; your guitar signal and note detection are untouched.
+
+**Recording.** Takes capture the game's own audio to WAV, or to MP4 alongside
+the Rocksmith window, so a recording sounds exactly like what you heard.
+
+**A steadier setup.** Choose which device the game plays through without
+restarting it, and test the output buffer to find a period the device holds
+cleanly instead of guessing at one.
+
+[Design notes](docs/designs/shared-audio-routing.md)
+
+<!-- MEDIA: Screenshot of the Mixer tab with a take running, plus a short clip
+of a recorded take played back. -->
 
 ## Getting started
 

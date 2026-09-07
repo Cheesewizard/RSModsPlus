@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "CableInput.hpp"
+#include "SharedOutput.hpp"
 #include "ComVTable.hpp"
 
 #include <functiondiscoverykeys_devpkey.h>
@@ -56,10 +57,14 @@ namespace Audio::CableInput
 		MmDeviceActivate_t originalActivate = nullptr;
 		// Set only while THIS thread is inside a PortAudio open, so the Activate wrapper never
 		// touches PortAudio's enumeration probes. Input-only opens get the modern capture
-		// client; output-only opens (the Wwise sink) get a passive monitor that only observes.
+		// client; output-only opens (the Wwise sink) are taken by the shared output adapter when
+		// audio routing is enabled, and otherwise may get the passive monitor that only observes.
 		thread_local bool wrapCaptureActivation = false;
+		thread_local bool wrapOutputActivation = false;
 		thread_local bool monitorRenderActivation = false;
-		bool modernInputEnabled = false;
+		bool modernInputEnabled = true;
+		bool inputOwnedByAsio = false;
+		SharedOutput::Configuration routingConfiguration;
 		// Output monitoring is OFF by default: two launches with it on (2026-09-05, build
 		// 8bb14663) stalled before the profile screen with no PortAudio processing thread ever
 		// created and one thread parked inside a COM call. Enable with RSMods.ini
@@ -1214,7 +1219,7 @@ namespace Audio::CableInput
 		{
 			const HRESULT hr = originalActivate(self, iid, clsContext, activationParams, ppv);
 			if (FAILED(hr) || !ppv || !*ppv || iid != __uuidof(IAudioClient)
-				|| (!wrapCaptureActivation && !monitorRenderActivation))
+				|| (!wrapCaptureActivation && !wrapOutputActivation && !monitorRenderActivation))
 				return hr;
 
 			EDataFlow flow = eRender;
@@ -1227,11 +1232,49 @@ namespace Audio::CableInput
 
 			if (flow == eCapture && wrapCaptureActivation)
 			{
-				auto* wrapper = new ModernAudioClient(static_cast<IAudioClient*>(*ppv), self);
-				*ppv = static_cast<IAudioClient*>(wrapper);
+				IMMDevice* selected = self;
+				if (routingConfiguration.enabled && !routingConfiguration.inputDeviceId.empty())
+				{
+					IMMDeviceEnumerator* enumerator = nullptr;
+					HRESULT result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+						__uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator));
+					if (SUCCEEDED(result))
+					{
+						result = enumerator->GetDevice(routingConfiguration.inputDeviceId.c_str(), &selected);
+						enumerator->Release();
+					}
+					static_cast<IAudioClient*>(*ppv)->Release();
+					*ppv = nullptr;
+					if (FAILED(result)) return result;
+					IMMEndpoint* selectedEndpoint = nullptr;
+					result = selected->QueryInterface(__uuidof(IMMEndpoint), reinterpret_cast<void**>(&selectedEndpoint));
+					EDataFlow selectedFlow = eAll;
+					if (SUCCEEDED(result)) { result = selectedEndpoint->GetDataFlow(&selectedFlow); selectedEndpoint->Release(); }
+					if (FAILED(result) || selectedFlow != eCapture) { selected->Release(); return FAILED(result) ? result : E_INVALIDARG; }
+					result = originalActivate(selected, iid, clsContext, activationParams, ppv);
+					if (FAILED(result)) { selected->Release(); return result; }
+				}
+				*ppv = static_cast<IAudioClient*>(new ModernAudioClient(static_cast<IAudioClient*>(*ppv), selected));
+				if (routingConfiguration.enabled && !routingConfiguration.inputDeviceId.empty()) selected->Release();
+			}
+			else if (flow == eRender && wrapOutputActivation)
+			{
+				std::wstring endpointId = routingConfiguration.outputDeviceId;
+				if (endpointId.empty())
+				{
+					LPWSTR id = nullptr;
+					const HRESULT result = self->GetId(&id);
+					if (FAILED(result)) return result;
+					endpointId = id;
+					CoTaskMemFree(id);
+				}
+				static_cast<IAudioClient*>(*ppv)->Release();
+				*ppv = nullptr;
+				return SharedOutput::CreateClient(endpointId, reinterpret_cast<IAudioClient**>(ppv));
 			}
 			else if (flow == eRender && monitorRenderActivation)
 			{
+				// Diagnostic only, and only when routing did not already claim the render open.
 				auto* monitor = new OutputMonitorClient(static_cast<IAudioClient*>(*ppv), self);
 				*ppv = static_cast<IAudioClient*>(monitor);
 			}
@@ -1297,9 +1340,10 @@ namespace Audio::CableInput
 				: nullptr;
 			const bool inputOnlyOpen = inputParameters != nullptr && outputParameters == nullptr && streamInfo != nullptr;
 			const bool outputOnlyOpen = inputParameters == nullptr && outputParameters != nullptr;
-			if (outputOnlyOpen && outputMonitorEnabled && modernInputEnabled && EnsureActivateHook())
+			if (outputOnlyOpen && outputMonitorEnabled && modernInputEnabled && !routingConfiguration.enabled && EnsureActivateHook())
 			{
-				// The Wwise sink: observe only. Nothing about the open changes.
+				// The Wwise sink: observe only. Nothing about the open changes. Skipped when
+				// audio routing owns the render open below.
 				monitorRenderActivation = true;
 				const int result = originalPaOpenStream(stream, inputParameters, outputParameters, sampleRate,
 					framesPerBuffer, streamFlags, streamCallback, userData);
@@ -1309,7 +1353,26 @@ namespace Audio::CableInput
 					<< " frames " << framesPerBuffer << " -> result " << result << std::endl);
 				return result;
 			}
-			if (!inputOnlyOpen)
+			if (outputOnlyOpen && routingConfiguration.enabled)
+			{
+				if (!outputParameters->hostApiSpecificStreamInfo || !EnsureActivateHook()) return -9999;
+				PaStreamParameters parameters = *outputParameters;
+				const auto* callerInfo = static_cast<const PaWasapiStreamInfo*>(parameters.hostApiSpecificStreamInfo);
+				if (callerInfo->size < offsetof(PaWasapiStreamInfo, flags) + sizeof(callerInfo->flags) || callerInfo->size > 4096) return -9999;
+				// Preserve fields added after the prefix known to this mod.
+				std::vector<byte> infoStorage(callerInfo->size);
+				std::memcpy(infoStorage.data(), callerInfo, callerInfo->size);
+				auto* info = reinterpret_cast<PaWasapiStreamInfo*>(infoStorage.data());
+				info->flags |= PA_WASAPI_EXCLUSIVE;
+				parameters.hostApiSpecificStreamInfo = info;
+				wrapOutputActivation = true;
+				const int result = originalPaOpenStream(stream, inputParameters, &parameters, sampleRate,
+					framesPerBuffer, streamFlags, streamCallback, userData);
+				wrapOutputActivation = false;
+				LOG_INFO("(AUDIO ROUTING) Shared output open result " << result << std::endl);
+				return result;
+			}
+			if (!inputOnlyOpen || inputOwnedByAsio)
 			{
 				return originalPaOpenStream(stream, inputParameters, outputParameters, sampleRate,
 					framesPerBuffer, streamFlags, streamCallback, userData);
@@ -1337,7 +1400,7 @@ namespace Audio::CableInput
 				}
 			}
 
-			if (result != 0)
+			if (result != 0 && !routingConfiguration.enabled)
 			{
 				// Last resort (issue #76 fix, kept as the floor): the cable has no exclusive
 				// input format, so strip the exclusive bit and let PortAudio open legacy shared.
@@ -1369,14 +1432,14 @@ namespace Audio::CableInput
 			GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
 			const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
 			char value[16] = {};
-			GetPrivateProfileStringA("Mod Settings", "ModernCableInput", "off", value, sizeof(value), iniPath.c_str());
+			GetPrivateProfileStringA("Mod Settings", "ModernCableInput", "on", value, sizeof(value), iniPath.c_str());
 			char monitor[16] = {};
 			GetPrivateProfileStringA("Mod Settings", "MonitorOutput", "off", monitor, sizeof(monitor), iniPath.c_str());
 			outputMonitorEnabled = _stricmp(monitor, "on") == 0;
 			char overlay[16] = {};
 			GetPrivateProfileStringA("Mod Settings", "AudioDiagnosticsOverlay", "on", overlay, sizeof(overlay), iniPath.c_str());
 			overlayEnabled = _stricmp(overlay, "off") != 0;
-			return _stricmp(value, "on") == 0;
+			return _stricmp(value, "off") != 0;
 		}
 
 		// The game writes its own view of both streams to audiodump.txt at start-up (when
@@ -1417,7 +1480,7 @@ namespace Audio::CableInput
 			};
 
 			std::lock_guard<std::mutex> guard(statusMutex);
-			if (!outputLine.empty())
+			if (!outputLine.empty() && !routingConfiguration.enabled)
 			{
 				diagnostics.outputLatencyMs = parseLatency(outputLine);
 				diagnostics.outputExclusive = outputLine.find("exclusive[ YES ]") != std::string::npos;
@@ -1433,11 +1496,25 @@ namespace Audio::CableInput
 		if (installed) return;
 		installed = true;
 
+		// Hold the 1 ms system timer for the life of the process, as most games do. The
+		// stock polled cable path sleeps between polls and wakes on this timer, so its
+		// hand-off delay follows the timer resolution: about 15.6 ms at the Windows default
+		// tick, about 1 ms while any process holds a 1 ms timer. Holding it here makes the
+		// stock path (and every other sleep in the game) behave the same on every machine,
+		// whether or not the modern client is in use. Never released: the OS drops the
+		// request when the process exits.
+		if (timeBeginPeriod(1) == TIMERR_NOERROR)
+			LOG_INFO("(CABLE INPUT) Holding the 1 ms system timer for the game's lifetime" << std::endl);
+		else
+			LOG_WARNING("(CABLE INPUT) Could not request the 1 ms system timer; the stock polled input follows the default tick" << std::endl);
+
 		char executablePath[MAX_PATH];
 		GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
 		const auto gameDir = std::filesystem::path(executablePath).parent_path();
+		routingConfiguration = SharedOutput::ReadConfiguration();
 		if (std::filesystem::exists(gameDir / "RS_ASIO.dll"))
 		{
+			inputOwnedByAsio = true;
 			asioPath.store(true, std::memory_order_release);
 			SetStatus("RS_ASIO owns the input");
 			ReadModernInputSetting();   // still honours the overlay switch
@@ -1446,24 +1523,23 @@ namespace Audio::CableInput
 				diagnostics.rsAsio = true;
 			}
 			LOG_INFO("(CABLE INPUT) RS_ASIO present; leaving the input path to it" << std::endl);
-			return;
+			if (!routingConfiguration.enabled) return;
+			const auto asioSettings = (gameDir / "RS_ASIO.ini").string();
+			char outputDriver[512]{};
+			GetPrivateProfileStringA("Asio.Output", "Driver", "", outputDriver, sizeof(outputDriver), asioSettings.c_str());
+			if (GetPrivateProfileIntA("Config", "EnableWasapiOutputs", 0, asioSettings.c_str()) != 1 || outputDriver[0] != '\0'
+				|| !routingConfiguration.inputDeviceId.empty())
+			{
+				LOG_ERROR("(AUDIO ROUTING) RS_ASIO must use EnableWasapiOutputs=1 and an empty Asio.Output Driver; input selection stays with RS_ASIO. Routing was not installed." << std::endl);
+				return;
+			}
 		}
 
-		modernInputEnabled = ReadModernInputSetting();
-		if (!modernInputEnabled)
-		{
-			SetStatus("Modern Cable input off; input opening unchanged");
-			LOG_INFO("(CABLE INPUT) ModernCableInput=off; input opening unchanged" << std::endl);
-			return;
-		}
-
-		// Keep timing adjustments inside the experimental opt-in. The OS releases the
-		// timer request when the process exits.
-		if (timeBeginPeriod(1) == TIMERR_NOERROR)
-			LOG_INFO("(CABLE INPUT) Holding the 1 ms system timer for the game's lifetime" << std::endl);
-		else
-			LOG_WARNING("(CABLE INPUT) Could not request the 1 ms system timer; the stock polled input follows the default tick" << std::endl);
-
+		const bool requestedModernInput = ReadModernInputSetting();
+		modernInputEnabled = !inputOwnedByAsio && (requestedModernInput || routingConfiguration.enabled);
+		if (!requestedModernInput)
+			LOG_INFO("(CABLE INPUT) ModernCableInput=off; the capture client stands down"
+				<< (routingConfiguration.enabled ? ", audio routing still opens the output" : ", input opening unchanged") << std::endl);
 		auto* target = reinterpret_cast<byte*>(Offsets::func_PortAudioOpenStream.Get());
 		if (target == nullptr)
 		{
@@ -1481,13 +1557,15 @@ namespace Audio::CableInput
 			return;
 		}
 
-		SetStatus("armed, waiting for the game to open its input");
+		SetStatus(inputOwnedByAsio ? "ASIO input; shared output armed" :
+			(modernInputEnabled ? "armed, waiting for the game to open its input" : "legacy shared input (ModernCableInput=off)"));
 		{
 			std::lock_guard<std::mutex> guard(statusMutex);
 			diagnostics.installed = true;
 		}
 		LOG_INFO("(CABLE INPUT) Pa_OpenStream detoured; "
-			<< "experimental modern capture client enabled"
+			<< (modernInputEnabled ? "modern capture client enabled" : "ModernCableInput=off, legacy shared input only")
+			<< (routingConfiguration.enabled ? "; shared output enabled" : "; game output unchanged")
 			<< (outputMonitorEnabled ? "; output monitor ON (MonitorOutput=on)" : "; output monitor off")
 			<< std::endl);
 	}

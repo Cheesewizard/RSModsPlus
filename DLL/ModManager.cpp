@@ -7,6 +7,7 @@
 #include "Audio/CableInput.hpp"
 #include "OverlayToggles.hpp"
 #include "Audio/SongShift/WwiseMusicHook.hpp"
+#include "Audio/CableInput.hpp"
 
 namespace ModManager {
 	void InitializeConfiguration() {
@@ -28,6 +29,9 @@ namespace ModManager {
 		BugPrevention::PreventExtraAudioDevicesCrash();
 		// Modern WASAPI capture for the Real Tone Cable (issue #76): replaces the game's
 		// legacy exclusive/shared input open so the cable works regardless of Rocksmith.ini.
+		Audio::CableInput::Install();
+
+		// Modern WASAPI capture for the Real Tone Cable (issue #76).
 		Audio::CableInput::Install();
 
 		if (Settings::ReturnSettingValue("FixBrokenTones") == "on") {

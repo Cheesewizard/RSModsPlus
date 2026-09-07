@@ -1,6 +1,8 @@
 #pragma once
 
 namespace VolumeControl {
+	bool GetPlaybackVolume(unsigned int channel, float& volume);
+	bool SetPlaybackVolume(unsigned int channel, float volume);
 	void IncreaseVolume(int amountToIncrease, std::string mixerToIncrease);
 	void DecreaseVolume(int amountToDecrease, std::string mixerToDecrease);
 	void MutePlayer(bool player2 = false);

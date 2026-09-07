@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using RSMods.Util;
 
 #pragma warning disable IDE0052
@@ -35,6 +35,7 @@ namespace RSMods
                              AllowAudioInBackground, BypassTwoRTCMessageBox, LinearRiffRepeater, UseAlternativeOutputSampleRate, AllowLooping, AllowRewind, FixOculusCrash, FixBrokenTones, UseCustomNSPTimer, DisplayCurrentAccuracy, PreventMidSongPause, RemoveFingerprints,
                              DropPedalEnabled, DropPedalCustomOverlayColors,
                              DropPedalOverlayDownColor, DropPedalOverlayUpColor, DropPedalOverlayStatusColor,
+                             DropPedalPlayer1AsioChannel, DropPedalPlayer2AsioChannel,
                              ModernCableInput, MonitorOutput, AudioDiagnosticsOverlay,
 
 
@@ -180,6 +181,8 @@ namespace RSMods
             DropPedalOverlayDownColorIdentifier          = "OverlayDownColor = ",
             DropPedalOverlayUpColorIdentifier            = "OverlayUpColor = ",
             DropPedalOverlayStatusColorIdentifier        = "OverlayStatusColor = ",
+            DropPedalPlayer1AsioChannelIdentifier        = "Player1AsioChannel = ",
+            DropPedalPlayer2AsioChannelIdentifier        = "Player2AsioChannel = ",
             ModernCableInputIdentifier                   = "ModernCableInput = ",
             MonitorOutputIdentifier                      = "MonitorOutput = ",
             AudioDiagnosticsOverlayIdentifier            = "AudioDiagnosticsOverlay = ",
@@ -320,8 +323,12 @@ namespace RSMods
                 return "FFC24D";
             if (identifierToGrab == DropPedalOverlayStatusColorIdentifier)
                 return "FFFFFF";
+            if (identifierToGrab == DropPedalPlayer1AsioChannelIdentifier)
+                return "-1";
+            if (identifierToGrab == DropPedalPlayer2AsioChannelIdentifier)
+                return "-1";
             if (identifierToGrab == ModernCableInputIdentifier)
-                return "off";
+                return "on";
             if (identifierToGrab == MonitorOutputIdentifier)
                 return "off";
             if (identifierToGrab == AudioDiagnosticsOverlayIdentifier)

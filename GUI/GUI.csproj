@@ -146,6 +146,30 @@
     <Compile Include="Twitch\TwitchReward.cs" />
     <Compile Include="Twitch\TwitchSettings.cs" />
     <Compile Include="Twitch\Auth\WebServer.cs" />
+    <Compile Include="Audio\AudioRoutingPanel.cs" />
+    <Compile Include="Audio\MixerStrip.cs" />
+    <Compile Include="Audio\MixerGroup.cs" />
+    <Compile Include="Audio\MixerChannels.cs" />
+    <Compile Include="Audio\ChannelMeter.cs" />
+    <Compile Include="Audio\StudioSelector.cs" />
+    <Compile Include="Audio\StudioTabs.cs" />
+    <Compile Include="Audio\StudioVolumeSlider.cs" />
+    <Compile Include="Audio\WindowCaptureRecorder.cs" />
+    <Compile Include="Audio\StudioTheme.cs" />
+    <Compile Include="Audio\StudioButton.cs" />
+    <Compile Include="Audio\StatusChip.cs" />
+    <Compile Include="Audio\SegmentedControl.cs" />
+    <Compile Include="Audio\StudioCard.cs" />
+    <Compile Include="Audio\LevelMeter.cs" />
+    <Compile Include="Audio\TakeList.cs" />
+    <Compile Include="Audio\StudioFormat.cs" />
+    <Compile Include="Audio\AudioControlClient.cs" />
+    <Compile Include="Audio\AudioBufferTuner.cs" />
+    <Compile Include="Audio\AudioInputMode.cs" />
+    <Compile Include="Audio\AsioOutputConfiguration.cs" />
+    <Compile Include="Audio\AudioRoutingWindow.cs" />
+    <Compile Include="UI.AudioRouting.cs" />
+    <Compile Include="Audio\AudioDeviceChoice.cs" />
     <Compile Include="UI.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -317,11 +341,17 @@
   <Target Name="PlaceMainGameLibrary" AfterTargets="Build">
     <Copy SourceFiles="$(TargetDir)rsmodsplus.dll" DestinationFiles="$(TargetDir)..\rsmodsplus.dll" />
   </Target>
+  <Target Name="PlaceWindowCapture" AfterTargets="Build">
+    <Copy SourceFiles="$(ProjectDir)Native\bin\rswindowcapture.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="BuildWindowCapture" BeforeTargets="PrepareForBuild">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildWindowCapture.ps1&quot; -OutputDirectory &quot;$(ProjectDir)Native\bin&quot;" />
+  </Target>
   <PropertyGroup>
     <PostBuildEvent Condition="'$(PostBuildEventUseInBuild)' != 'false'">xcopy "$(ProjectDir)lib\*.*" "$(TargetDir)" /Y /I /E
 if not exist "$(TargetDir)\CustomMods" mkdir "$(TargetDir)\CustomMods"
 
-if exist  "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\RSMods" xcopy "$(TargetDir)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\RSMods" /Y /I /E
+if /I "$(DeployToGame)"=="true" if exist  "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\RSMods" xcopy "$(TargetDir)" "C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014\RSMods" /Y /I /E
 </PostBuildEvent>
   </PropertyGroup>
 </Project>

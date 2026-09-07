@@ -348,6 +348,12 @@
     <ClCompile Include="Audio\MlServiceLauncher.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Audio\SharedOutput.cpp">
+      <Filter>Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="Audio\GameAudioRecorder.cpp">
+      <Filter>Audio</Filter>
+    </ClCompile>
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -739,6 +745,18 @@
     </ClInclude>
     <ClInclude Include="Audio\MlServiceControl.hpp">
       <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\SharedOutput.hpp">
+      <Filter>Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\GameAudioRecorder.hpp">
+      <Filter>Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\AudioPacketQueue.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\AudioControl.hpp">
+      <Filter>Audio</Filter>
     </ClInclude>
     <ClInclude Include="Audio\DelayLinePitchShifter.hpp">
       <Filter>Main Headers</Filter>

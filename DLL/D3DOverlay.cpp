@@ -1094,6 +1094,7 @@ void GameOverlay::RenderOverlay(IDirect3DDevice9* device) {
 		static DropPedal::Overlay dropPedalOverlay;
 		dropPedalOverlay.Render(cachedFont, WindowSize);
 		DisplaySongAccuracy();
+		DisplayAudioDiagnostics();
 
 		HandleLooping();
 	}

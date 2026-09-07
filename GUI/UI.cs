@@ -180,6 +180,7 @@ namespace RSMods
         {
             InitializeComponent();
             InitializeMlServiceControls();
+            AddAudioRoutingButton();
             Text = $"{Text}-{Assembly.GetExecutingAssembly().GetName().Version}"; // Show version number in the title of the application.
         }
 
@@ -725,6 +726,9 @@ namespace RSMods
             checkBox_RainbowNotes.Checked = ReadSettings.ProcessSettings(ReadSettings.RainbowNotesEnabledIdentifier) == "on";
             checkBox_WhammyFiveChordsMode.Checked = ReadSettings.ProcessSettings(ReadSettings.ChordsModeIdentifier) == "on";
             checkBox_ShowCurrentNote.Checked = ReadSettings.ProcessSettings(ReadSettings.ShowCurrentNoteOnScreenIdentifier) == "on";
+            checkBox_ModernCableInput.Checked = ReadSettings.ProcessSettings(ReadSettings.ModernCableInputIdentifier) != "off";
+            checkBox_AudioDiagnosticsOverlay.Checked = ReadSettings.ProcessSettings(ReadSettings.AudioDiagnosticsOverlayIdentifier) == "on";
+            RSModsPlus_RefreshAudioStatus(null, EventArgs.Empty);
             checkBox_CustomHighway.Checked = ReadSettings.ProcessSettings(ReadSettings.CustomHighwayColorsIdentifier) == "on";
             checkBox_SecondaryMonitor.Checked = ReadSettings.ProcessSettings(ReadSettings.SecondaryMonitorIdentifier) == "on";
             checkBox_NoteColors_UseRocksmithColors.Checked = ReadSettings.ProcessSettings(ReadSettings.SeparateNoteColorsModeIdentifier) == "1";
@@ -2113,7 +2117,7 @@ namespace RSMods
 
                 report.AppendLine();
                 report.AppendLine("RSMods_debug.txt (this launch):");
-                AppendMatchingLines(report, Path.Combine(rsDir, "RSMods_debug.txt"), new[] { "(CABLE INPUT)", "(OUTPUT)", "[AsioHook]", "[InputCapture]", "[ERROR]" }, 25);
+                AppendMatchingLines(report, Path.Combine(rsDir, "RSMods_debug.txt"), new[] { "(CABLE INPUT)", "(OUTPUT)", "(AUDIO ROUTING)", "[AsioHook]", "[InputCapture]", "[ERROR]" }, 25);
 
                 report.AppendLine();
                 report.AppendLine("How to read it: no \"Input alive\" line = the cable stream never delivered audio; \"stalled\" = the device dropped mid-session;");
