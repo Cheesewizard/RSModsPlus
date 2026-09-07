@@ -20,6 +20,8 @@ namespace Audio
 		constexpr uint32_t DECIMATION = 4;
 		constexpr uint32_t DECIMATED_RING = 1024;
 		constexpr uint32_t DETECT_INTERVAL_SAMPLES = 256;
+		constexpr uint32_t PITCH_RELEASE_DETECTIONS = 8;
+		constexpr float MINIMUM_PITCH_DETECTION_LEVEL = 0.0005f;
 
 		// 256 decimated samples is ~21ms, about 1.5 periods of a drop-shifted low E.
 		// Anything shorter tracks the low strings badly, which shows up directly as
@@ -45,12 +47,6 @@ namespace Audio
 		constexpr float ACQUIRE_CONFIDENCE = 0.4f;
 		constexpr float TRACK_CONFIDENCE = 0.6f;
 
-		// Splice quality gates, in AlignJump's normalized units (0 identical segments,
-		// ~1 uncorrelated). An up-shift may wait briefly above DEFER_QUALITY because its
-		// tap is approaching the write head. A down-shift commits immediately so a poor
-		// match cannot become additional player-visible delay. Above EXTEND_QUALITY the
-		// splice uses a longer crossfade so residual misalignment smears into softness
-		// instead of a pop. Tuned against the harness in Tests/ShifterHarness.
 		constexpr float DEFER_QUALITY = 0.5f;
 		constexpr float EXTEND_QUALITY = 0.25f;
 
@@ -70,8 +66,22 @@ namespace Audio
 		ratio.store(SemitonesToRatio(semitones), std::memory_order_relaxed);
 	}
 
-	void DelayLinePitchShifter::Prepare(const CaptureFormat&)
+	void DelayLinePitchShifter::SetPitchDetectionEnabled(bool enabled)
 	{
+		isPitchDetectionEnabled.store(enabled, std::memory_order_release);
+		detectedMidi.store(-1, std::memory_order_release);
+		missedPitchDetections.store(0, std::memory_order_relaxed);
+	}
+
+	bool DelayLinePitchShifter::TryGetDetectedMidi(int& midi) const
+	{
+		midi = detectedMidi.load(std::memory_order_acquire);
+		return midi >= 0;
+	}
+
+	void DelayLinePitchShifter::Prepare(const CaptureFormat& format)
+	{
+		sampleRate = format.sampleRate == 0 ? 48000 : format.sampleRate;
 		ring.assign(RING_SAMPLES, 0.0f);
 		writePosition = 0;
 		readDelay = 130.0;	// Above the splice floor for the starting period guess
@@ -88,6 +98,8 @@ namespace Audio
 		periodSamples = 480.0;	// ~100Hz starting guess until the detector locks
 		candidatePeriod = 0.0;
 		candidateVotes = 0;
+		detectedMidi.store(-1, std::memory_order_release);
+		missedPitchDetections.store(0, std::memory_order_relaxed);
 	}
 
 	void DelayLinePitchShifter::StoreInputSample(float sample)
@@ -312,6 +324,31 @@ namespace Audio
 
 		const uint32_t newest = decimatedPosition;	// one past the last written sample
 
+		float signalLevel = 0.0f;
+		for (uint32_t n = 0; n < DETECT_WINDOW; ++n)
+		{
+			const uint32_t index = (newest - 1 - n) & (DECIMATED_RING - 1);
+			signalLevel += std::fabs(decimated[index]);
+		}
+		signalLevel /= static_cast<float>(DETECT_WINDOW);
+
+		auto publishDetectionFailure = [this]()
+		{
+			if (!isPitchDetectionEnabled.load(std::memory_order_relaxed)) return;
+
+			const uint32_t missed = missedPitchDetections.fetch_add(1, std::memory_order_relaxed) + 1;
+			if (missed >= PITCH_RELEASE_DETECTIONS)
+			{
+				detectedMidi.store(-1, std::memory_order_release);
+			}
+		};
+
+		if (signalLevel < MINIMUM_PITCH_DETECTION_LEVEL)
+		{
+			publishDetectionFailure();
+			return;
+		}
+
 		float globalMin = 1e9f;
 		int globalLag = 0;
 
@@ -335,7 +372,11 @@ namespace Audio
 			}
 		}
 
-		if (globalLag == 0) return;
+		if (globalLag == 0)
+		{
+			publishDetectionFailure();
+			return;
+		}
 
 		// Prefer the shortest lag whose valley is nearly as deep as the global best.
 		int chosenLag = globalLag;
@@ -354,13 +395,43 @@ namespace Audio
 		for (int lag = MIN_LAG; lag <= MAX_LAG; ++lag) average += best[lag];
 		average /= (float)(MAX_LAG - MIN_LAG + 1);
 
-		if (average <= 0.0f) return;
+		if (average <= 0.0f)
+		{
+			publishDetectionFailure();
+			return;
+		}
 
 		const float confidence = best[chosenLag] / average;
+		int pitchLag = globalLag;
+		for (int lag = MIN_LAG + 1; lag < MAX_LAG; ++lag)
+		{
+			const bool isLocalMinimum = best[lag] <= best[lag - 1]
+				&& best[lag] <= best[lag + 1];
+			if (isLocalMinimum && best[lag] / average < TRACK_CONFIDENCE)
+			{
+				pitchLag = lag;
+				break;
+			}
+		}
 
 		if (confidence < ACQUIRE_CONFIDENCE)
 		{
 			const double refined = RefineAtFullRate(chosenLag * (int)DECIMATION);
+			if (isPitchDetectionEnabled.load(std::memory_order_relaxed))
+			{
+				const double detectedPeriod = RefineAtFullRate(pitchLag * (int)DECIMATION);
+				const double frequency = static_cast<double>(sampleRate) / detectedPeriod;
+				const int midi = static_cast<int>(std::lround(69.0 + 12.0 * std::log2(frequency / 440.0)));
+				if (midi >= 0 && midi < 128)
+				{
+					detectedMidi.store(midi, std::memory_order_release);
+					missedPitchDetections.store(0, std::memory_order_relaxed);
+				}
+				else
+				{
+					publishDetectionFailure();
+				}
+			}
 
 			// Small movements track immediately so vibrato and intonation stay live, but
 			// a different period must win three consecutive confident detections before
@@ -411,6 +482,11 @@ namespace Audio
 		else if (candidateVotes > 0)
 		{
 			--candidateVotes;
+			publishDetectionFailure();
+		}
+		else
+		{
+			publishDetectionFailure();
 		}
 	}
 
@@ -421,9 +497,15 @@ namespace Audio
 		const float pitchRatio = ratio.load(std::memory_order_relaxed);
 		if (pitchRatio == 1.0f)
 		{
+			const bool shouldDetectPitch = isPitchDetectionEnabled.load(std::memory_order_relaxed);
 			for (uint32_t i = 0; i < frameCount; ++i)
 			{
 				StoreInputSample(samples[i]);
+				if (shouldDetectPitch && ++samplesSinceDetect >= DETECT_INTERVAL_SAMPLES)
+				{
+					samplesSinceDetect = 0;
+					DetectPeriod();
+				}
 				if (++writePosition == RING_SAMPLES) writePosition = 0;
 			}
 
@@ -431,8 +513,9 @@ namespace Audio
 			fadeFromDelay = readDelay;
 			fadeRemaining = 0;
 			spliceHoldoff = 0;
-			samplesSinceDetect = DETECT_INTERVAL_SAMPLES - 1;
+			if (!shouldDetectPitch) samplesSinceDetect = DETECT_INTERVAL_SAMPLES - 1;
 			candidateVotes = 0;
+			liveDelayFrames.store(0.0f, std::memory_order_relaxed);
 			return;
 		}
 
@@ -562,6 +645,15 @@ namespace Audio
 			}
 
 			if (++writePosition == RING_SAMPLES) writePosition = 0;
+		}
+
+		// Live delay for the overlay: the read tap's distance behind the write point,
+		// smoothed per buffer (~0.5 s at 10 ms buffers) because it saw-tooths between
+		// splices. Relaxed atomics only; this is the audio thread.
+		{
+			const float current = liveDelayFrames.load(std::memory_order_relaxed);
+			const float sample = static_cast<float>(readDelay);
+			liveDelayFrames.store(current <= 0.0f ? sample : current + 0.02f * (sample - current), std::memory_order_relaxed);
 		}
 	}
 
