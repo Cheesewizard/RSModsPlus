@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug with Wwise Logging|Win32">
+      <Configuration>Debug with Wwise Logging</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release Developer|Win32">
+      <Configuration>Release Developer</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release with Wwise Logging|Win32">
+      <Configuration>Release with Wwise Logging</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{FC7C2237-25AF-4DCC-8363-C7F7BD5E467B}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>RSModsPlusResearch</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)'=='Debug' Or '$(Configuration)'=='Debug with Wwise Logging'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release' Or '$(Configuration)'=='Release with Wwise Logging' Or '$(Configuration)'=='Release Developer'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <TargetName>NoteByNoteProbe</TargetName>
+    <!-- Per-configuration output (2026-09-02). Debug and Release used to link into the SAME
+         file here; a Debug build followed by a Release build left the Debug probe (debug CRT,
+         all diagnostics on) newer than every Release input, so the Release link was skipped
+         as up to date and the Release host deployed a Debug probe. The shared path below is
+         still refreshed by PublishSharedProbe for the hand harness (last build wins there),
+         but the host's deploy reads the per-configuration file, so host and probe always
+         match. -->
+    <SharedProbeDir>$(ProjectDir)..\..\..\Installer\Resources\RSModsResearch\</SharedProbeDir>
+    <OutDir>$(SharedProbeDir)$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)..\..\..\build\$(ProjectName)\$(Configuration)\</IntDir>
+    <RocksmithInstallDir Condition="'$(RocksmithInstallDir)'==''">C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014</RocksmithInstallDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..;$(ProjectDir)..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\Mods\NoteByNoteNativeScoring.cpp" />
+    <ClCompile Include="..\..\Mods\ResearchProbeRuntime.cpp" />
+    <ClCompile Include="NoteByNoteResearchProbe.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\Mods\NoteByNoteNativeScoring.hpp" />
+    <ClInclude Include="..\..\Mods\NoteByNoteProbe.hpp" />
+    <ClInclude Include="..\..\Mods\ResearchProbeRuntime.hpp" />
+    <ClInclude Include="..\ResearchProtocol.hpp" />
+  </ItemGroup>
+  <Target Name="PublishSharedProbe" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(SharedProbeDir)NoteByNoteProbe.dll" />
+    <Copy SourceFiles="$(OutDir)$(TargetName).pdb" DestinationFiles="$(SharedProbeDir)NoteByNoteProbe.pdb" Condition="Exists('$(OutDir)$(TargetName).pdb')" />
+    <WriteLinesToFile File="$(SharedProbeDir)NoteByNoteProbe.configuration.txt" Lines="$(Configuration)" Overwrite="true" />
+  </Target>
+  <Target Name="DeployToRocksmith" AfterTargets="PublishSharedProbe" Condition="Exists('$(RocksmithInstallDir)')">
+    <MakeDir Directories="$(RocksmithInstallDir)\RSModsResearch" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(RocksmithInstallDir)\RSModsResearch\NoteByNoteProbe.dll" />
+  </Target>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

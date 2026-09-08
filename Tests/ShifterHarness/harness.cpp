@@ -7,11 +7,14 @@
 // WAV mode: harness.exe <input.wav> <semitones> [output.wav]
 // Runs a recorded DI take through the shifter and optionally writes the result.
 #include <cmath>
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <random>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -631,10 +634,100 @@ namespace
 
 		Report(name, input, output);
 	}
+
+	bool RunPitchDetectionCase(const char* name, std::vector<float> input, int expectedMidi)
+	{
+		Audio::DelayLinePitchShifter shifter(0);
+		Audio::CaptureFormat format;
+		format.sampleFormat = Audio::SampleFormat::Float32;
+		format.sampleRate = static_cast<uint32_t>(SAMPLE_RATE);
+		format.channelCount = 1;
+		shifter.Prepare(format);
+		shifter.SetPitchDetectionEnabled(true);
+
+		std::array<int, 12> pitchClassCounts = {};
+		int lastDetectedMidi = -1;
+		for (size_t offset = 0; offset < input.size(); offset += chunkFrames)
+		{
+			const uint32_t count = static_cast<uint32_t>(std::min<size_t>(
+				static_cast<size_t>(chunkFrames),
+				input.size() - offset));
+			shifter.Process(input.data() + offset, count);
+
+			int detectedMidi = -1;
+			if (shifter.TryGetDetectedMidi(detectedMidi))
+			{
+				lastDetectedMidi = detectedMidi;
+				++pitchClassCounts[detectedMidi % 12];
+			}
+		}
+
+		const int expectedPitchClass = expectedMidi % 12;
+		const int strongestPitchClass = static_cast<int>(std::distance(
+			pitchClassCounts.begin(),
+			std::max_element(pitchClassCounts.begin(), pitchClassCounts.end())));
+		const bool passed = pitchClassCounts[expectedPitchClass] > 0
+			&& strongestPitchClass == expectedPitchClass;
+		std::printf("%-24s | expected MIDI %2d | last MIDI %2d | strongest class %2d | samples %d | %s\n",
+			name,
+			expectedMidi,
+			lastDetectedMidi,
+			strongestPitchClass,
+			pitchClassCounts[strongestPitchClass],
+			passed ? "PASS" : "FAIL");
+		return passed;
+	}
+
+	bool RunPitchReleaseTest()
+	{
+		Audio::DelayLinePitchShifter shifter(0);
+		Audio::CaptureFormat format;
+		format.sampleFormat = Audio::SampleFormat::Float32;
+		format.sampleRate = static_cast<uint32_t>(SAMPLE_RATE);
+		format.channelCount = 1;
+		shifter.Prepare(format);
+		shifter.SetPitchDetectionEnabled(true);
+
+		auto input = HeldNote(82.41, 0.5, 1.0f, 0.0, 0.0);
+		input.resize(input.size() + static_cast<size_t>(SAMPLE_RATE * 0.2), 0.0f);
+		for (size_t offset = 0; offset < input.size(); offset += chunkFrames)
+		{
+			const uint32_t count = static_cast<uint32_t>(std::min<size_t>(
+				static_cast<size_t>(chunkFrames),
+				input.size() - offset));
+			shifter.Process(input.data() + offset, count);
+		}
+
+		int detectedMidi = -1;
+		const bool passed = !shifter.TryGetDetectedMidi(detectedMidi);
+		std::printf("%-24s | detected MIDI %2d | %s\n",
+			"200ms release",
+			detectedMidi,
+			passed ? "PASS" : "FAIL");
+		return passed;
+	}
+
+	int RunPitchDetectionTests()
+	{
+		int failures = 0;
+		if (!RunPitchDetectionCase("held E2", HeldNote(82.41, 1.0, 1.0f, 0.0, 0.0), 40)) ++failures;
+		if (!RunPitchDetectionCase("held A2", HeldNote(110.0, 1.0, 1.0f, 0.0, 0.0), 45)) ++failures;
+		if (!RunPitchDetectionCase("held D3", HeldNote(146.83, 1.0, 1.0f, 0.0, 0.0), 50)) ++failures;
+		if (!RunPitchDetectionCase("held G3", HeldNote(196.0, 1.0, 1.0f, 0.0, 0.0), 55)) ++failures;
+		if (!RunPitchDetectionCase("held B3", HeldNote(246.94, 1.0, 1.0f, 0.0, 0.0), 59)) ++failures;
+		if (!RunPitchDetectionCase("held E4", HeldNote(329.63, 1.0, 1.0f, 0.0, 0.0), 64)) ++failures;
+		if (!RunPitchReleaseTest()) ++failures;
+		return failures == 0 ? 0 : 1;
+	}
 }
 
 int main(int argc, char** argv)
 {
+	if (argc == 2 && std::strcmp(argv[1], "--pitch-detection-test") == 0)
+	{
+		return RunPitchDetectionTests();
+	}
+
 	// WAV mode: record a dry DI take, run it through the shifter, count artifact
 	// pops, and optionally write the shifted result to listen to without the game.
 	//   harness.exe <input.wav> <semitones> [output.wav] [chunkFrames]

@@ -97,7 +97,6 @@ void Settings::Initialize()
 		{"PreventMidSongPause", "off"},
 		{"RemoveFingerprints", "off"},
 		{"EnableDropPedal", "off"},
-		{"DropPedalEngine", "automatic"},
 		{"DropPedalCustomOverlayColors", "off"},
 		{"DropPedalOverlayDownColor", "6BE06B"},
 		{"DropPedalOverlayUpColor", "FFC24D"},
@@ -122,8 +121,6 @@ void Settings::Initialize()
 		{"RewindLeadup", 0},
 		{"CustomNSPTimeLimit", 10000},
 		{"OnScreenFontSize", 24},
-		{"DropPedalPlayer1AsioChannel", -1},
-		{"DropPedalPlayer2AsioChannel", -1},
 
 		{"GuitarSpeakDelete", 0},
 		{"GuitarSpeakSpace", 0},
@@ -245,10 +242,6 @@ void Settings::ReadModSettings() {
 		{"CustomNSPTimeLimit", reader.GetLongValue("Mod Settings", "CustomNSPTimeLimit", 10000)},
 		{"OnScreenFontSize", reader.GetLongValue("Mod Settings", "OnScreenFontSize", 24)},
 
-		// -1 means resolve the ASIO channel from RS_ASIO.ini; >= 0 pins it.
-		{"DropPedalPlayer1AsioChannel", reader.GetLongValue("Drop Pedal", "Player1AsioChannel", -1)},
-		{"DropPedalPlayer2AsioChannel", reader.GetLongValue("Drop Pedal", "Player2AsioChannel", -1)},
-
 		{"GuitarSpeakDelete", reader.GetLongValue("Guitar Speak", "GuitarSpeakDeleteWhen", 0)},
 		{"GuitarSpeakSpace", reader.GetLongValue("Guitar Speak", "GuitarSpeakSpaceWhen", 0)},
 		{"GuitarSpeakEnter", reader.GetLongValue("Guitar Speak", "GuitarSpeakEnterWhen", 0)},
@@ -326,7 +319,6 @@ void Settings::ReadModSettings() {
 	modSettings["PreventMidSongPause"] = reader.GetValue("Toggle Switches", "PreventMidSongPause", "off");
 	modSettings["RemoveFingerprints"] = reader.GetValue("Toggle Switches", "RemoveFingerprints", "off");
 	modSettings["EnableDropPedal"] = reader.GetValue("Drop Pedal", "EnableDropPedal", "off");
-	modSettings["DropPedalEngine"] = reader.GetValue("Drop Pedal", "Engine", "automatic");
 	modSettings["DropPedalCustomOverlayColors"] = reader.GetValue("Drop Pedal", "CustomOverlayColors", "off");
 	modSettings["DropPedalOverlayDownColor"] = reader.GetValue("Drop Pedal", "OverlayDownColor", "6BE06B");
 	modSettings["DropPedalOverlayUpColor"] = reader.GetValue("Drop Pedal", "OverlayUpColor", "FFC24D");

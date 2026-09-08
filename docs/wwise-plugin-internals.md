@@ -1,5 +1,11 @@
 # Wwise plugin internals (Rocksmith 2014, Wwise v91 / 2013)
 
+> **Historical research only.** The shipping Drop Pedal no longer retunes a
+> MultiPitch plug-in or uses separate Cable and ASIO engines. Both inputs use
+> the shared capture-side shifter documented in the Cable and RS_ASIO guides.
+> The material below is retained as reverse-engineering evidence, not current
+> setup guidance.
+
 Reference for `DLL/Mods/DropPedal/DropPedalHooks.cpp`. Records how the pitch
 shifter and tuning reference are reached, what the surrounding data structures
 actually are, and which routes have been ruled out. Every claim is tagged:

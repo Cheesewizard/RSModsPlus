@@ -1,5 +1,32 @@
 #include "../stdafx.h"
 #include "VolumeControl.hpp"
+#include <cmath>
+
+bool VolumeControl::GetPlaybackVolume(unsigned int channel, float& volume)
+{
+	RTPCValue_type type = RTPCValue_GameObject;
+	if (channel >= 7) return false;
+	const char* names[] = { "Mixer_Music", "Mixer_Player1", "Master_Volume", "Mixer_Player2", "Mixer_Mic", "Mixer_VO", "Mixer_SFX" };
+	const char* mixer = names[channel];
+	return Wwise::SoundEngine::Query::GetRTPCValue(mixer, 0x1234, &volume, &type) == AK_Success
+		&& std::isfinite(volume) && volume >= 0.f && volume <= 100.f;
+}
+
+bool VolumeControl::SetPlaybackVolume(unsigned int channel, float volume)
+{
+	if (!std::isfinite(volume) || volume < 0.f || volume > 100.f) return false;
+	if (channel >= 7) return false;
+	const char* names[] = { "Mixer_Music", "Mixer_Player1", "Master_Volume", "Mixer_Player2", "Mixer_Mic", "Mixer_VO", "Mixer_SFX" };
+	const char* mixer = names[channel];
+	const auto global = Wwise::SoundEngine::SetRTPCValue(mixer, volume, AK_INVALID_GAME_OBJECT, 0, AkCurveInterpolation_Linear);
+	const auto player = Wwise::SoundEngine::SetRTPCValue(mixer, volume, 0x1234, 0, AkCurveInterpolation_Linear);
+	if (global != AK_Success || player != AK_Success)
+	{
+		LOG_ERROR("(PLAYBACK MIXER) Could not set " << mixer << ": " << global << ", " << player << std::endl);
+		return false;
+	}
+	return true;
+}
 
 /// <summary>
 /// Increase Volume of Mixer's Backend
