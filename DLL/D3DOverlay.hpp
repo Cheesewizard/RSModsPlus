@@ -35,7 +35,6 @@ namespace GameOverlay {
 	void DisplayRiffRepeaterOverHundredPercentSpeed();
 	void DisplayNoteByNoteStatus();
 	void DisplayNoteByNoteBendMeter();
-	void DisplayNoteByNoteCornerStatus();
 	// String/fret ML companion overlay (issue #66/#70): draws the model's per-string read
 	// of the live cable in EVERY build config (like the bend visualizer), so the ML feature
 	// is testable in Release at real FPS. Shadow only; never gates a gameplay decision.

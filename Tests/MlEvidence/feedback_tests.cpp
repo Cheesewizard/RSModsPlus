@@ -11,12 +11,15 @@ int main()
 	assert(FormatPosition(-1, 15, 40) == "--");
 	assert(FormatPosition(0, 0, 40) == "low E string, open");
 	assert(FormatPosition(0, 2, 40) == "low E string, fret 2");
-	assert(FormatPitch(80) == "G#");
+	assert(FormatPitch(80) == "Ab");
+	// An Eb song played on an E standard guitar under the Drop Pedal: the HUD must say
+	// Eb, the name a guitarist reads off the tuning, not D# (Philip, 2026-09-08).
+	assert(FormatPitch(63) == "Eb" && FormatPitch(70) == "Bb");
 	assert(FormatPosition(4, 15, 57) == "A string, fret 15");
 	assert(FormatPitch(57 + 15) == "C");
 	assert(FormatPosition(5, 12, 62) == "high D string, fret 12");
 	assert(FormatPosition(0, 0, 38) == "low D string, open");
-	assert(FormatPosition(4, 15, 58) == "A# string, fret 15");
+	assert(FormatPosition(4, 15, 58) == "Bb string, fret 15");
 	assert(FormatPitch(58 + 15) == "C#");
 	assert(FormatPosition(4, 15, -1) == "--");
 	assert(FormatPitch(67) == "G" && FormatPitch(69) == "A");

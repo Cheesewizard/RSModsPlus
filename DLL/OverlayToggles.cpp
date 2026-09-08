@@ -13,7 +13,6 @@ namespace
 		static std::map<std::string, bool> toggles = {
 			{ "bend_meter", true },   // NBN bend visualizer (#49)
 			{ "ml_fret",    true },   // string/fret ML companion read (#66/#70)
-			{ "nbn_corner", true },   // bottom-right "Note by Note" On/Off line
 			{ "nbn_missed_label", true }, // RR HUD "MISSED" -> "NOTE BY NOTE" while NBN on (native font)
 			{ "audio_diag", true },   // bottom-left audio latency / signal lines (RSModsPlus)
 			{ "menu_renumber", true }, // RR Advanced Settings builder hook: renumber our row SortOrder

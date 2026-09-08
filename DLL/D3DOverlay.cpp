@@ -9,6 +9,7 @@
 #include "Research/ResearchBridge.hpp"
 #include "Audio/CableInput.hpp"
 #include "OverlayToggles.hpp"
+#include "PitchNames.hpp"
 #include "Mods/ExtendedRangeMode.hpp"
 
 /// <returns>Size of Rocksmith Window</returns>
@@ -404,107 +405,6 @@ void GameOverlay::DisplayNoteByNoteStatus()
 	// lines are _DEBUG-gated), so calling it here makes it render in every configuration.
 	DisplayNoteByNoteBendMeter();
 	DisplayMlStringFretOverlay();
-	DisplayNoteByNoteCornerStatus();
-}
-
-// Bottom-right "Note by Note" status (Philip, 2026-09-03). Release ships no Note by Note
-// text at all (the status block above is _DEBUG), and the Riff Repeater rocker row is
-// rebuilt at Off on every re-entry and repaired by name, which updates its label but not
-// its knob, so the row cannot be trusted as the readout. This corner line is the source of
-// truth: in the Riff Repeater menus it always shows On/Off so the player can confirm what
-// the rocker did; in the song it shows only while the feature is on. Teal is the Rocksmith+
-// practice-HUD accent (docs/designs/nbn-release-hud-rocksmith-plus-reference.md). Draws in
-// every build config; gated by OverlayToggles "nbn_corner" (.ini Overlay_nbn_corner).
-void GameOverlay::DisplayNoteByNoteCornerStatus()
-{
-	if (!OverlayToggles::Get("nbn_corner")) return;
-	const bool isEnabled = NoteByNoteProbe::IsAutomaticEnabled();
-	const bool inMenus = GameState::Menus::IsInRiffRepeaterMenus();
-	if (!isEnabled && !inMenus) return;
-
-	// A glyph badge (Philip, 2026-09-05: "make note by note more noticeable if it's enabled...
-	// a glyph or something"). The eighth-note U+266A leads the label so an enabled feature
-	// reads as an icon at a glance; Arial (the default OnScreenFont) carries the musical
-	// symbols block. Drawn wide because DrawTextA would mangle the multibyte glyph to tofu.
-	// In the Riff Repeater menus it always shows On/Off so the rocker can be confirmed; in the
-	// song it appears only while enabled, where "On" would be redundant.
-	const std::wstring text = inMenus
-		? (isEnabled ? L"\u266A NOTE BY NOTE: ON" : L"\u266A NOTE BY NOTE: OFF")
-		: L"\u266A NOTE BY NOTE";
-
-	// While enabled the teal breathes between ~0xB4 and full alpha over ~1.6s, so an active
-	// feature looks live without the hard flashing that would distract from the highway. The
-	// off/menu state is a steady grey. Teal is the Rocksmith+ practice-HUD accent.
-	int textColor;
-	if (isEnabled)
-	{
-		const double phase = (GetTickCount64() % 1600) / 1600.0;
-		const double wave = 0.5 - 0.5 * std::cos(phase * 6.2831853); // 0 -> 1 -> 0
-		const int alpha = 0xB4 + static_cast<int>(wave * (0xFF - 0xB4));
-		textColor = (alpha << 24) | 0x3EC9C0;
-	}
-	else
-	{
-		textColor = 0xFFB0B0B0;
-	}
-
-	// Bold and ~1.4x the old size, bottom-right. Shadow pass then colour pass; no box behind
-	// it (no filled-quad primitive is wired into the overlay). DT_RIGHT with DT_NOCLIP anchors
-	// to the right edge, so the wide box only needs to be roomy enough for the longest label.
-	const int fontSize = std::max(24, static_cast<int>(WindowSize.height / 26.0f));
-	const int right = static_cast<int>(WindowSize.width - WindowSize.width / 64.0f);
-	const int bottom = static_cast<int>(WindowSize.height - WindowSize.height / 40.0f);
-	const int top = bottom - fontSize - 6;
-	const int left = static_cast<int>(WindowSize.width * 0.5f);
-	DX9DrawTextW(text, 0xC0000000, left + 2, top + 2, right + 2, bottom + 2, pDevice,
-		fontSize, DT_RIGHT | DT_NOCLIP, FW_BOLD);
-	DX9DrawTextW(text, textColor, left, top, right, bottom, pDevice,
-		fontSize, DT_RIGHT | DT_NOCLIP, FW_BOLD);
-
-	// Native-vs-ML agreement strip (Philip, 2026-09-05: "if the two detectors were colour
-	// coded then you could have a live display ... both green means they agree, red is a bad
-	// match"). Only while actually playing with NBN on, and only once the shadow sampler has a
-	// verdict. A row of block glyphs sits just above the label: green = the two engines agree,
-	// red = they disagree (a bad match to look at), amber = only one engine had an opinion. The
-	// overlay has no filled-quad primitive, so each cell is its own coloured glyph. Newest on
-	// the right, matching how the label reads.
-	if (isEnabled && !inMenus)
-	{
-		ResearchProtocol::NoteByNoteState st;
-		if (NoteByNoteNativeScoring::TryGetResearchState(st)
-			&& st.structSize >= sizeof(ResearchProtocol::NoteByNoteState)
-			&& st.compareLastValid)
-		{
-			const int agreeColor = 0xFF3EC96E;   // green
-			const int disagreeColor = 0xFFFF5A5A; // red
-			const int oneSidedColor = 0xFFFFC24D; // amber
-			const int stripFont = std::max(14, static_cast<int>(fontSize * 0.6f));
-			const int cellStep = stripFont;                 // one glyph-width per sample
-			const uint32_t cells = st.compareHistoryCount;
-			const int stripBottom = top - 4;
-			const int stripTop = stripBottom - stripFont - 4;
-			int cellRight = right;
-			for (uint32_t i = 0; i < cells; ++i)
-			{
-				// history[0] is oldest; draw it leftmost so newest lands at the right edge.
-				const uint8_t code = st.compareHistory[cells - 1 - i];
-				const int cellColor = code == 1 ? agreeColor
-					: (code == 0 ? disagreeColor : oneSidedColor);
-				const int cellLeft = cellRight - cellStep;
-				DX9DrawTextW(L"Ã¢â€“Â ", cellColor, cellLeft, stripTop, cellRight, stripBottom,
-					pDevice, stripFont, DT_RIGHT | DT_NOCLIP, FW_BOLD);
-				cellRight -= cellStep;
-			}
-
-			// A compact running tally so the balance is legible without counting squares.
-			std::wostringstream tally;
-			tally << L"agree " << st.compareAgreeCount << L" / disagree " << st.compareDisagreeCount;
-			const int tallyBottom = stripTop - 2;
-			const int tallyTop = tallyBottom - stripFont - 2;
-			DX9DrawTextW(tally.str(), 0xFFB0B0B0, left, tallyTop, right, tallyBottom, pDevice,
-				stripFont, DT_RIGHT | DT_NOCLIP, FW_NORMAL);
-		}
-	}
 }
 
 // Single source of truth for "the audio diagnostics rows are on screen". The NBN input
@@ -767,12 +667,10 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 #endif
 	if (state.bendTargetMidi < 0) return;
 
-	static const char* NOTE_NAMES[12] =
-		{ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 	const auto noteName = [](int midi) -> std::string
 	{
 		if (midi < 0) return "?";
-		return std::string(NOTE_NAMES[midi % 12]) + std::to_string(midi / 12 - 1);
+		return std::string(PitchNames::ForPitchClass(midi)) + std::to_string(midi / 12 - 1);
 	};
 
 	// --- Normalized bend meter (Philip 2026-09-02) ---

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "MlStringFretReader.hpp"
 #include "MlAudioExporter.hpp"
+#include "../PitchNames.hpp"
 
 #include <windows.h>
 #include <cstring>
@@ -34,8 +35,6 @@ namespace
 	constexpr char SF_MAPPING_NAME[] = "Local\\RSModsPlus.MlStringFret.v2";
 
 	constexpr int OPEN_STRING_MIDI[6] = { 40, 45, 50, 55, 59, 64 };
-	const char* const NOTE_NAMES[12] =
-		{ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 
 	HANDLE g_mapping = nullptr;
 	const StringFretResult* g_view = nullptr;
@@ -131,8 +130,7 @@ std::string MlStringFretReader::NoteNameForStringFret(int stringIndex, int fret)
 {
 	if (stringIndex < 0 || stringIndex > 5) return std::string();
 	const int midi = OPEN_STRING_MIDI[stringIndex] + fret;
-	const int name = ((midi % 12) + 12) % 12;
-	return std::string(NOTE_NAMES[name]);   // pitch class only (no octave number)
+	return std::string(PitchNames::ForPitchClass(midi));   // pitch class only (no octave number)
 }
 
 void MlStringFretReader::Shutdown()

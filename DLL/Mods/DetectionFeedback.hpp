@@ -4,6 +4,8 @@
 #include <cmath>
 #include <string>
 
+#include "../PitchNames.hpp"
+
 namespace NoteByNote
 {
 	enum class DetectorRole : uint8_t
@@ -117,9 +119,8 @@ namespace NoteByNote
 
 	inline std::string FormatPitch(int midi)
 	{
-		static const char* const NOTES[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 		if (midi < 0 || midi > 127) return "--";
-		return NOTES[midi % 12];
+		return PitchNames::ForPitchClass(midi);
 	}
 
 	inline std::string FormatPosition(int stringIndex, int fret, int openStringMidi)

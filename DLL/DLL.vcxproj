@@ -394,6 +394,7 @@
     <ClInclude Include="D3DOverlay.hpp" />
     <ClInclude Include="Mods\DetectionFeedback.hpp" />
     <ClInclude Include="OverlayToggles.hpp" />
+    <ClInclude Include="PitchNames.hpp" />
     <ClInclude Include="D3D\GdiplusManager.hpp" />
     <ClInclude Include="GameState.hpp" />
     <ClInclude Include="Audio\IInputProcessor.hpp" />
