@@ -1,19 +1,21 @@
 """Compare the managed audio frontend and inference with the trained Python path."""
 import pathlib
 import subprocess
+import os
 import sys
 import json
 import numpy as np
 import soundfile as sf
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'tools/ml-string-fret-service'))
+TOOLS = pathlib.Path(os.environ.get('RSMODSPLUS_TOOLS_DIR', r'C:\Programming\RocksmithNativeAtlas\rsmodsplus-private\tools'))
+sys.path.insert(0, str(TOOLS / 'ml-string-fret-service'))
 import frontend as fe
 
 OUT = ROOT / 'artifacts/managed-ml-20260907/parity'
 OUT.mkdir(parents=True, exist_ok=True)
 exe = ROOT / 'Installer/Resources/RSModsGUI/RSMods.exe'
-session = fe.load_model(str(ROOT / 'tools/ml-training/models/fretnet_guitarset.onnx'))
+session = fe.load_model(str(TOOLS / 'ml-training/models/fretnet_guitarset.onnx'))
 rng = np.random.default_rng(20260907)
 results = []
 for rate in (22050, 44100, 48000):

@@ -1,10 +1,12 @@
 """Developer build tool: freeze the trained CQT filters into an embedded resource."""
 import pathlib
 import struct
+import os
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'tools/ml-string-fret-service'))
+TOOLS = pathlib.Path(os.environ.get('RSMODSPLUS_TOOLS_DIR', r'C:\Programming\RocksmithNativeAtlas\rsmodsplus-private\tools'))
+sys.path.insert(0, str(TOOLS / 'ml-string-fret-service'))
 import frontend
 
 transform = frontend.prepare_transform()

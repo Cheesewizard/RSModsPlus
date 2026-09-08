@@ -13,7 +13,8 @@ import numpy as np
 import soundfile as sf
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'tools/ml-string-fret-service'))
+TOOLS = pathlib.Path(os.environ.get('RSMODSPLUS_TOOLS_DIR', r'C:\Programming\RocksmithNativeAtlas\rsmodsplus-private\tools'))
+sys.path.insert(0, str(TOOLS / 'ml-string-fret-service'))
 import frontend as fe
 from model_evidence import find_pitch_source
 
@@ -29,7 +30,7 @@ process = subprocess.Popen([str(exe), str(os.getpid()), suffix], stdout=log, std
                            creationflags=subprocess.CREATE_NO_WINDOW,
                            cwd=exe.parent, env={**os.environ, 'PATH': os.path.join(os.environ['SystemRoot'],'System32')})
 mailbox = mmap.mmap(-1, 112, tagname='Local\\RSModsPlus.MlStringFret.v2' + suffix)
-session = fe.load_model(str(ROOT / 'tools/ml-training/models/fretnet_guitarset.onnx'))
+session = fe.load_model(str(TOOLS / 'ml-training/models/fretnet_guitarset.onnx'))
 results = []
 try:
     time.sleep(2)
@@ -45,7 +46,7 @@ try:
         if name == 'silence': y = np.zeros(count, dtype=np.float32)
         elif name == 'low': y = (.2*np.sin(2*np.pi*82.4069*t)).astype(np.float32)
         else:
-            original, source_rate = sf.read(ROOT / 'tools/fretboard/note_bank/note_78.wav', dtype='float32')
+            original, source_rate = sf.read(TOOLS / 'fretboard/note_bank/note_78.wav', dtype='float32')
             if original.ndim > 1: original = original.mean(axis=1)
             import librosa
             if source_rate != rate: original = librosa.resample(original, orig_sr=source_rate, target_sr=rate)

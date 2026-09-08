@@ -14,7 +14,10 @@
 		<PlatformTarget>x64</PlatformTarget>
 		<LangVersion>7.3</LangVersion>
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-		<MlModelPath Condition="'$(MlModelPath)' == ''">$(MSBuildThisFileDirectory)..\tools\ml-training\models\fretnet_guitarset.onnx</MlModelPath>
+		<!-- The FretNet model lives with the private tooling in the atlas repo
+		     (RSMODSPLUS_TOOLS_DIR = ...RocksmithNativeAtlas\rsmodsplus-private\tools);
+		     /p:MlModelPath overrides it. -->
+		<MlModelPath Condition="'$(MlModelPath)' == '' And '$(RSMODSPLUS_TOOLS_DIR)' != ''">$(RSMODSPLUS_TOOLS_DIR)\ml-training\models\fretnet_guitarset.onnx</MlModelPath>
 	</PropertyGroup>
 	<ItemGroup>
 		<Reference Include="System" />
@@ -49,6 +52,6 @@
 		<Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\BuildNative.ps1&quot; -OutputDirectory &quot;$(MSBuildProjectDirectory)\Native\bin&quot;" />
 	</Target>
 	<Target Name="ValidateMlModel" BeforeTargets="PrepareForBuild">
-		<Error Condition="!Exists('$(MlModelPath)')" Text="FretNet model missing. Supply the approved ONNX artifact using /p:MlModelPath=absolute-path. The model must be embedded; no external model is loaded at runtime." />
+		<Error Condition="!Exists('$(MlModelPath)')" Text="FretNet model missing. Set RSMODSPLUS_TOOLS_DIR to the atlas rsmodsplus-private tools folder, or pass /p:MlModelPath=absolute-path. The model must be embedded; no external model is loaded at runtime." />
 	</Target>
 </Project>
