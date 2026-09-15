@@ -1,4 +1,4 @@
-﻿#include "../../Mods/ResearchProbeRuntime.hpp"
+#include "../../Mods/ResearchProbeRuntime.hpp"
 #include "../../Mods/NoteByNoteScoringCore.hpp"
 
 #include "../../Mods/NoteByNoteNativeScoring.hpp"
@@ -2223,16 +2223,6 @@ namespace
 			AnchorProbe::isArmed.store(true, std::memory_order_release);
 			std::snprintf(responseBuffer, responseCapacity,
 				"{\"ok\":true,\"anchorProbeArmed\":true}");
-			return 1;
-		}
-		// Heap-corruption tripwire (2026-08-26 loop-crash forensics).
-		if (std::strstr(requestJson, "probe_heap_check_on") != nullptr
-			|| std::strstr(requestJson, "probe_heap_check_off") != nullptr)
-		{
-			const bool enable = std::strstr(requestJson, "probe_heap_check_on") != nullptr;
-			NoteByNoteNativeScoring::SetHeapCheckEnabled(enable);
-			std::snprintf(responseBuffer, responseCapacity,
-				"{\"ok\":true,\"heapCheckEnabled\":%s}", enable ? "true" : "false");
 			return 1;
 		}
 		// Per-hold Play_FreezeNoteTrack prompt sound (2026-09-04 audio A/B, see

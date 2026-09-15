@@ -46,17 +46,26 @@ namespace NoteByNote
 		feedback.enhancedRole = DetectorRole::Confirmed;
 	}
 
-	inline uint32_t GetDetectorColor(DetectorRole role, uint64_t tick, uint64_t now)
+	struct DetectionPalette
+	{
+		uint32_t neutral = 0xFFFFFFFF;
+		uint32_t confirmed = 0xFF55DD77;
+		uint32_t partial = 0xFFFFAA44;
+		uint32_t rejected = 0xFFFF5555;
+	};
+
+	inline uint32_t GetDetectorColor(DetectorRole role, uint64_t tick, uint64_t now,
+		const DetectionPalette& palette = DetectionPalette{})
 	{
 		constexpr uint64_t HOLD_MS = 650;
 		constexpr uint64_t FADE_MS = 650;
-		if (tick == 0 || now < tick || now - tick >= HOLD_MS + FADE_MS) return 0xFFFFFFFF;
-		uint32_t color = 0xFFFFFFFF;
+		if (tick == 0 || now < tick || now - tick >= HOLD_MS + FADE_MS) return palette.neutral;
+		uint32_t color = palette.neutral;
 		switch (role)
 		{
-		case DetectorRole::Confirmed: color = 0xFF55DD77; break;
-		case DetectorRole::Partial: color = 0xFFFFAA44; break;
-		case DetectorRole::Rejected: color = 0xFFFF5555; break;
+		case DetectorRole::Confirmed: color = palette.confirmed; break;
+		case DetectorRole::Partial: color = palette.partial; break;
+		case DetectorRole::Rejected: color = palette.rejected; break;
 		default: break;
 		}
 		const uint64_t elapsed = now - tick;
@@ -64,8 +73,10 @@ namespace NoteByNote
 		uint32_t faded = 0xFF000000;
 		for (unsigned shift = 0; shift <= 16; shift += 8)
 		{
-			const uint32_t channel = (color >> shift) & 255;
-			faded |= (channel + static_cast<uint32_t>((255 - channel) * (elapsed - HOLD_MS) / FADE_MS)) << shift;
+			const int channel = (color >> shift) & 255;
+			const int neutral = (palette.neutral >> shift) & 255;
+			const int progress = static_cast<int>(elapsed - HOLD_MS);
+			faded |= static_cast<uint32_t>(channel + (neutral - channel) * progress / static_cast<int>(FADE_MS)) << shift;
 		}
 		return faded;
 	}

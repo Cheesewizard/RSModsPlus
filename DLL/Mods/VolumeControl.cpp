@@ -6,6 +6,10 @@ bool VolumeControl::GetPlaybackVolume(unsigned int channel, float& volume)
 {
 	RTPCValue_type type = RTPCValue_GameObject;
 	if (channel >= 7) return false;
+	// The audio bridge control pipe answers polls from the moment the game loads, which can be before
+	// Wwise is up (bridge opened before launch). Querying the mixer then dereferences uninitialised
+	// Wwise state and crashes the game, so report the mixer as unavailable until the engine is ready.
+	if (!Wwise::SoundEngine::IsInitialized()) return false;
 	const char* names[] = { "Mixer_Music", "Mixer_Player1", "Master_Volume", "Mixer_Player2", "Mixer_Mic", "Mixer_VO", "Mixer_SFX" };
 	const char* mixer = names[channel];
 	return Wwise::SoundEngine::Query::GetRTPCValue(mixer, 0x1234, &volume, &type) == AK_Success
@@ -16,6 +20,7 @@ bool VolumeControl::SetPlaybackVolume(unsigned int channel, float volume)
 {
 	if (!std::isfinite(volume) || volume < 0.f || volume > 100.f) return false;
 	if (channel >= 7) return false;
+	if (!Wwise::SoundEngine::IsInitialized()) return false;   // never touch the mixer before Wwise is up
 	const char* names[] = { "Mixer_Music", "Mixer_Player1", "Master_Volume", "Mixer_Player2", "Mixer_Mic", "Mixer_VO", "Mixer_SFX" };
 	const char* mixer = names[channel];
 	const auto global = Wwise::SoundEngine::SetRTPCValue(mixer, volume, AK_INVALID_GAME_OBJECT, 0, AkCurveInterpolation_Linear);

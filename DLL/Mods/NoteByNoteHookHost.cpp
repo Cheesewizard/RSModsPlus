@@ -6,9 +6,9 @@
 
 #include <cstring>
 
-// Presentation is owned at Rocksmith's own presentability predicate (0x7A5CE0) rather
-// than downstream of it. Two earlier designs intervened after the engine had already
-// decided to show a note, and both failed for the same structural reason:
+// Rocksmith's presentability predicate (0x7A5CE0) also owns note retirement. It remains
+// detoured only as a pass-through so presentation work cannot retire future scoring records.
+// Two earlier designs established why visual focus must preserve the native lifecycle:
 //
 // - C47 skipped construction at 0x7A56F0, but 0x7A5D50 had still admitted the note to
 //   the string/fret grid, so the grid re-attempted it every frame. 19 FPS.
@@ -31,8 +31,9 @@
 // queries do share is a pair of amplitude gates, and that is where a refusal comes from.
 // See docs/investigations/note-by-note-input-gates.md.
 //
-// The gate returns zero from that predicate for non-selected notes, so Rocksmith
-// retires them through its own 0x7A61F0 path, in its own iteration, at its own time.
+// Fretboard focus is now applied after the native grid write has completed. This keeps the
+// original side effects, clears only the resulting non-gesture cell, and never moves or
+// retires the underlying note object.
 namespace
 {
 	constexpr uintptr_t NATIVE_SCORING_UPDATE = 0x7E2880;
@@ -322,7 +323,7 @@ void NoteByNoteNativeScoring::Initialize()
 
 	areHooksInstalled = true;
 	LOG_INFO("(NBN HOOK HOST) Permanent native scoring, hit-decision, and preparation detours"
-		<< " installed; presentability gate installed=" << isGateInstalled << "."
+		<< " installed; non-destructive presentation hooks installed=" << isGateInstalled << "."
 		<< " Controller behavior is supplied by the reloadable research probe." << std::endl);
 
 	// Research instrumentation, installed separately so a failure cannot disable the controller.

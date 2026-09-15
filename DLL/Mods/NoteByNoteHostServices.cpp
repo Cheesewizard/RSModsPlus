@@ -184,14 +184,20 @@ namespace NoteByNoteHostServices
 		// is distinct from a disagreement.
 		using ResearchProtocol::MlNoteVerdict;
 
-		// physicalTarget is the expected note in the UN-shifted (physical fret) frame
-		// (expectedMidi - appliedShift). FretNet reads the physical frame on a pick ATTACK - the
-		// Drop Pedal shifter's delay line passes the transient un-shifted before it settles to the
-		// shifted expectedMidi - so a string reading EITHER frame is the note the player is fretting.
+		// The ML companion analyses the POST-shifter route audio (MlAudioExporter::Observe runs
+		// after processor->Process in AsioHook), and expectedMidi is built in that same frame, so
+		// the expected note matches on exactly ONE pitch: expectedMidi. An earlier build also
+		// accepted physicalTarget (expectedMidi - appliedShift) on the theory that the shifter's
+		// delay line passes a pick transient un-shifted. Under Drop Pedal E->Eb (-1) that made the
+		// ML confirm a note fretted one ABOVE the target: fret+1 settles to exactly physicalTarget
+		// in the route frame, so it read as "the note the player is fretting" (the 2026-09-15
+		// fret 3 / fret 4 report). A tolerance in the shift direction is a wrong-fret hole; the
+		// transient, if it exists, is shorter than the service's analysis window and is not
+		// worth that hole. physicalTarget is kept only for the diagnostic log line.
 		// outTargetConfidence reports how confidently the expected note was read on its own string,
 		// regardless of whether a louder OTHER string made the reduced verdict Conflicting.
 		MlNoteVerdict EvaluateMlNote(const MlStringFretReader::StringFret& sample,
-			int expectedMidi, int physicalTarget, float minConfidence,
+			int expectedMidi, float minConfidence,
 			int& observedMidi, float& confidence, float& outTargetConfidence)
 		{
 			observedMidi = -1;
@@ -209,7 +215,7 @@ namespace NoteByNoteHostServices
 				const float value = sample.conf[stringIndex];
 				if (fret < 0 || fret > 19 || !std::isfinite(value) || value < 0.0f || value > 1.0f) continue;
 				const int pitch = openMidi[stringIndex] + fret;
-				if (pitch == expectedMidi || pitch == physicalTarget)
+				if (pitch == expectedMidi)
 				{
 					if (value > targetConfidence) targetConfidence = value;
 				}
@@ -282,11 +288,10 @@ namespace NoteByNoteHostServices
 				evidence->verdict = MlNoteVerdict::Pending;
 				return 1;
 			}
-			// FretNet reads the physical fret frame during a pick attack (before the shifter settles
-			// the pitch), so the expected note can appear as either expectedMidi or its un-shifted
-			// physical value; both count as the note the player is fretting.
-			const int physicalTarget = expectedMidi - appliedShift;
-			evidence->verdict = EvaluateMlNote(sample, expectedMidi, physicalTarget, minConfidence,
+			// Exact route-frame match only (see EvaluateMlNote): the un-shifted physical pitch is
+			// NOT accepted, because under a -1 shift it is exactly what a fret played one too high
+			// settles to.
+			evidence->verdict = EvaluateMlNote(sample, expectedMidi, minConfidence,
 				evidence->observedMidi, evidence->confidence, evidence->targetConfidence);
 			return 1;
 		}

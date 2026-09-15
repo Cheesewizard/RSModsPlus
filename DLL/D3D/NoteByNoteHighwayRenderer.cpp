@@ -11,35 +11,11 @@
 #include <sstream>
 #include <cmath>
 
-// Presentability gate for Note by Note. See the header for the mechanism.
-//
-// Verified ABI of the predicate at 0x7A5CE0, read from the unpacked image rather than
-// inferred, because an earlier convention guess corrupted a return frame:
-//
-//   007a5ce0  55                 PUSH EBP            ; note pointer arrives in EAX
-//   007a5ce1  8B EC              MOV EBP,ESP
-//   007a5ce3  51                 PUSH ECX
-//   007a5ce4  80 B8 44 01 ..     CMP byte ptr [EAX + 0x144],0
-//   ...
-//   007a5d01  C2 04 00           RET 0x4             ; callee pops the single float
-//
-// and its only call site, which proves EAX still holds the note there (0x7A5D58 copies
-// EAX to EDI and nothing writes EAX before the call):
-//
-//   007a5d58  8B F8              MOV EDI,EAX
-//   007a5d6a  D9 45 08           FLD float ptr [EBP + 0x8]
-//   007a5d6d  51                 PUSH ECX
-//   007a5d6e  D9 1C 24           FSTP float ptr [ESP]
-//   007a5d71  E8 6A FF FF FF     CALL 0x007a5ce0
-//   007a5d76  84 C0              TEST AL,AL
-//   007a5d78  75 0D              JNZ  admit
-//   007a5d7a  E8 71 04 00 00     CALL 0x007a61f0     ; else the engine retires it
-//
-// So: note in EAX, one float argument at [ESP+4] on entry, boolean result in AL,
-// RET 4. The detour must preserve that contract exactly.
+// Non-destructive presentation focus for Note by Note. Rocksmith's presentability
+// predicate is deliberately left untouched because its false path also retires scoring
+// records. Visual filtering happens only after native state updates have completed.
 namespace
 {
-	constexpr uintptr_t NATIVE_PRESENTABILITY_PREDICATE = 0x7A5CE0;
 	constexpr uintptr_t NATIVE_NOTEWAY_SETUP = 0x7E22F0;
 	constexpr uintptr_t NATIVE_DRAW_DESCRIPTORS = 0x7A4B50;
 	constexpr uintptr_t NATIVE_DRAW_GEOMETRY = 0x7A52C0;
@@ -95,7 +71,6 @@ namespace
 	// The SNG record's authored time, same layout the scoring controller reads.
 	constexpr uintptr_t RECORD_TIME_OFFSET = 0x0C;
 
-	using NativePredicate = char(*)(float);
 	using NativeNotewaySetup = void(*)(int);
 
 	using NativeDrawDescriptors = void(*)(void*, void*, float, float);
@@ -116,7 +91,6 @@ namespace
 	using NativeMarkerUpdater = void(__stdcall*)(void* visual, void* owner);
 	using NativeWindowCondition = uint16_t(__fastcall*)(void* windowStruct, void* unusedEdx, float time);
 
-	NativePredicate originalPredicate = nullptr;
 	NativeNotewaySetup originalNotewaySetup = nullptr;
 	NativeNeckPlacement originalNeckPlacements[NECK_PLACEMENT_SITE_COUNT] = {};
 	NativeNeckVisibility originalNeckVisibility = nullptr;
@@ -190,15 +164,15 @@ namespace
 	volatile bool isNativeHoldOwned = false;
 	volatile uintptr_t selectedRecord = 0;
 
-	// Bootstrap-settle hold for the presentability gate (2026-08-27 legato AV fix,
+	// Bootstrap-settle hold for draw/pool suppression (2026-08-27 legato AV fix,
 	// crash-evidence/2026-08-27-legato-av). A native Riff Repeater range change or the
 	// coordinated PlayerSong restart behind a dense-successor advance rebuilds Rocksmith's
 	// note pool over a few frames. While that churn is in flight, telling the engine a note
 	// is not presentable makes it retire (free) a note it has already committed to draw this
 	// frame; its own draw walk then reads the freed note's descriptor and faults on a stale
 	// pointer. The reset is observable without any probe change: the published epoch
-	// increments on every such restart. For a short window after an epoch change every note
-	// is reported presentable, so Rocksmith retires nothing until the pool is stable again.
+	// increments on every such restart. For a short window after an epoch change draw/pool
+	// suppression is disabled; the presentability predicate is always pass-through.
 	// This is NOT legato grouping (the visual group is always empty, group=0); it is a
 	// lifecycle hold keyed only to the reset event.
 	constexpr uint32_t PRESENTATION_SETTLE_FRAMES = 8;
@@ -273,7 +247,6 @@ namespace
 
 	bool __cdecl ShouldSuppressNoteCounted(void* note, CountedGate gate);
 	bool __cdecl ShouldSuppressNote(void* note);
-	bool __cdecl ShouldSuppressOnFretboard(void* note);
 	bool __cdecl IsOutsideCurrentGesture(void* note);
 
 	bool __cdecl ShouldSuppressDescriptors(void* note)
@@ -372,25 +345,6 @@ namespace
 		return std::fabs(recordTime - selectedRecordTime) <= window;
 	}
 
-	// Fretboard gate: the presentability predicate at 0x7A5CE0, which feeds the neck
-	// diagram grid at 0x7AA140. On, so only the current gesture appears under the player's
-	// hand while the highway stays complete.
-	volatile uint32_t fretboardCalls = 0;
-	volatile uint32_t fretboardSuppressed = 0;
-
-	bool __cdecl ShouldSuppressOnFretboard(void* note)
-	{
-		if (!IS_FRETBOARD_SUPPRESSION_ENABLED) return false;
-		const bool suppress = IsOutsideCurrentGesture(note);
-		// Counted because the gate not firing and the gate firing without changing the
-		// display are different failures with the same appearance, and Philip still sees
-		// two notes on the fretboard. If calls stay at zero the predicate is not reached
-		// for these notes at all, which would mean the neck diagram has another source.
-		++fretboardCalls;
-		if (suppress) ++fretboardSuppressed;
-		return suppress;
-	}
-
 	bool __cdecl ShouldSuppressNoteCounted(void* note, CountedGate gate)
 	{
 		const bool suppress = ShouldSuppressNote(note);
@@ -414,11 +368,9 @@ namespace
 
 	// The neck-diagram grid write, gated by coordinate.
 	//
-	// Why this exists on top of the predicate gate above. All eight FretboardGridWrite calls
-	// live inside 0x7A5D50, below its `TEST AL,AL / JNZ` on the predicate result at 0x7A5D78,
-	// so a false predicate really does stop them: the note is retired at 0x7A5D7A and the
-	// function returns. The predicate gate is not useless, which corrects the earlier record
-	// claiming it "does not decide what is drawn there".
+	// This is the visual gate for the fretboard. The presentability predicate above remains a
+	// lifecycle pass-through: a false result would retire the record at 0x7A5D7A. The grid
+	// write runs to completion and is corrected afterward, so future notes remain selectable.
 	//
 	// But 0x7A5D50 opens with a bypass:
 	//
@@ -429,8 +381,7 @@ namespace
 	//
 	// 0x7A608A lands before the grid writes at 0x7A60D8 and 0x7A613D, so a note whose +0x51
 	// and +0x52 are both zero reaches the neck diagram without the predicate being consulted.
-	// That is why the gate above reported 157/163 and 64774/67173 suppressed while an
-	// upcoming note stayed on the fretboard: that note was never one of the calls it saw.
+	// The grid hook below covers both paths.
 	// 0x7AA140 sits below both paths.
 	//
 	// What +0x51 and +0x52 are is not established and is deliberately not guessed at.
@@ -442,11 +393,11 @@ namespace
 	// hot-reloaded even though the controller can. Compiling the mode in cost a rebuild and a
 	// game restart per experiment.
 	//
-	// Starts Off: the game draws its own diagram untouched until an experiment explicitly
-	// selects a mode over the bridge. A presentation intervention must never be the startup
-	// default, and a restart must never silently re-enable one.
+	// Sentinel is the safe default for the live Note by Note presentation: the native write
+	// still performs all of its lifecycle work, then non-gesture cells are cleared to the
+	// empty value. This keeps the current gesture visible without retiring future records.
 	volatile long gridGateMode =
-		static_cast<long>(NoteByNoteHighwayRenderer::GridGateMode::Off);
+		static_cast<long>(NoteByNoteHighwayRenderer::GridGateMode::Sentinel);
 	volatile uint32_t gridSentinelValue = 0;
 	volatile float gridSentinelKey = 0.0f;
 
@@ -647,11 +598,8 @@ namespace
 
 	// The finished fretboard buffer, read where the engine consumes it.
 	//
-	// This answers the question the write gate could not. The predicate gate already stops
-	// every non-target note reaching the writes (302 observed calls, all for the target cell),
-	// yet a second marker still draws, so either something reaches the buffer without going
-	// through 0x7AA140 or the diagram is not drawn from this buffer at all. The completed
-	// buffer says which.
+	// This read-only diagnostic confirms the completed grid after the visual correction. It
+	// deliberately does not participate in note admission or retirement.
 	//
 	// Read-only, and dimensions read from the buffer rather than assumed.
 	void __cdecl ReportFretboardBuffer(uintptr_t buffer)
@@ -725,40 +673,6 @@ namespace
 			pop eax
 			popfd
 			jmp originalBufferConsume
-		}
-	}
-
-	// Suppressed notes return 0, which drives the engine's own 0x7A61F0 retirement at
-	// 0x7A5D7A. Everything else tail-jumps to the original with the stack and EAX
-	// untouched, so the original performs its own RET 4 back to the real caller.
-	__declspec(naked) void PredicateDetour()
-	{
-		__asm
-		{
-			pushfd
-			push ecx
-			push edx
-			push eax                    // preserve the note across the helper call
-
-			push eax                    // argument: note
-			call ShouldSuppressOnFretboard
-			add esp, 4
-			test al, al
-			jnz suppress
-
-			pop eax
-			pop edx
-			pop ecx
-			popfd
-			jmp originalPredicate       // stack still holds [ret][float]
-
-		suppress:
-			pop eax
-			pop edx
-			pop ecx
-			popfd
-			xor eax, eax                // AL = 0: not presentable
-			ret 4
 		}
 	}
 
@@ -1896,16 +1810,6 @@ bool NoteByNoteHighwayRenderer::InstallPresentationGate()
 {
 	if (isGateInstalled) return true;
 
-	originalPredicate = reinterpret_cast<NativePredicate>(DetourFunction(
-		reinterpret_cast<PBYTE>(NATIVE_PRESENTABILITY_PREDICATE),
-		reinterpret_cast<PBYTE>(&PredicateDetour)));
-	if (originalPredicate == nullptr)
-	{
-		LOG_ERROR("(NBN PRESENTATION) Installing the presentability detour at 0x7A5CE0 failed;"
-			<< " the highway will render unmodified." << std::endl);
-		return false;
-	}
-
 	originalNotewaySetup = reinterpret_cast<NativeNotewaySetup>(DetourFunction(
 		reinterpret_cast<PBYTE>(NATIVE_NOTEWAY_SETUP),
 		reinterpret_cast<PBYTE>(&NotewaySetupDetour)));
@@ -1960,8 +1864,8 @@ bool NoteByNoteHighwayRenderer::InstallPresentationGate()
 	if (originalGridWrite == nullptr)
 	{
 		LOG_ERROR("(NBN PRESENTATION) Installing the neck-diagram grid detour at 0x7AA140"
-			<< " failed; the fretboard will keep showing notes the predicate gate cannot"
-			<< " reach." << std::endl);
+			<< " failed; fretboard-only visual suppression is unavailable, while note lifecycle"
+			<< " remains protected by the predicate pass-through." << std::endl);
 		return false;
 	}
 
@@ -2004,7 +1908,8 @@ bool NoteByNoteHighwayRenderer::InstallPresentationGate()
 	}
 
 	isGateInstalled = true;
-	LOG_INFO("(NBN PRESENTATION) Gates installed: fretboard grid at 0x7A5CE0 and 0x7AA140,"
+	LOG_INFO("(NBN PRESENTATION) Rocksmith's presentability predicate is untouched;"
+		<< " fretboard visual grid installed at 0x7AA140,"
 		<< " highway pools at"
 		<< " 0x7E22F0, descriptors at 0x7A4B50, and highway draw at 0x7A52C0/0x7A6160."
 		<< " 0x7A4AA0 is left running on purpose: gating it changed nothing visually and"
@@ -2018,10 +1923,9 @@ void NoteByNoteHighwayRenderer::RefreshSelectedTarget(void* owner)
 	ResearchProtocol::NoteByNoteState state;
 	const bool haveState = NoteByNoteNativeScoring::TryGetResearchState(state);
 
-	// Detect a native range/PlayerSong restart by the epoch it publishes, and open the
-	// presentability gate for a short settle window so the engine does not retire a note
-	// mid-rebuild (2026-08-27 legato AV). Tracked here, once per preparation frame, whatever
-	// the target state below turns out to be.
+	// Track native range/PlayerSong restarts so the presentation grid can settle after a
+	// target transition. The presentability predicate itself is always pass-through and
+	// therefore never retires records during this transition.
 	if (haveState)
 	{
 		const bool ownsHold = state.ownsNativeHold != 0;
@@ -2035,8 +1939,8 @@ void NoteByNoteHighwayRenderer::RefreshSelectedTarget(void* owner)
 			LOG_INFO("(NBN PRESENTATION) Hold transition (epoch " << lastSeenEpoch << "->"
 				<< state.epoch << (recordChanged ? ", record changed" : "")
 				<< (holdReleased ? ", hold released" : "")
-				<< "); holding the presentability gate open for " << PRESENTATION_SETTLE_FRAMES
-				<< " frames so Rocksmith retires nothing while it rebuilds the note pool."
+				<< "); suspending highway draw suppression for " << PRESENTATION_SETTLE_FRAMES
+				<< " frames while Rocksmith rebuilds the note pool."
 				<< std::endl);
 		}
 		lastSeenEpoch = state.epoch;
@@ -2097,16 +2001,12 @@ void NoteByNoteHighwayRenderer::RefreshSelectedTarget(void* owner)
 	if (loggedRecord != state.visualRecord)
 	{
 		loggedRecord = state.visualRecord;
-		// Both fretboard surfaces, because the predicate and the grid write see different
-		// populations: a note reaching the diagram through the predicate-skipping path in
-		// 0x7A5D50 is counted here and not there.
+		// The grid write is the sole fretboard visual gate; the predicate is intentionally a
+		// lifecycle pass-through.
 		LOG_INFO("(NBN FRETBOARD) Grid " << gridSuppressed << "/" << gridCalls
-			<< " suppressed, predicate " << fretboardSuppressed
-			<< "/" << fretboardCalls << " suppressed, since last target ("
+			<< " suppressed; predicate pass-through, since last target ("
 			<< selectedStringIndex << ':' << selectedFret
 			<< " +" << visualGroupCount << " group)." << std::endl);
-		fretboardCalls = 0;
-		fretboardSuppressed = 0;
 		gridCalls = 0;
 		gridSuppressed = 0;
 		gridProbesLogged = 0;
@@ -2131,11 +2031,11 @@ void NoteByNoteHighwayRenderer::RefreshSelectedTarget(void* owner)
 		submitCalls = 0;
 		submitSuppressed = 0;
 
-		LOG_INFO("(NBN PRESENTATION) Presenting only record=0x" << std::hex
+		LOG_INFO("(NBN PRESENTATION) Focusing the fretboard on record=0x" << std::hex
 			<< state.visualRecord << std::dec
 			<< " (" << state.visualString << ':' << state.visualFret << ")."
-			<< " Every other note is reported not presentable, so Rocksmith retires it"
-			<< " through its own lifecycle." << std::endl);
+			<< " Non-gesture grid cells are cleared after their native writes; all records"
+			<< " remain presentable and selectable." << std::endl);
 	}
 }
 

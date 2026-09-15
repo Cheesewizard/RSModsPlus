@@ -32,7 +32,7 @@ namespace RSModsPlus.Tests
 		private static void Main(string[] arguments)
 		{
 			var directory = Path.GetDirectoryName(Path.GetFullPath(arguments[0]));
-			var serviceDirectory = Path.Combine(directory, "RSMods");
+			var serviceDirectory = directory;
 			Directory.CreateDirectory(serviceDirectory);
 			File.Copy(arguments[0], Path.Combine(serviceDirectory, "RSMods.exe"), true);
 			File.WriteAllText(Path.Combine(directory, "rsmodsplus.dll"), "isolated launcher fixture");

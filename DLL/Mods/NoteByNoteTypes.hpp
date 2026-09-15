@@ -217,6 +217,12 @@ namespace ResearchProtocol
 		uint8_t compareHistory[CompareHistoryLength] = {};
 		NoteByNote::DetectionFeedback detectionFeedback;
 		uint8_t detectorPassesLevel = 0;
+
+		// Veto readout for the HUD (appended last; host and probe are built and deployed together).
+		// holdRefusal: DescribeDetectorRefusal of the latest gate sample ("none-visible" = the game's
+		// hidden onset/confidence gate). holdPhase: DescribeGatePhase of the mod's transport state.
+		char holdRefusal[24] = {};
+		char holdPhase[32] = {};
 	};
 
 	using ScoringUpdate = void(__stdcall*)(void* owner, float updateTime);

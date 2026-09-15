@@ -22,11 +22,12 @@
 // docs/investigations/note-by-note-input-gates.md. The frame rate is still worth
 // recovering on its own merits; it is not the reason a hold stalls.
 //
-// Returning zero for non-selected notes is therefore the entire feature, expressed
-// through the engine's own lifecycle rather than fought from outside it.
+// The predicate also owns note retirement, so it must remain a pass-through for Note by
+// Note. Fretboard-only suppression is applied after the native grid write completes,
+// preserving future records for the selector while clearing non-gesture cells visually.
 namespace NoteByNoteHighwayRenderer
 {
-	// Installs the presentability detour. Safe to call once at startup.
+	// Installs the non-destructive presentation hooks. Safe to call once at startup.
 	bool InstallPresentationGate();
 
 	// Refreshes the cached target once per native preparation pass.

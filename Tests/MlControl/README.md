@@ -14,7 +14,8 @@ Checks cover child replacement ordering, explicit recovery after exit, no automa
 retry, fresh/stale audio results, protocol mismatch, missing package recovery and
 child shutdown with its host. A 30-second host watchdog bounds failures.
 
-`UiPreview.cs` hosts the production panel off-screen for layout inspection without
-running the real settings form's startup/install operations. Compile it with
-`GUI/UI.MlService.cs` and `RSModsPlus/MachineLearning/MlServiceConnection.cs`, referencing
-System.Windows.Forms and System.Drawing, then pass a PNG output path.
+Run `cmd /c Tests\MlControl\run-ui.cmd` to host the production ML panel off-screen
+without running the real settings form's startup/install operations. It checks six
+status transitions and verifies that 600 unchanged updates produce no control
+changes or invalidations, then saves a panel PNG beside the test executable.
+This checks repaint behaviour in the isolated panel, not live-game visual acceptance.

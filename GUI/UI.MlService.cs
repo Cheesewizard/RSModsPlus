@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Forms;
@@ -9,30 +9,27 @@ namespace RSMods
 	public partial class MainForm
 	{
 		private Label mlConnectionLabel;
-		private Button mlRestartButton;
+		private RSMods.Audio.StudioButton mlRestartButton;
 		private DateTime mlRestartRequestedUntil;
 		private int mlGameProcessId;
 
-		private void InitializeMlServiceControls()
+		private void InitializeMlServiceControls(FlowLayoutPanel page)
 		{
-			var group = new GroupBox
+			var group = new Panel
 			{
-				Text = "ML note detection",
-				Location = new Point(16, 180),
-				Size = new Size(1110, 90),
+				BackColor = RSMods.Audio.StudioTheme.Surface, ForeColor = RSMods.Audio.StudioTheme.Muted,
+				Margin = new Padding(0, 8, 0, 0),
+				Size = new Size(810, 108),
 				TabIndex = 1
 			};
-			mlConnectionLabel = new Label { Location = new Point(16, 26), Size = new Size(885, 24), Text = "Checking ML connection…", AutoEllipsis = true };
-			mlRestartButton = new Button { Text = "Restart ML service", Location = new Point(920, 22), Size = new Size(170, 28), Enabled = false };
+			group.Controls.Add(new Label { Text = "ML NOTE DETECTION", Font = RSMods.Audio.StudioTheme.SectionFont, Location = new Point(16, 12), AutoSize = true });
+			mlConnectionLabel = new Label { Location = new Point(16, 38), Size = new Size(595, 24), Text = "Checking ML connection…", AutoEllipsis = true };
+			mlRestartButton = new RSMods.Audio.StudioButton("Restart ML service") { Location = new Point(622, 32), Size = new Size(170, 32), Enabled = false };
 			mlRestartButton.Click += RestartMlService;
 			group.Controls.Add(mlConnectionLabel);
 			group.Controls.Add(mlRestartButton);
-			group.Controls.Add(new Label { Location = new Point(16, 56), Size = new Size(1078, 20), Text = "Status updates automatically. Restart reloads ML note detection while Rocksmith stays open." });
-			tab_RSModsPlus.Controls.Add(group);
-			groupBox_RSModsPlus_AudioStatus.Location = new Point(16, 284);
-			groupBox_RSModsPlus_AudioStatus.Size = new Size(1110, 212);
-			groupBox_RSModsPlus_AudioStatus.TabIndex = 2;
-			textBox_RSModsPlus_AudioStatus.Size = new Size(1078, 142);
+			group.Controls.Add(new Label { Location = new Point(16, 74), Size = new Size(778, 24), Font = RSMods.Audio.StudioTheme.Small, Text = "Status updates automatically. Restart reloads ML note detection while Rocksmith stays open." });
+			page.Controls.Add(group);
 			var timer = new Timer(components) { Interval = 1000 };
 			timer.Tick += RefreshMlConnection;
 			timer.Start();
@@ -41,8 +38,6 @@ namespace RSMods
 
 		private void RefreshMlConnection(object sender, EventArgs arguments)
 		{
-			mlRestartButton.Enabled = false;
-			mlConnectionLabel.ForeColor = SystemColors.ControlText;
 			try
 			{
 				var games = Process.GetProcessesByName("Rocksmith2014");
@@ -51,18 +46,16 @@ namespace RSMods
 					mlGameProcessId = games.Length == 1 ? games[0].Id : 0;
 					if (mlGameProcessId == 0)
 					{
-						mlConnectionLabel.Text = games.Length == 0 ? "Disconnected — Rocksmith is not running." : "Multiple Rocksmith processes found — close the extra game before restarting ML.";
+						ApplyMlConnectionState(games.Length == 0 ? "Disconnected — Rocksmith is not running." : "Multiple Rocksmith processes found — close the extra game before restarting ML.", false, false);
 						return;
 					}
 					var connection = MlServiceConnection.Read(mlGameProcessId);
 					if (DateTime.UtcNow < mlRestartRequestedUntil)
 					{
-						mlConnectionLabel.Text = "Restart requested — waiting for the game…";
+						ApplyMlConnectionState("Restart requested — waiting for the game…", false, false);
 						return;
 					}
-					mlConnectionLabel.Text = connection.Message;
-					mlConnectionLabel.ForeColor = connection.IsConnected ? Color.DarkGreen : SystemColors.ControlText;
-					mlRestartButton.Enabled = connection.CanRestart;
+					ApplyMlConnectionState(connection.Message, connection.IsConnected, connection.CanRestart);
 				}
 				finally
 				{
@@ -71,8 +64,25 @@ namespace RSMods
 			}
 			catch (Exception exception)
 			{
-				mlConnectionLabel.Text = "Cannot read ML status: " + exception.Message;
+				ApplyMlConnectionState("Cannot read ML status: " + exception.Message, false, false);
 				Trace.TraceError(exception.ToString());
+			}
+		}
+
+		private void ApplyMlConnectionState(string message, bool isConnected, bool canRestart)
+		{
+			var colour = isConnected ? RSMods.Audio.StudioTheme.Positive : RSMods.Audio.StudioTheme.Muted;
+			if (mlConnectionLabel.Text != message)
+			{
+				mlConnectionLabel.Text = message;
+			}
+			if (mlConnectionLabel.ForeColor != colour)
+			{
+				mlConnectionLabel.ForeColor = colour;
+			}
+			if (mlRestartButton.Enabled != canRestart)
+			{
+				mlRestartButton.Enabled = canRestart;
 			}
 		}
 

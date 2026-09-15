@@ -55,14 +55,6 @@ namespace NoteByNoteNativeScoring
 	void SetFlowLateGraceSeconds(float seconds);
 	float GetFlowLateGraceSeconds();
 
-	// Heap-corruption tripwire (2026-08-26 loop-crash forensics): validates every
-	// process heap at the hold-lifecycle seams so corruption is detected at a named
-	// seam. Default ON; the toggle is the revert if the validation cost ever shows.
-	void SetHeapCheckEnabled(bool shouldEnable);
-	// Cross-thread lattice arm: lets other threads (the render hook) run the same
-	// named-seam heap validation, so a wandering corruption gets a thread-labeled
-	// bracket. Same enable flag and latch as the scoring-side checkpoints.
-	void HeapCheckpointForResearch(const char* seam);
 	bool GetChordHoldsEnabled();
 	// Verbose trace (2026-08-29): on = the per-tick DETECT/BEND/CHORD-WINDOW/eval-false
 	// spam logs for diagnosis; off (default) = only event logs, for play-for-fun FPS.
@@ -145,6 +137,14 @@ namespace NoteByNoteNativeScoring
 	// Formats the chord a native note object would be judged as - "G5 [3/5/5/x/x/x]"
 	// - from the SNG chord template at note+0x30 (name at +0x28, per-string frets
 	// at +0x04, values < 0x1A playable). Returns false when the note carries no
-	// readable template. Used by the desync logs and the overlay target line.
+	// readable template. Used by the desync logs.
+	bool TryDescribeSelectedChordTarget(uintptr_t record, char* buffer, size_t bufferLength);
 	bool TryDescribeChordTarget(uintptr_t noteAddress, char* buffer, size_t bufferLength);
+	// Formats only the selected chord's six-string fingering for the compact HUD row and
+	// returns its lowest played string for the matching colour marker.
+	bool TryDescribeSelectedChordFingering(
+		uintptr_t record,
+		char* buffer,
+		size_t bufferLength,
+		int& lowestPlayedString);
 }
