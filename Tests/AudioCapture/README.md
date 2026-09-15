@@ -93,3 +93,8 @@ per invocation, and direct caller capture. `lifecycle-overflow` verifies bounded
 event storage and explicit drops without overwriting unread events. All 15
 scenarios pass with tracing compiled in. This does not reproduce device startup
 or establish the cause of the reported in-game Stop.
+
+The `capture-timestamp-lag` scenario verifies that delivery timing does not
+subtract half a packet from the Windows timestamp delta. It also covers absent
+and error timestamps, recovery, and exclusion of ASIO timestamps. This validates
+the calculation, not physical guitar-to-output latency.

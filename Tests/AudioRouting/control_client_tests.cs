@@ -31,16 +31,26 @@ namespace RSMods.Tests
 					}
 				}
 				status = client.SendAsync(7, "81").GetAwaiter().GetResult();
-				for (int take = 0; take < 2; take++)
+				for (int take = 0; take < 4; take++)
 				{
-					status = client.SendAsync(2, arguments[1]).GetAwaiter().GetResult();
+					bool isDry = take >= 2;
+					status = client.SendAsync(isDry ? 14u : 2u, arguments[1]).GetAwaiter().GetResult();
 					if (!status.IsRecording) throw new Exception("Record was not acknowledged.");
+					if (status.IsDryRecording != isDry || !status.IsDryInputReady) throw new Exception("Native recording source or readiness decoded incorrectly.");
 					status = client.SendAsync(8, "40").GetAwaiter().GetResult();
 					if (!status.IsRecording || status.Volumes[1] != 40 || status.Volumes[0] != 81)
 						throw new Exception("Mixer adjustment interrupted the take or changed the other channel.");
 					Thread.Sleep(80);
 					status = client.SendAsync(3).GetAwaiter().GetResult();
 					if (status.IsRecording || status.Frames == 0 || status.RecordingStarted == 0 || !File.Exists(status.FilePath)) throw new Exception("The native take did not finalize.");
+					if (isDry)
+					{
+						var wave = File.ReadAllBytes(status.FilePath);
+						for (int offset = 44; offset < wave.Length; offset += 2)
+						{
+							if (BitConverter.ToInt16(wave, offset) != 8192) throw new Exception("Dry take included game playback.");
+						}
+					}
 				}
 				Console.WriteLine("PASS: production C# client recorded repeated takes through the native pipe");
 				return 0;

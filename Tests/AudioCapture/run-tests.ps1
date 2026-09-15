@@ -5,7 +5,7 @@ param(
 		'startup-liveness', 'neutral-passthrough', 'neutral-int16', 'neutral-int24',
 		'neutral-float32', 'stopped-readiness', 'concurrent-rebind', 'multiple-routes',
 		'rejected-format', 'buffer-results', 'active-shift', 'concurrent-players', 'late-attachment',
-		'lifecycle-forwarding', 'lifecycle-overflow'
+		'lifecycle-forwarding', 'lifecycle-overflow', 'persistent-readiness', 'capture-timestamp-lag'
 	)
 )
 

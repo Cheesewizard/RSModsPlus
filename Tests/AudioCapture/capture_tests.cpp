@@ -2,10 +2,13 @@
 // registration and callback paths can be exercised without a game or an ASIO driver.
 #define RSMODS_AUDIO_LIFECYCLE_TRACE
 #include "../../DLL/Audio/AsioHook.cpp"
+#include "../../DLL/Audio/GameAudioRecorder.cpp"
 #include "../../DLL/Audio/DelayLinePitchShifter.cpp"
 
 #include <stdexcept>
 #include <future>
+#include <fstream>
+#include <wrl.h>
 
 namespace AudioCaptureTests
 {
@@ -17,9 +20,28 @@ namespace AudioCaptureTests
 		HRESULT result = S_OK;
 		UINT32 frames = 4;
 		DWORD flags = 0;
+		bool liveTimestamp = false;
+		Audio::PersistentInput::ICaptureState* bridgeState = nullptr;
 	};
 
 	unsigned observedPackets = 0;
+	bool asioPath = true;
+	double observedLag = -2.0;
+	int64_t observedDelta = 0;
+
+	HRESULT STDMETHODCALLTYPE QueryCaptureInterface(IUnknown* self, REFIID id, void** object)
+	{
+		if (!object) return E_POINTER;
+		*object = nullptr;
+		auto& capture = *reinterpret_cast<FakeCapture*>(self);
+		if (id == __uuidof(Audio::PersistentInput::ICaptureState) && capture.bridgeState)
+		{
+			capture.bridgeState->AddRef();
+			*object = capture.bridgeState;
+			return S_OK;
+		}
+		return E_NOINTERFACE;
+	}
 
 	struct FakeAudioClient
 	{
@@ -93,14 +115,37 @@ namespace AudioCaptureTests
 		*frames = capture.frames;
 		*flags = capture.flags;
 		if (device) *device = 42;
-		if (counter) *counter = 123;
+		if (counter)
+		{
+			LARGE_INTEGER now{}, frequency{};
+			QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
+			*counter = capture.liveTimestamp ? UINT64(now.QuadPart * 10000000.0 / frequency.QuadPart) - 2000 : 0;
+		}
 		return capture.result;
+	}
+
+	HRESULT STDMETHODCALLTYPE QueryBufferClient(IUnknown* self, REFIID, void** object)
+	{
+		*object = self;
+		return S_OK;
+	}
+
+	ULONG STDMETHODCALLTYPE RetainBufferClient(IUnknown*) { return 1; }
+
+	HRESULT STDMETHODCALLTYPE ReadBufferSize(IAudioClient*, UINT32* frames)
+	{
+		*frames = 128;
+		return S_OK;
 	}
 
 	void Attach(FakeCapture& capture, uint32_t sampleRate = 48000, uint16_t bits = 32,
 		uint16_t formatTag = WAVE_FORMAT_PCM)
 	{
 		Audio::AsioHook::PaWasapiStreamPrefix stream{};
+		void* clientTable[] = { reinterpret_cast<void*>(&QueryBufferClient), reinterpret_cast<void*>(&RetainBufferClient),
+			reinterpret_cast<void*>(&RetainBufferClient), nullptr, reinterpret_cast<void*>(&ReadBufferSize) };
+		FakeAudioClient client{ clientTable };
+		stream.input.clientProc = reinterpret_cast<IUnknown*>(&client);
 		stream.input.clientParent = reinterpret_cast<IUnknown*>(&capture);
 		stream.captureClient = reinterpret_cast<IAudioCaptureClient*>(&capture);
 		stream.input.waveFormat.Format.wFormatTag = formatTag;
@@ -123,25 +168,70 @@ namespace AudioCaptureTests
 			"GetBuffer outputs changed");
 	}
 
+	void CaptureTimestampLag()
+	{
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		FakeCapture capture{ table };
+		capture.frames = 480;
+		capture.flags = AUDCLNT_BUFFERFLAGS_SILENT;
+		capture.liveTimestamp = true;
+		asioPath = false;
+		Audio::DelayLinePitchShifter processor(0);
+		Audio::AsioHook::configuredInputs[0] = true;
+		Audio::AsioHook::SetProcessor(0, &processor);
+		Attach(capture);
+		Audio::AsioHook::Poll();
+		auto read = [&]
+		{
+			BYTE* data = nullptr; UINT32 frames = 0; DWORD flags = 0;
+			Require(Audio::AsioHook::Hook_CaptureGetBuffer(reinterpret_cast<IAudioCaptureClient*>(&capture),
+				&data, &frames, &flags, nullptr, nullptr) == S_OK, "Timing read failed");
+		};
+		read();
+		Require(observedLag >= 0.2 && std::abs(observedLag - observedDelta / 10000.0) < 0.0002,
+			"Timestamp lag incorrectly subtracts half the packet duration");
+		capture.flags |= AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR;
+		read();
+		Require(observedLag == -1.0, "Timestamp error retained a valid measurement");
+		capture.flags = AUDCLNT_BUFFERFLAGS_SILENT;
+		capture.liveTimestamp = false;
+		observedLag = -2.0;
+		read();
+		Require(observedLag == -1.0, "Missing timestamp retained a valid measurement");
+		capture.liveTimestamp = true;
+		read();
+		Require(observedLag >= 0.2, "Valid timestamp did not recover");
+		asioPath = true;
+		observedLag = -2.0;
+		read();
+		Require(observedLag == -2.0, "ASIO timestamp interpreted as WASAPI time");
+	}
+
 	void StartupLiveness()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture original{ table };
 		FakeCapture newcomer{ table };
 		Audio::AsioHook::configuredInputs[0] = true;
 		Attach(original);
+		Require(Audio::AsioBufferState::Read() == 0, "ASIO buffer reported before packets arrived");
 		const auto originalSamples = original.samples;
 		Read(original);
+		const auto inputFormat = Audio::AsioBufferState::Read();
+		Require(uint32_t(inputFormat) == 128, "ASIO buffer used packet size instead of initialized client size");
+		Require(uint32_t(inputFormat >> 32) == 48000, "ASIO buffer lost negotiated sample rate");
 		Require(original.samples == originalSamples, "Disabled hook modified samples");
 		Require(original.calls == 1, "Capture called more than once");
 		Attach(newcomer);
 		Require(Audio::AsioHook::FindCaptureRoute(reinterpret_cast<IAudioCaptureClient*>(&original)) == 0,
 			"A delivering startup stream was stolen before processing became ready");
+		Audio::AsioBufferState::lastPacket.store(GetTickCount64() - 3001);
+		Require(Audio::AsioBufferState::Read() == 0, "Stalled ASIO retained active buffer telemetry");
 	}
 
 	void NeutralPassthrough(uint16_t bits = 32, uint16_t formatTag = WAVE_FORMAT_PCM)
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture capture{ table };
 		Audio::DelayLinePitchShifter shifter(0);
 		Audio::AsioHook::configuredInputs[0] = true;
@@ -156,7 +246,7 @@ namespace AudioCaptureTests
 
 	void StoppedReadiness()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture capture{ table };
 		Audio::DelayLinePitchShifter shifter(0);
 		Audio::AsioHook::configuredInputs[0] = true;
@@ -214,7 +304,7 @@ namespace AudioCaptureTests
 
 	void ConcurrentRebind()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture original{ table };
 		FakeCapture replacement{ table };
 		BlockingProcessor processor;
@@ -248,7 +338,7 @@ namespace AudioCaptureTests
 
 	void MultipleRoutes()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture first{ table }, second{ table }, unrelated{ table };
 		Audio::DelayLinePitchShifter firstProcessor(0), secondProcessor(0);
 		Audio::AsioHook::configuredInputs = { true, true };
@@ -270,7 +360,7 @@ namespace AudioCaptureTests
 
 	void RejectedFormat()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture original{ table }, invalid{ table };
 		Audio::DelayLinePitchShifter processor(0);
 		Audio::AsioHook::configuredInputs[0] = true;
@@ -286,7 +376,7 @@ namespace AudioCaptureTests
 
 	void BufferResults()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture capture{ table };
 		Audio::DelayLinePitchShifter processor(0);
 		Audio::AsioHook::configuredInputs[0] = true;
@@ -315,7 +405,7 @@ namespace AudioCaptureTests
 
 	void ActiveShift()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture capture{ table };
 		Audio::DelayLinePitchShifter processor(-1);
 		Audio::AsioHook::configuredInputs[0] = true;
@@ -326,11 +416,34 @@ namespace AudioCaptureTests
 		Read(capture);
 		Require(capture.samples != before, "Active shifter output was discarded");
 		Require(observedPackets == 1, "Active shift lost observation");
+		Audio::GameAudioRecorder recorder;
+		const auto directory = std::filesystem::temp_directory_path() / ("RSMods-dry-hook-" + std::to_string(GetCurrentProcessId()));
+		Require(SUCCEEDED(recorder.Open(directory, 4096)), "Dry hook recorder open failed");
+		Require(SUCCEEDED(Audio::DrySignalRecording::Attach(recorder)), "Dry hook attachment failed");
+		capture.samples = before;
+		Read(capture);
+		Require(capture.samples != before, "Dry recording test did not exercise shifted input");
+		Audio::DrySignalRecording::Detach();
+		recorder.Close();
+		Require(recorder.GetFrames() == 4, "Dry hook did not capture input frames");
+		std::ifstream wave(recorder.GetPath(), std::ios::binary);
+		wave.seekg(44);
+		for (size_t frame = 0; frame < 4; ++frame)
+		{
+			int16_t stereo[2]{};
+			wave.read(reinterpret_cast<char*>(stereo), sizeof(stereo));
+			const float shifted = Audio::AsioHook::conversionBuffers[0][frame];
+			const auto expected = static_cast<int16_t>(std::lround(std::clamp(shifted, -1.0f, 1.0f) * 32767.0f));
+			Require(stereo[0] == expected && stereo[1] == expected, "Dry hook did not record the pitch shifter output in both channels");
+		}
+		wave.close();
+		std::filesystem::remove(recorder.GetPath());
+		std::filesystem::remove(directory);
 	}
 
 	void ConcurrentPlayers()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture first{ table }, second{ table };
 		BlockingProcessor firstProcessor, secondProcessor;
 		Audio::AsioHook::configuredInputs = { true, true };
@@ -349,9 +462,50 @@ namespace AudioCaptureTests
 		Require(bothEntered, "Concurrent player callbacks blocked or suppressed each other");
 	}
 
+	class BridgeState final : public Microsoft::WRL::RuntimeClass<Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, Audio::PersistentInput::ICaptureState>
+	{
+	public:
+		bool physical = false;
+		UINT64 generation = 0;
+		BOOL STDMETHODCALLTYPE IsPhysicalPacket() override { return physical; }
+		UINT64 STDMETHODCALLTYPE GetGeneration() override { return generation; }
+	};
+
+	void PersistentReadiness()
+	{
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		FakeCapture capture{ table };
+		auto state = Microsoft::WRL::Make<BridgeState>();
+		capture.bridgeState = state.Get();
+		BlockingProcessor processor;
+		processor.release = true;
+		Audio::AsioHook::configuredInputs[0] = true;
+		Audio::AsioHook::SetProcessor(0, &processor);
+		Attach(capture);
+		Read(capture);
+		Audio::AsioHook::Poll();
+		Require(!Audio::AsioHook::IsInputReady(0), "Placeholder was ready immediately after preparation");
+		Read(capture);
+		Require(!Audio::AsioHook::IsInputReady(0) && !processor.entered, "Placeholder reached the pitch processor");
+		state->physical = true;
+		Read(capture);
+		Require(Audio::AsioHook::IsInputReady(0) && processor.entered, "Physical input did not become ready");
+		const unsigned preparations = processor.preparations;
+		state->physical = false;
+		++state->generation;
+		Require(!Audio::AsioHook::IsInputReady(0), "Disconnected input still ready before next packet");
+		processor.entered = false;
+		Read(capture);
+		Audio::AsioHook::Poll();
+		Require(processor.preparations == preparations + 1 && !processor.entered, "Disconnect did not safely reset processor state");
+		state->physical = true;
+		Read(capture);
+		Require(Audio::AsioHook::IsInputReady(0), "Physical reconnect never became ready");
+	}
+
 	void LateAttachment()
 	{
-		void* table[4] = { nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
+		void* table[4] = { reinterpret_cast<void*>(&QueryCaptureInterface), nullptr, nullptr, reinterpret_cast<void*>(&GetBuffer) };
 		FakeCapture capture{ table };
 		Audio::DelayLinePitchShifter processor(0);
 		Audio::AsioHook::configuredInputs[0] = true;
@@ -378,10 +532,10 @@ bool MemUtil::PatchAdr(LPVOID address, LPVOID replacement, size_t length)
 
 namespace Audio::CableInput
 {
-	bool IsAsioPath() { return true; }
+	bool IsAsioPath() { return AudioCaptureTests::asioPath; }
 	void ReportTapPacket(float, bool, uint32_t, uint32_t) { ++AudioCaptureTests::observedPackets; }
-	void ReportMeasuredInputRaw(int64_t, uint32_t) {}
-	void ReportMeasuredInputAge(double) {}
+	void ReportMeasuredInputRaw(int64_t delta, uint32_t) { AudioCaptureTests::observedDelta = delta; }
+	void ReportCaptureTimestampLag(double lag) { AudioCaptureTests::observedLag = lag; }
 }
 
 void RawPitchVerifier::Observe(uint32_t, const float*, uint32_t, uint32_t) {}
@@ -413,6 +567,8 @@ int main(int argc, char** argv)
 		else if (test == "active-shift") AudioCaptureTests::ActiveShift();
 		else if (test == "concurrent-players") AudioCaptureTests::ConcurrentPlayers();
 		else if (test == "late-attachment") AudioCaptureTests::LateAttachment();
+		else if (test == "capture-timestamp-lag") AudioCaptureTests::CaptureTimestampLag();
+		else if (test == "persistent-readiness") AudioCaptureTests::PersistentReadiness();
 		else if (test == "lifecycle-forwarding") AudioCaptureTests::LifecycleForwarding();
 		else if (test == "lifecycle-overflow") AudioCaptureTests::LifecycleOverflow();
 		else throw std::invalid_argument("Unknown test");
