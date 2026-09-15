@@ -8,7 +8,7 @@ namespace Audio
 		Close();
 	}
 
-	HRESULT GameAudioRecorder::Open(const std::filesystem::path& directory, uint32_t maximumFrames)
+	HRESULT GameAudioRecorder::Open(const std::filesystem::path& directory, uint32_t maximumFrames, const wchar_t* label)
 	{
 		if (writer.joinable() || file != INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
 		if (maximumFrames == 0 || maximumFrames > 48000) return E_INVALIDARG;
@@ -17,18 +17,26 @@ namespace Audio
 		if (directoryError) return HRESULT_FROM_WIN32(directoryError.value());
 		SYSTEMTIME time{};
 		GetLocalTime(&time);
-		wchar_t name[128];
+		wchar_t name[160];
 		static std::atomic<uint32_t> sequence{ 0 };
-		swprintf_s(name, L"Rocksmith-%04u%02u%02u-%02u%02u%02u-%u-%u.wav", time.wYear, time.wMonth,
-			time.wDay, time.wHour, time.wMinute, time.wSecond, GetCurrentProcessId(), sequence.fetch_add(1));
+		const wchar_t* separator = (label && label[0]) ? L"-" : L"";
+		swprintf_s(name, L"Rocksmith-%04u%02u%02u-%02u%02u%02u-%u-%u%ls%ls.wav", time.wYear, time.wMonth,
+			time.wDay, time.wHour, time.wMinute, time.wSecond, GetCurrentProcessId(), sequence.fetch_add(1),
+			separator, (label ? label : L""));
 		recordingPath = (directory / name).wstring();
 		file = CreateFileW(recordingPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (file == INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(GetLastError());
 		packetLimit = maximumFrames;
-		queue.Initialize(maximumFrames * 2 * sizeof(int16_t), std::max<uint32_t>(4, 96000 / maximumFrames));
+		// Buffer enough packets to ride out disk contention (e.g. simultaneous video capture) without
+		// overrunning. Input blocks can be far smaller than maximumFrames (ASIO delivers ~128 frames),
+		// and each block consumes one slot, so a slot count tied only to maximumFrames left ~60 ms of
+		// headroom - too shallow when video is also writing. Guarantee a deeper floor of packets.
+		queue.Initialize(maximumFrames * 2 * sizeof(int16_t), std::max<uint32_t>(256, 96000 / maximumFrames));
 		wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 		if (!wakeEvent) { const HRESULT result = HRESULT_FROM_WIN32(GetLastError()); Close(); return result; }
 		dataBytes = 0;
+		recordedFrames.store(0);
+		recordingStarted.store(0);
 		error.store(S_OK);
 		stopping.store(false);
 		if (!WriteHeader()) { const HRESULT result = HRESULT_FROM_WIN32(GetLastError()); Close(); return result; }
@@ -39,8 +47,19 @@ namespace Audio
 
 	void GameAudioRecorder::Submit(const float* stereo, uint32_t frames) noexcept
 	{
+		SubmitSamples(stereo, frames, 2);
+	}
+
+	void GameAudioRecorder::SubmitMono(const float* mono, uint32_t frames, uint32_t sampleRate) noexcept
+	{
+		if (sampleRate != 48000) { error.store(AUDCLNT_E_UNSUPPORTED_FORMAT); return; }
+		SubmitSamples(mono, frames, 1);
+	}
+
+	void GameAudioRecorder::SubmitSamples(const float* samples, uint32_t frames, uint32_t channels) noexcept
+	{
 		if (!wakeEvent || FAILED(error.load(std::memory_order_relaxed))) return;
-		if (!stereo || frames > packetLimit) { error.store(E_INVALIDARG); return; }
+		if (!samples || !frames || frames > packetLimit) { error.store(E_INVALIDARG); return; }
 		auto* destination = reinterpret_cast<int16_t*>(queue.BeginWrite());
 		if (!destination)
 		{
@@ -50,10 +69,18 @@ namespace Audio
 		}
 		for (uint32_t sample = 0; sample < frames * 2; ++sample)
 		{
-			const float value = std::isfinite(stereo[sample]) ? std::clamp(stereo[sample], -1.0f, 1.0f) : 0.0f;
+			const float input = samples[channels == 1 ? sample / 2 : sample];
+			const float value = std::isfinite(input) ? std::clamp(input, -1.0f, 1.0f) : 0.0f;
 			destination[sample] = static_cast<int16_t>(std::lround(value * 32767.0f));
 		}
 		queue.CommitWrite(frames * 2 * sizeof(int16_t));
+		if (!recordingStarted.load())
+		{
+			FILETIME time{};
+			GetSystemTimePreciseAsFileTime(&time);
+			recordingStarted.store((static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime);
+		}
+		recordedFrames.fetch_add(frames);
 		SetEvent(wakeEvent);
 	}
 

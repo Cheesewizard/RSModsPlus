@@ -1,14 +1,19 @@
 #include "stdafx.h"
 #include "AsioHook.hpp"
+#include "AsioBufferState.hpp"
 #include "AudioLifecycleTrace.hpp"
 #include "ComVTable.hpp"
 #include "CaptureProcessingGate.hpp"
 #include "CableInput.hpp"
 #include "MlAudioExporter.hpp"
 #include "RawPitchVerifier.hpp"
+#include "DrySignalRecording.hpp"
+#include "PersistentInput.hpp"
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -21,9 +26,55 @@ namespace Audio::AsioHook
 	{
 		constexpr size_t SLOT_CAPTURE_CLIENT_GET_BUFFER = 3;
 		constexpr uint32_t MAX_BUFFER_FRAMES = 4096;
+
+		// Make-up gain applied to the real guitar input (route 0) before the game's amp and note
+		// gate see it. A Real Tone Cable carries a hot built-in preamp (~+10-15 dB); an interface
+		// through RS_ASIO arrives that much quieter, so the game's level-sensitive noise gate mutes
+		// sustained notes early (worst on bends, where the fundamental momentarily dips). Lifting the
+		// input here restores the cable's headroom above the gate. 1.0 = unity (feature off).
+		std::atomic<float> g_inputGainLinear{ 1.0f };
+
+		// Downward-expander (soft noise gate) threshold, as a LINEAR amplitude, keyed to the RAW
+		// pre-gain input. 0 = disabled (feature off, input untouched). A guitar's decay tails sit well
+		// above the interface's own noise floor, so a threshold set just above that floor ducks the
+		// between-note hiss the make-up gain would otherwise amplify, WITHOUT chopping sustain - unlike
+		// the game's own hard Wwise gate, which is what the whole input-conditioner stage exists to dodge.
+		std::atomic<float> g_gateThresholdLinear{ 0.0f };
+
+		// Input compressor strength, 0..1 (0 = disabled). Emulates what the game's amp does when a hot
+		// Real Tone Cable drives it into compression: it squeezes the natural open-string AMPLITUDE
+		// BEATING out of the signal BEFORE the game amp, so the amp no longer magnifies that wobble into
+		// an audible warble on a quiet, undriven interface input (the ASIO/M-Track-only "gate coming in
+		// and out"). Proven cause 2026-09-11 by a cable-vs-M-Track in-game A/B; see [[asio-warble-is-string-beating]].
+		std::atomic<float> g_compressorStrength{ 0.0f };
+
+		// Mains-hum notch base frequency in Hz: 0 = disabled (feature off, input untouched), else 50 or 60.
+		// A grounded interface injects a stable ground-loop hum (a 50/60 Hz harmonic comb) that a single-USB
+		// Real Tone Cable never has; a bank of narrow notches at the fundamental and its harmonics removes it
+		// continuously (even during notes, unlike a gate) with negligible tone loss. Proven cause 2026-09-11
+		// by a wet-recording FFT (energy sat on the 50 Hz comb). See [[input-conditioner-static-fix]].
+		std::atomic<float> g_humFilterBaseHz{ 0.0f };
+
+		// Latency round-trip capture: when armed, raw route-0 input (the proxy's probe looped back through a
+		// physical out->in loop) is copied into a fixed buffer until full, then the host cross-correlates it
+		// against the known probe to recover the delay. Lock-free: the control thread never resizes (fixed
+		// buffer), only arms/reads; the audio thread appends by index. One-shot per arm.
+		constexpr int kLatencyMaxFrames = 48000;   // up to 1 s at 48 kHz
+		float g_latencyCapture[kLatencyMaxFrames]{};
+		std::atomic<int> g_latencyTarget{ 0 };   // >0 = capturing this many frames
+		std::atomic<int> g_latencyFilled{ 0 };
+
 		constexpr float INT16_TO_FLOAT = 1.0f / 32768.0f;
 		constexpr float INT24_TO_FLOAT = 1.0f / 8388608.0f;
 		constexpr float INT32_TO_FLOAT = 1.0f / 2147483648.0f;
+
+		// Front-of-chain input low-pass cutoff (Hz), applied only while the make-up gain is engaged.
+		// The DI guitar's musical energy sits below ~6 kHz (measured: below-6kHz RMS == full-band RMS on
+		// the dry capture); everything above is interface hiss plus discrete ~19-22 kHz whine that a flat
+		// make-up gain would otherwise lift into the game's amp as audible static. A real Tone Cable is
+		// band-limited the same way. Tweak this one value to trade brightness against hiss.
+		constexpr float INPUT_LOWPASS_HZ = 6000.0f;
+		constexpr size_t MAX_FILTER_CHANNELS = 8;
 		constexpr uint64_t UNMARSHAL_HOOK_RETRY_INTERVAL_MILLISECONDS = 250;
 		constexpr uint64_t INPUT_STALL_MILLISECONDS = 3000;
 
@@ -105,9 +156,14 @@ namespace Audio::AsioHook
 		std::array<std::atomic<IInputProcessor*>, INPUT_ROUTE_COUNT> inputSources;
 		std::array<std::atomic<bool>, INPUT_ROUTE_COUNT> inputSourceArmed;
 		std::array<std::atomic<IAudioCaptureClient*>, INPUT_ROUTE_COUNT> routeCaptureClients;
+		std::array<Microsoft::WRL::ComPtr<PersistentInput::ICaptureState>, INPUT_ROUTE_COUNT> bridgeStates;
+		std::array<std::atomic<UINT64>, INPUT_ROUTE_COUNT> bridgeGenerations;
 		std::array<int, INPUT_ROUTE_COUNT> selectedInputChannels{ -1, -1 };
 		std::array<bool, INPUT_ROUTE_COUNT> configuredInputs{ false, false };
 		std::array<std::atomic<bool>, INPUT_ROUTE_COUNT> inputReady;
+		std::atomic<bool> proxyInputSeen{ false };
+		std::atomic<uint32_t> proxyInputRate{ 0 };
+		std::atomic<int> proxyInputSampleFormat{ static_cast<int>(SampleFormat::Unsupported) };
 		std::atomic<bool> bufferLayoutReady{ false };
 		CaptureProcessingGate processingGate;
 		std::atomic<bool> autoEnabledOnce{ false };
@@ -123,6 +179,16 @@ namespace Audio::AsioHook
 		bool hasLoggedWaitingForRsAsio = false;
 		bool hasLoggedWaitingForRsAsioPatch = false;
 		uint64_t nextUnmarshalHookAttemptTick = 0;
+		bool proxyInputObserverInstalled = false;
+		uint64_t nextProxyInputObserverAttemptTick = 0;
+
+		struct ProxyInputChannel
+		{
+			void* buffer;
+			long channelNum;
+			long type;
+		};
+		using SetProxyInputObserver_t = void(__cdecl*)(void(__cdecl*)(const ProxyInputChannel*, long, long, double));
 
 		float ClampSample(float value)
 		{
@@ -193,24 +259,22 @@ namespace Audio::AsioHook
 			}
 			else
 			{
-				const char* outputDriver = reader.GetValue("Asio.Output", "Driver", "");
-				if (outputDriver && *outputDriver)
+				const bool usesWindowsInput = reader.GetBoolValue("Config", "EnableWasapiInputs", false);
+				if (usesWindowsInput)
 				{
 					configuration.inputConfigured[0] = true;
 					configuration.inputChannels[0] = 0;
-					configuration.inputSources[0] = "[Asio.Output] driver, assuming channel 0";
-					configuration.inputInferred[0] = true;
+					configuration.inputSources[0] = "the Windows Cable input";
 				}
 			}
 
 			return configuration;
 		}
 
-		// Whether RS_ASIO.dll exists beside the game executable. Deterministic where module
-		// presence is not: a loader can only ever load the DLL if the file is there, so
-		// "file absent" commits the native cable path immediately instead of waiting on a
-		// grace period that could outlast the game's one boot-time stream unmarshal.
-		bool RsAsioFileExists()
+		// Cable mode deliberately leaves RS_ASIO installed but disables its host. Only an
+		// explicitly enabled configuration may own the unmarshal path; otherwise install
+		// the native Cable hook before the game's one boot-time stream unmarshal.
+		bool IsRsAsioEnabled()
 		{
 			char path[MAX_PATH];
 			const DWORD length = GetModuleFileNameA(nullptr, path, MAX_PATH);
@@ -221,8 +285,11 @@ namespace Audio::AsioHook
 				const size_t slash = modulePath.find_last_of("\\/");
 				if (slash != std::string::npos) directory = modulePath.substr(0, slash + 1);
 			}
-			return GetFileAttributesA((directory + "RS_ASIO.dll").c_str())
-				!= INVALID_FILE_ATTRIBUTES;
+			if (GetFileAttributesA((directory + "RS_ASIO.dll").c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+
+			CSimpleIniA reader;
+			if (reader.LoadFile((directory + "RS_ASIO.ini").c_str()) < 0) return false;
+			return reader.GetBoolValue("Config", "EnableAsio", false);
 		}
 
 		bool IsRangeInsideModule(const void* address, size_t size, const MODULEINFO& moduleInfo)
@@ -395,6 +462,537 @@ namespace Audio::AsioHook
 			}
 		}
 
+		// Per-sample downward expander used as a soft noise gate on the raw route-0 input. It is a
+		// sidechained VCA: the detector follows channel 0's peak envelope with a short hold, and when the
+		// envelope falls below the threshold the applied gain is pulled down at EXPANDER_RATIO:1, floored
+		// at EXPANDER_RANGE_DB so it never fully mutes (avoids choppy tails). A fast attack lets notes
+		// through instantly; a slow release lets decays glide down instead of being chopped. Only touched
+		// on the capture (audio) thread, so it needs no synchronisation; state carries across packets.
+		struct NoiseGate
+		{
+			static constexpr float EXPANDER_RATIO = 3.0f;      // slope below threshold (3:1 = gentle gate)
+			static constexpr float EXPANDER_RANGE_DB = -35.0f; // deepest attenuation the gate will apply
+			static constexpr float ATTACK_SECONDS = 0.002f;    // how fast the gate opens on a new note
+			static constexpr float RELEASE_SECONDS = 0.180f;   // how slowly it closes so tails glide
+			static constexpr float DETECTOR_HOLD_SECONDS = 0.030f;
+
+			float envelope = 0.0f;      // peak-follower on the sidechain (linear)
+			float appliedGain = 1.0f;   // smoothed VCA gain currently applied (linear)
+			float attackCoef = 0.0f, releaseCoef = 0.0f, detectorCoef = 0.0f;
+			float rangeGain = 1.0f;
+			uint32_t coeffRate = 0;
+
+			void Configure(uint32_t sampleRate)
+			{
+				if (sampleRate == 0 || sampleRate == coeffRate) return;
+				coeffRate = sampleRate;
+				const double fs = static_cast<double>(sampleRate);
+				attackCoef = static_cast<float>(1.0 - std::exp(-1.0 / (ATTACK_SECONDS * fs)));
+				releaseCoef = static_cast<float>(1.0 - std::exp(-1.0 / (RELEASE_SECONDS * fs)));
+				detectorCoef = static_cast<float>(std::exp(-1.0 / (DETECTOR_HOLD_SECONDS * fs)));
+				rangeGain = std::pow(10.0f, EXPANDER_RANGE_DB / 20.0f);
+			}
+
+			// Advances the detector and VCA for one frame given the sidechain sample, returning the gain
+			// to apply to every channel of that frame.
+			inline float NextGain(float sidechain, float threshold)
+			{
+				const float rectified = std::fabs(sidechain);
+				envelope = rectified > envelope ? rectified : envelope * detectorCoef;
+
+				float target;
+				if (envelope >= threshold)
+				{
+					target = 1.0f;
+				}
+				else
+				{
+					// dB below threshold * (ratio - 1) = attenuation in dB (negative), floored at range.
+					const float belowDb = 20.0f * std::log10((envelope + 1e-9f) / threshold);
+					const float reductionDb = belowDb * (EXPANDER_RATIO - 1.0f);
+					target = reductionDb <= EXPANDER_RANGE_DB ? rangeGain : std::pow(10.0f, reductionDb / 20.0f);
+				}
+
+				// Open fast, close slow: pick the coefficient by the direction of travel.
+				const float coef = target > appliedGain ? attackCoef : releaseCoef;
+				appliedGain += (target - appliedGain) * coef;
+				return appliedGain;
+			}
+		};
+
+		NoiseGate g_noiseGate;
+
+		// Applies the soft noise gate to the raw capture buffer in place, ahead of the make-up gain, so
+		// its detector sees the true input level (independent of the gain slider). Mirrors
+		// ScaleBufferInPlace's format handling. Runs only while a threshold is set, so the feature-off
+		// path stays bit-exact.
+		void ProcessGateInPlace(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float threshold)
+		{
+			const size_t channelCount = format.channelCount;
+			if (channelCount == 0) return;
+			g_noiseGate.Configure(format.sampleRate);
+
+			switch (format.sampleFormat)
+			{
+			case SampleFormat::Float32:
+			{
+				float* samples = reinterpret_cast<float*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t base = static_cast<size_t>(frame) * channelCount;
+					const float gain = g_noiseGate.NextGain(samples[base], threshold);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[base + channel] = ClampSample(samples[base + channel] * gain);
+				}
+				break;
+			}
+			case SampleFormat::Int32:
+			{
+				int32_t* samples = reinterpret_cast<int32_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t base = static_cast<size_t>(frame) * channelCount;
+					const float gain = g_noiseGate.NextGain(static_cast<float>(samples[base]) * INT32_TO_FLOAT, threshold);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[base + channel] = FloatToSignedInteger<int32_t, 32>(static_cast<float>(samples[base + channel]) * INT32_TO_FLOAT * gain);
+				}
+				break;
+			}
+			case SampleFormat::Int24:
+			{
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t base = static_cast<size_t>(frame) * channelCount;
+					const float gain = g_noiseGate.NextGain(static_cast<float>(ReadInt24(packet + base * 3)) * INT24_TO_FLOAT, threshold);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = base + channel;
+						const float scaled = static_cast<float>(ReadInt24(packet + index * 3)) * INT24_TO_FLOAT * gain;
+						WriteInt24(FloatToSignedInteger<int32_t, 24>(scaled), packet + index * 3);
+					}
+				}
+				break;
+			}
+			case SampleFormat::Int16:
+			{
+				int16_t* samples = reinterpret_cast<int16_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t base = static_cast<size_t>(frame) * channelCount;
+					const float gain = g_noiseGate.NextGain(static_cast<float>(samples[base]) * INT16_TO_FLOAT, threshold);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[base + channel] = FloatToSignedInteger<int16_t, 16>(static_cast<float>(samples[base + channel]) * INT16_TO_FLOAT * gain);
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+
+		// Feed-forward compressor run per frame over the raw route-0 input (mono channel-0 sidechain),
+		// applied to every channel. A single "strength" macro (0..1) sweeps threshold, ratio and make-up
+		// together: at 0 it is a bypass, toward 1 it clamps down harder. Fast attack / medium release
+		// track and flatten the slow (1-6 Hz) string-beat wobble so the game amp receives a steadier
+		// envelope and cannot magnify it into a warble. Audio-thread only; state carries across packets.
+		struct Compressor
+		{
+			static constexpr float ATTACK_SECONDS = 0.008f;
+			static constexpr float RELEASE_SECONDS = 0.090f;
+
+			float ratio = 1.0f, thresholdDb = 0.0f, makeupLinear = 1.0f;
+			float attackCoef = 0.0f, releaseCoef = 0.0f;
+			float gainReductionDb = 0.0f;   // smoothed, <= 0
+			uint32_t coeffRate = 0;
+			float configuredStrength = -1.0f;
+
+			void Configure(uint32_t sampleRate, float strength)
+			{
+				if (sampleRate == 0) return;
+				if (sampleRate != coeffRate)
+				{
+					coeffRate = sampleRate;
+					const double fs = static_cast<double>(sampleRate);
+					attackCoef = static_cast<float>(1.0 - std::exp(-1.0 / (ATTACK_SECONDS * fs)));
+					releaseCoef = static_cast<float>(1.0 - std::exp(-1.0 / (RELEASE_SECONDS * fs)));
+				}
+				if (strength != configuredStrength)
+				{
+					configuredStrength = strength;
+					const float s = std::clamp(strength, 0.0f, 1.0f);
+					ratio = 1.0f + 5.0f * s;                 // 1:1 .. 6:1
+					thresholdDb = -6.0f - 24.0f * s;         // -6 .. -30 dBFS
+					// Modest auto make-up: restore roughly what a -6 dBFS peak loses, so smoothing the
+					// wobble does not just quieten the note. Kept gentle to limit noise lift on the decay.
+					const float lossAtRef = (thresholdDb - (-6.0f)) * (1.0f - 1.0f / ratio); // <= 0
+					makeupLinear = std::pow(10.0f, (-lossAtRef * 0.6f) / 20.0f);
+				}
+			}
+
+			inline float NextGain(float sidechain)
+			{
+				const float levelDb = 20.0f * std::log10(std::fabs(sidechain) + 1e-9f);
+				const float target = levelDb > thresholdDb
+					? (thresholdDb - levelDb) * (1.0f - 1.0f / ratio) : 0.0f; // <= 0
+				const float coef = target < gainReductionDb ? attackCoef : releaseCoef;
+				gainReductionDb += (target - gainReductionDb) * coef;
+				return std::pow(10.0f, gainReductionDb / 20.0f) * makeupLinear;
+			}
+		};
+
+		Compressor g_compressor;
+
+		// Applies the input compressor to the raw capture buffer in place (after the gate, before the
+		// make-up gain), mirroring ScaleBufferInPlace's format handling. Runs only when strength > 0, so
+		// the feature-off path stays bit-exact.
+		void ProcessCompressorInPlace(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float strength)
+		{
+			const size_t channelCount = format.channelCount;
+			if (channelCount == 0) return;
+			g_compressor.Configure(format.sampleRate, strength);
+
+			switch (format.sampleFormat)
+			{
+			case SampleFormat::Float32:
+			{
+				float* samples = reinterpret_cast<float*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t base = static_cast<size_t>(frame) * channelCount;
+					const float gain = g_compressor.NextGain(samples[base]);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[base + channel] = ClampSample(samples[base + channel] * gain);
+				}
+				break;
+			}
+			case SampleFormat::Int32:
+			{
+				int32_t* samples = reinterpret_cast<int32_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t base = static_cast<size_t>(frame) * channelCount;
+					const float gain = g_compressor.NextGain(static_cast<float>(samples[base]) * INT32_TO_FLOAT);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[base + channel] = FloatToSignedInteger<int32_t, 32>(static_cast<float>(samples[base + channel]) * INT32_TO_FLOAT * gain);
+				}
+				break;
+			}
+			case SampleFormat::Int24:
+			{
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t base = static_cast<size_t>(frame) * channelCount;
+					const float gain = g_compressor.NextGain(static_cast<float>(ReadInt24(packet + base * 3)) * INT24_TO_FLOAT);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = base + channel;
+						const float scaled = static_cast<float>(ReadInt24(packet + index * 3)) * INT24_TO_FLOAT * gain;
+						WriteInt24(FloatToSignedInteger<int32_t, 24>(scaled), packet + index * 3);
+					}
+				}
+				break;
+			}
+			case SampleFormat::Int16:
+			{
+				int16_t* samples = reinterpret_cast<int16_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+				{
+					const size_t base = static_cast<size_t>(frame) * channelCount;
+					const float gain = g_compressor.NextGain(static_cast<float>(samples[base]) * INT16_TO_FLOAT);
+					for (size_t channel = 0; channel < channelCount; ++channel)
+						samples[base + channel] = FloatToSignedInteger<int16_t, 16>(static_cast<float>(samples[base + channel]) * INT16_TO_FLOAT * gain);
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+
+		// Soft knee above 0.7 so a hot make-up gain asymptotes toward full scale instead of hard
+		// clipping or wrapping on transients.
+		inline float SoftClipSample(float value)
+		{
+			if (value > 0.7f) return 0.7f + 0.3f * std::tanh((value - 0.7f) / 0.3f);
+			if (value < -0.7f) return -0.7f + 0.3f * std::tanh((value + 0.7f) / 0.3f);
+			return value;
+		}
+
+		// Front-of-chain input make-up gain: scales the raw capture buffer in place across every
+		// channel, preserving layout. Runs before any pitch shift and independently of the processor
+		// enable path, so it applies in normal play (cable or RS_ASIO) with no Drop Pedal needed.
+		void ScaleBufferInPlace(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float gain)
+		{
+			const size_t total = static_cast<size_t>(frameCount) * format.channelCount;
+			switch (format.sampleFormat)
+			{
+			case SampleFormat::Float32:
+			{
+				float* samples = reinterpret_cast<float*>(packet);
+				for (size_t index = 0; index < total; ++index)
+					samples[index] = ClampSample(SoftClipSample(samples[index] * gain));
+				break;
+			}
+			case SampleFormat::Int32:
+			{
+				int32_t* samples = reinterpret_cast<int32_t*>(packet);
+				for (size_t index = 0; index < total; ++index)
+					samples[index] = FloatToSignedInteger<int32_t, 32>(SoftClipSample(static_cast<float>(samples[index]) * INT32_TO_FLOAT * gain));
+				break;
+			}
+			case SampleFormat::Int24:
+			{
+				for (size_t index = 0; index < total; ++index)
+				{
+					const float scaled = SoftClipSample(static_cast<float>(ReadInt24(packet + index * 3)) * INT24_TO_FLOAT * gain);
+					WriteInt24(FloatToSignedInteger<int32_t, 24>(scaled), packet + index * 3);
+				}
+				break;
+			}
+			case SampleFormat::Int16:
+			{
+				int16_t* samples = reinterpret_cast<int16_t*>(packet);
+				for (size_t index = 0; index < total; ++index)
+					samples[index] = FloatToSignedInteger<int16_t, 16>(SoftClipSample(static_cast<float>(samples[index]) * INT16_TO_FLOAT * gain));
+				break;
+			}
+			default:
+				break;
+			}
+		}
+
+		// Second-order Butterworth low-pass (RBJ cookbook, Q = 1/sqrt(2)) run per channel over the
+		// post-gain input. It is linear and cheap: it strips the broadband hiss and >19 kHz interface
+		// whine that the flat make-up gain amplifies, and also smooths the soft-clip's transient
+		// harmonics. Only touched on the capture (audio) thread, so no synchronisation is needed; state
+		// carries across packets and resets when the sample rate changes.
+		struct InputLowpass
+		{
+			float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+			uint32_t coeffRate = 0;
+			struct Channel { float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f; };
+			std::array<Channel, MAX_FILTER_CHANNELS> channels{};
+
+			void Configure(uint32_t sampleRate)
+			{
+				if (sampleRate == 0 || sampleRate == coeffRate) return;
+				coeffRate = sampleRate;
+				const double w0 = 2.0 * 3.14159265358979323846 * INPUT_LOWPASS_HZ / static_cast<double>(sampleRate);
+				const double cosw0 = std::cos(w0);
+				const double sinw0 = std::sin(w0);
+				const double alpha = sinw0 / 1.4142135623730951; // sinw0 / (2Q) with Q = 1/sqrt(2)
+				const double a0 = 1.0 + alpha;
+				b0 = static_cast<float>(((1.0 - cosw0) * 0.5) / a0);
+				b1 = static_cast<float>((1.0 - cosw0) / a0);
+				b2 = b0;
+				a1 = static_cast<float>((-2.0 * cosw0) / a0);
+				a2 = static_cast<float>((1.0 - alpha) / a0);
+				channels = {};
+			}
+
+			inline float Process(size_t channel, float input)
+			{
+				Channel& c = channels[channel];
+				const float output = b0 * input + b1 * c.x1 + b2 * c.x2 - a1 * c.y1 - a2 * c.y2;
+				c.x2 = c.x1; c.x1 = input;
+				c.y2 = c.y1; c.y1 = output;
+				return output;
+			}
+		};
+
+		InputLowpass g_inputLowpass;
+
+		// Band-limits the raw capture buffer in place, mirroring ScaleBufferInPlace's format handling.
+		// Called immediately after the make-up gain, on the same route-0/gain-engaged path, so the
+		// unity/feature-off path is never touched and stays bit-exact.
+		void FilterBufferInPlace(BYTE* packet, const CaptureFormat& format, uint32_t frameCount)
+		{
+			const size_t channelCount = format.channelCount;
+			if (channelCount == 0 || channelCount > MAX_FILTER_CHANNELS) return;
+			g_inputLowpass.Configure(format.sampleRate);
+
+			switch (format.sampleFormat)
+			{
+			case SampleFormat::Float32:
+			{
+				float* samples = reinterpret_cast<float*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
+						samples[index] = ClampSample(g_inputLowpass.Process(channel, samples[index]));
+					}
+				break;
+			}
+			case SampleFormat::Int32:
+			{
+				int32_t* samples = reinterpret_cast<int32_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
+						const float filtered = g_inputLowpass.Process(channel, static_cast<float>(samples[index]) * INT32_TO_FLOAT);
+						samples[index] = FloatToSignedInteger<int32_t, 32>(filtered);
+					}
+				break;
+			}
+			case SampleFormat::Int24:
+			{
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
+						const float filtered = g_inputLowpass.Process(channel, static_cast<float>(ReadInt24(packet + index * 3)) * INT24_TO_FLOAT);
+						WriteInt24(FloatToSignedInteger<int32_t, 24>(filtered), packet + index * 3);
+					}
+				break;
+			}
+			case SampleFormat::Int16:
+			{
+				int16_t* samples = reinterpret_cast<int16_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
+						const float filtered = g_inputLowpass.Process(channel, static_cast<float>(samples[index]) * INT16_TO_FLOAT);
+						samples[index] = FloatToSignedInteger<int16_t, 16>(filtered);
+					}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+
+		// Cascade of narrow (high-Q) notch biquads at the mains fundamental and its harmonics, run per
+		// channel over the RAW input (front of chain). Removes 50/60 Hz ground-loop hum - a stable harmonic
+		// comb a grounded interface injects but a single-USB Real Tone Cable does not. Narrow notches so the
+		// guitar tone is barely dented; linear and cheap (a handful of biquads per sample). Audio-thread only;
+		// state carries across packets and resets when the sample rate or base frequency changes.
+		struct HumNotch
+		{
+			static constexpr int MAX_NOTCHES = 40;      // fundamental + harmonics, capped by MAX_NOTCH_HZ
+			static constexpr float NOTCH_Q = 30.0f;     // narrow: bandwidth f0/Q, so ~1.7 Hz at 50 Hz
+			static constexpr float MAX_NOTCH_HZ = 2000.0f;
+
+			struct Biquad { float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f; };
+			struct State { float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f; };
+			Biquad biquads[MAX_NOTCHES];
+			int notchCount = 0;
+			uint32_t coeffRate = 0;
+			float coeffBaseHz = 0.0f;
+			std::array<std::array<State, MAX_NOTCHES>, MAX_FILTER_CHANNELS> channels{};
+
+			void Configure(uint32_t sampleRate, float baseHz)
+			{
+				if (sampleRate == 0 || baseHz <= 0.0f) return;
+				if (sampleRate == coeffRate && baseHz == coeffBaseHz) return;
+				coeffRate = sampleRate;
+				coeffBaseHz = baseHz;
+				const double fs = static_cast<double>(sampleRate);
+				const double nyquist = fs * 0.5;
+				notchCount = 0;
+				for (int k = 1; k <= MAX_NOTCHES; ++k)
+				{
+					const double f0 = static_cast<double>(baseHz) * k;
+					if (f0 > MAX_NOTCH_HZ || f0 >= nyquist * 0.95) break;
+					const double w0 = 2.0 * 3.14159265358979323846 * f0 / fs;
+					const double cosw0 = std::cos(w0);
+					const double alpha = std::sin(w0) / (2.0 * NOTCH_Q);
+					const double a0 = 1.0 + alpha;
+					Biquad& bq = biquads[notchCount];
+					bq.b0 = static_cast<float>(1.0 / a0);
+					bq.b1 = static_cast<float>((-2.0 * cosw0) / a0);
+					bq.b2 = bq.b0;
+					bq.a1 = static_cast<float>((-2.0 * cosw0) / a0);
+					bq.a2 = static_cast<float>((1.0 - alpha) / a0);
+					++notchCount;
+				}
+				channels = {};
+			}
+
+			inline float Process(size_t channel, float input)
+			{
+				float sample = input;
+				std::array<State, MAX_NOTCHES>& chan = channels[channel];
+				for (int i = 0; i < notchCount; ++i)
+				{
+					const Biquad& bq = biquads[i];
+					State& st = chan[i];
+					const float output = bq.b0 * sample + bq.b1 * st.x1 + bq.b2 * st.x2 - bq.a1 * st.y1 - bq.a2 * st.y2;
+					st.x2 = st.x1; st.x1 = sample;
+					st.y2 = st.y1; st.y1 = output;
+					sample = output;
+				}
+				return sample;
+			}
+		};
+
+		HumNotch g_humNotch;
+
+		// Notches the mains-hum comb out of the raw capture buffer in place, mirroring FilterBufferInPlace's
+		// format handling. Front of chain (before the gate), so every downstream stage and the game see the
+		// de-hummed signal. Runs only while a base frequency is set, so the feature-off path stays bit-exact.
+		void ProcessHumFilterInPlace(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float baseHz)
+		{
+			const size_t channelCount = format.channelCount;
+			if (channelCount == 0 || channelCount > MAX_FILTER_CHANNELS) return;
+			g_humNotch.Configure(format.sampleRate, baseHz);
+			if (g_humNotch.notchCount == 0) return;
+
+			switch (format.sampleFormat)
+			{
+			case SampleFormat::Float32:
+			{
+				float* samples = reinterpret_cast<float*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
+						samples[index] = ClampSample(g_humNotch.Process(channel, samples[index]));
+					}
+				break;
+			}
+			case SampleFormat::Int32:
+			{
+				int32_t* samples = reinterpret_cast<int32_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
+						const float filtered = g_humNotch.Process(channel, static_cast<float>(samples[index]) * INT32_TO_FLOAT);
+						samples[index] = FloatToSignedInteger<int32_t, 32>(filtered);
+					}
+				break;
+			}
+			case SampleFormat::Int24:
+			{
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
+						const float filtered = g_humNotch.Process(channel, static_cast<float>(ReadInt24(packet + index * 3)) * INT24_TO_FLOAT);
+						WriteInt24(FloatToSignedInteger<int32_t, 24>(filtered), packet + index * 3);
+					}
+				break;
+			}
+			case SampleFormat::Int16:
+			{
+				int16_t* samples = reinterpret_cast<int16_t*>(packet);
+				for (uint32_t frame = 0; frame < frameCount; ++frame)
+					for (size_t channel = 0; channel < channelCount; ++channel)
+					{
+						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
+						const float filtered = g_humNotch.Process(channel, static_cast<float>(samples[index]) * INT16_TO_FLOAT);
+						samples[index] = FloatToSignedInteger<int16_t, 16>(filtered);
+					}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+
 		int FindCaptureRoute(IAudioCaptureClient* captureClient)
 		{
 			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
@@ -403,6 +1001,92 @@ namespace Audio::AsioHook
 					return static_cast<int>(routeIndex);
 			}
 			return -1;
+		}
+
+		SampleFormat ReadProxySampleFormat(long type)
+		{
+			switch (type)
+			{
+			case 18: return SampleFormat::Int32; // ASIOSTInt32LSB
+			case 19: return SampleFormat::Float32; // ASIOSTFloat32LSB
+			case 17: return SampleFormat::Int24; // ASIOSTInt24LSB
+			case 16: return SampleFormat::Int16; // ASIOSTInt16LSB
+			default: return SampleFormat::Unsupported;
+			}
+		}
+
+		void __cdecl Hook_ProxyInput(
+			const ProxyInputChannel* channels,
+			long channelCount,
+			long frames,
+			double sampleRate)
+		{
+			if (!channels || channelCount <= 0 || frames <= 0 || !std::isfinite(sampleRate)
+				|| sampleRate < 1.0 || sampleRate > UINT32_MAX) return;
+
+			const int selectedChannel = selectedInputChannels[0];
+			for (long index = 0; index < channelCount; ++index)
+			{
+				if (channels[index].channelNum != selectedChannel || !channels[index].buffer) continue;
+				const SampleFormat sampleFormat = ReadProxySampleFormat(channels[index].type);
+				if (sampleFormat == SampleFormat::Unsupported) return;
+
+				proxyInputRate.store(static_cast<uint32_t>(sampleRate), std::memory_order_release);
+				proxyInputSampleFormat.store(static_cast<int>(sampleFormat), std::memory_order_release);
+				proxyInputSeen.store(true, std::memory_order_release);
+				routeLastBufferTick[0].store(GetTickCount64(), std::memory_order_relaxed);
+				AsioBufferState::lastPacket.store(GetTickCount64(), std::memory_order_relaxed);
+
+				// The game's own capture stream is attached: Hook_CaptureGetBuffer processes this audio once
+				// it reaches the game. Processing it here too would apply everything twice.
+				if (routeCaptureClients[0].load(std::memory_order_acquire)) return;
+				if (!inputReady[0].load(std::memory_order_acquire) || frames > MAX_BUFFER_FRAMES) return;
+				CaptureCallbackScope callback(processingGate);
+				if (!callback) return;
+
+				float* converted = conversionBuffers[0].data();
+				for (long frame = 0; frame < frames; ++frame)
+				{
+					switch (sampleFormat)
+					{
+					case SampleFormat::Float32: converted[frame] = static_cast<float*>(channels[index].buffer)[frame]; break;
+					case SampleFormat::Int32: converted[frame] = static_cast<float>(static_cast<int32_t*>(channels[index].buffer)[frame]) * INT32_TO_FLOAT; break;
+					case SampleFormat::Int24: converted[frame] = static_cast<float>(ReadInt24(static_cast<uint8_t*>(channels[index].buffer) + frame * 3)) * INT24_TO_FLOAT; break;
+					case SampleFormat::Int16: converted[frame] = static_cast<int16_t*>(channels[index].buffer)[frame] * INT16_TO_FLOAT; break;
+					default: return;
+					}
+				}
+
+				IInputProcessor* source = inputSources[0].load(std::memory_order_relaxed);
+				const bool sourceActive = source != nullptr
+					&& inputSourceArmed[0].load(std::memory_order_acquire);
+				IInputProcessor* processor = activeProcessors[0].load(std::memory_order_relaxed);
+				if (sourceActive) source->Process(converted, static_cast<uint32_t>(frames));
+				if (processor) processor->Process(converted, static_cast<uint32_t>(frames));
+				RawPitchVerifier::Observe(0, converted, static_cast<uint32_t>(frames), static_cast<uint32_t>(sampleRate));
+				MlAudioExporter::Observe(0, converted, static_cast<uint32_t>(frames), static_cast<uint32_t>(sampleRate));
+				for (long frame = 0; frame < frames; ++frame)
+				{
+					if (sampleFormat == SampleFormat::Float32) static_cast<float*>(channels[index].buffer)[frame] = converted[frame];
+					else if (sampleFormat == SampleFormat::Int32) static_cast<int32_t*>(channels[index].buffer)[frame] = FloatToSignedInteger<int32_t, 32>(converted[frame]);
+					else if (sampleFormat == SampleFormat::Int24) WriteInt24(FloatToSignedInteger<int32_t, 24>(converted[frame]), static_cast<uint8_t*>(channels[index].buffer) + frame * 3);
+					else if (sampleFormat == SampleFormat::Int16) static_cast<int16_t*>(channels[index].buffer)[frame] = FloatToSignedInteger<int16_t, 16>(converted[frame]);
+				}
+				return;
+			}
+		}
+
+		void TryInstallProxyInputObserver()
+		{
+			if (proxyInputObserverInstalled || GetTickCount64() < nextProxyInputObserverAttemptTick) return;
+			nextProxyInputObserverAttemptTick = GetTickCount64() + UNMARSHAL_HOOK_RETRY_INTERVAL_MILLISECONDS;
+			HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+			if (!proxy) return;
+			auto setObserver = reinterpret_cast<SetProxyInputObserver_t>(GetProcAddress(proxy, "RSModsAsio_SetInputObserver"));
+			if (!setObserver) return;
+			setObserver(&Hook_ProxyInput);
+			proxyInputObserverInstalled = true;
+			LOG_INFO("[AsioHook] ASIO proxy input observer installed." << std::endl);
 		}
 
 		HRESULT STDMETHODCALLTYPE Hook_CaptureGetBuffer(
@@ -433,30 +1117,83 @@ namespace Audio::AsioHook
 
 			const int routeIndex = FindCaptureRoute(self);
 			if (routeIndex < 0) return result;
+			CaptureCallbackScope callback(processingGate);
+			if (callback && bridgeStates[routeIndex])
+			{
+				if (!bridgeStates[routeIndex]->IsPhysicalPacket()
+					|| bridgeStates[routeIndex]->GetGeneration() != bridgeGenerations[routeIndex].load())
+				{
+					routeLastBufferTick[routeIndex].store(0, std::memory_order_relaxed);
+					if (routeIndex == 0) AsioBufferState::lastPacket.store(0);
+					if (*frameCount <= MAX_BUFFER_FRAMES && routeFormats[routeIndex].IsUsable())
+					{
+						static const std::array<float, MAX_BUFFER_FRAMES> silence{};
+						RawPitchVerifier::Observe(static_cast<uint32_t>(routeIndex), silence.data(), *frameCount, routeFormats[routeIndex].sampleRate);
+						MlAudioExporter::Observe(static_cast<uint32_t>(routeIndex), silence.data(), *frameCount, routeFormats[routeIndex].sampleRate);
+						if (flags) *flags |= AUDCLNT_BUFFERFLAGS_SILENT;
+					}
+					return result;
+				}
+			}
 			// Capture liveness exists before the game loop prepares the processor.
 			routeLastBufferTick[routeIndex].store(GetTickCount64(), std::memory_order_relaxed);
+			if (routeIndex == 0 && CableInput::IsAsioPath())
+				AsioBufferState::lastPacket.store(GetTickCount64());
 
-			CaptureCallbackScope callback(processingGate);
+			// Front-of-chain guitar input conditioner. Runs on every real packet, BEFORE the processing
+			// gate below, so it lifts/cleans the input globally (cable or RS_ASIO, Drop Pedal or not) and
+			// always precedes any pitch shift. Chain order: soft noise gate (keyed to the raw level) ->
+			// make-up gain (+ soft-clip) -> band-limit. Every stage is a no-op when its control is off, so
+			// the feature-off input stays bit-exact.
+			if (routeIndex == 0 && data && *data && frameCount && *frameCount <= MAX_BUFFER_FRAMES
+				&& routeFormats[routeIndex].IsUsable()
+				&& !(flags && (*flags & AUDCLNT_BUFFERFLAGS_SILENT)))
+			{
+				// Mains-hum notch runs first, on the raw input, so the gate/compressor/gain and the game all
+				// see the de-hummed signal (and the gate keys off a level no longer inflated by the hum).
+				const float humBaseHz = g_humFilterBaseHz.load(std::memory_order_relaxed);
+				if (humBaseHz > 0.0f)
+					ProcessHumFilterInPlace(*data, routeFormats[routeIndex], *frameCount, humBaseHz);
+
+				const float gateThreshold = g_gateThresholdLinear.load(std::memory_order_relaxed);
+				if (gateThreshold > 0.0f)
+					ProcessGateInPlace(*data, routeFormats[routeIndex], *frameCount, gateThreshold);
+
+				// Compressor sits after the gate and before the make-up gain: it flattens the string-beat
+				// wobble so the game amp downstream cannot magnify it into a warble.
+				const float compressorStrength = g_compressorStrength.load(std::memory_order_relaxed);
+				if (compressorStrength > 0.0f)
+					ProcessCompressorInPlace(*data, routeFormats[routeIndex], *frameCount, compressorStrength);
+
+				const float inputGain = g_inputGainLinear.load(std::memory_order_relaxed);
+				if (inputGain > 1.0001f || inputGain < 0.9999f)
+				{
+					ScaleBufferInPlace(*data, routeFormats[routeIndex], *frameCount, inputGain);
+					// Band-limit after the gain so the same stage that smooths amplified hiss also
+					// tames the soft-clip's transient harmonics. Tied to the gain-engaged path, so
+					// the unity/feature-off input stays bit-exact.
+					FilterBufferInPlace(*data, routeFormats[routeIndex], *frameCount);
+				}
+			}
+
 			if (!callback || FindCaptureRoute(self) != routeIndex
 				|| !inputReady[routeIndex].load(std::memory_order_acquire)) return result;
 
-			if (!CableInput::IsAsioPath() && SUCCEEDED(result) && result != AUDCLNT_S_BUFFER_EMPTY && frameCount && *frameCount > 0 && *qpcOut != 0
-				&& !(flags && (*flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)))
+			if (routeIndex == 0 && !CableInput::IsAsioPath())
 			{
-				const int routeIndex = FindCaptureRoute(self);
-				const uint32_t rate = routeIndex >= 0 ? routeFormats[routeIndex].sampleRate : 0;
-				if (routeIndex == 0 && rate > 0)
+				if (*qpcOut == 0 || (flags && (*flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)))
+				{
+					CableInput::ReportCaptureTimestampLag(-1.0);
+				}
+				else
 				{
 					LARGE_INTEGER counter{};
-					static LARGE_INTEGER frequency = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return f; }();
+					static const LARGE_INTEGER frequency = [] { LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); return f; }();
 					QueryPerformanceCounter(&counter);
 					const double now100ns = frequency.QuadPart > 0 ? counter.QuadPart * 10000000.0 / frequency.QuadPart : 0.0;
-					// WASAPI timestamps identify the first frame; the packet midpoint is newer.
-					const double meanAgeMs = (now100ns - static_cast<double>(*qpcOut)) / 10000.0
-						- 500.0 * *frameCount / rate;
-					CableInput::ReportMeasuredInputRaw(static_cast<int64_t>(now100ns - static_cast<double>(*qpcOut)), *frameCount);
-					if (now100ns > 0.0 && meanAgeMs > -20.0 && meanAgeMs < 500.0)
-						CableInput::ReportMeasuredInputAge(meanAgeMs);
+					const double delta100ns = now100ns - static_cast<double>(*qpcOut);
+					CableInput::ReportMeasuredInputRaw(static_cast<int64_t>(delta100ns), *frameCount);
+					CableInput::ReportCaptureTimestampLag(delta100ns / 10000.0);
 				}
 			}
 
@@ -483,7 +1220,9 @@ namespace Audio::AsioHook
 			const bool silent = flags && (*flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
 			const bool runsProcessor = processor != nullptr && (!silent || sourceActive);
 			const bool observesRoute = routeIndex == 0;
-			if (!sourceActive && !runsProcessor && !observesRoute) return result;
+			// Route 1 is Player 2 on the second ASIO input; it only feeds the Player 2 SIGNAL row.
+			const bool metersPlayerTwo = routeIndex == 1;
+			if (!sourceActive && !runsProcessor && !observesRoute && !metersPlayerTwo) return result;
 
 			float* converted = conversionBuffers[routeIndex].data();
 			if (silent)
@@ -491,6 +1230,19 @@ namespace Audio::AsioHook
 			else if (!CopyFirstChannelToFloat(*data, routeFormats[routeIndex], *frameCount, converted))
 				return result;
 
+			if (metersPlayerTwo)
+			{
+				float peak = 0.0f;
+				for (UINT32 index = 0; index < *frameCount; ++index)
+				{
+					peak = std::max(peak, std::fabs(converted[index]));
+				}
+				CableInput::ReportPlayerTwoPacket(peak, silent);
+			}
+
+			// Input make-up gain was already applied in place to the raw buffer above (front of chain),
+			// so the samples copied here are already boosted; the peak report, pitch verifiers, dry
+			// recording and any processor all see the lifted signal.
 			if (observesRoute)
 			{
 				float peak = 0.0f;
@@ -499,6 +1251,20 @@ namespace Audio::AsioHook
 					peak = std::max(peak, std::fabs(converted[index]));
 				}
 				CableInput::ReportTapPacket(peak, silent, *frameCount, routeFormats[routeIndex].sampleRate);
+
+				// Latency loopback capture: copy the raw input (before any processor) while a measurement is armed.
+				const int latTarget = g_latencyTarget.load(std::memory_order_relaxed);
+				if (latTarget > 0)
+				{
+					int filled = g_latencyFilled.load(std::memory_order_relaxed);
+					if (filled < latTarget)
+					{
+						int n = static_cast<int>(*frameCount);
+						if (n > latTarget - filled) n = latTarget - filled;
+						for (int i = 0; i < n; ++i) g_latencyCapture[filled + i] = converted[i];
+						g_latencyFilled.store(filled + n, std::memory_order_relaxed);
+					}
+				}
 			}
 
 			// The armed source replaces the captured input first, then the processor (e.g. the
@@ -511,6 +1277,7 @@ namespace Audio::AsioHook
 			}
 			if (observesRoute)
 			{
+				DrySignalRecording::Observe(converted, *frameCount, routeFormats[routeIndex].sampleRate);
 				RawPitchVerifier::Observe(
 					static_cast<uint32_t>(routeIndex),
 					converted,
@@ -539,7 +1306,8 @@ namespace Audio::AsioHook
 			for (size_t routeIndex = 0; routeIndex < INPUT_ROUTE_COUNT; ++routeIndex)
 			{
 				if (!configuredInputs[routeIndex]) continue;
-				if (!routeCaptureClients[routeIndex].load(std::memory_order_acquire)
+				if ((!routeCaptureClients[routeIndex].load(std::memory_order_acquire)
+					&& !(routeIndex == 0 && proxyInputSeen.load(std::memory_order_acquire)))
 					|| !routeFormats[routeIndex].IsUsable()) return;
 			}
 			bufferLayoutReady.store(true, std::memory_order_release);
@@ -637,17 +1405,41 @@ namespace Audio::AsioHook
 			}
 			else if (captureClientVTable != vTable)
 			{
+				// A newcomer from another implementation cannot replace a live binding: with the Player 2
+				// cable always listed, the game opens its stream a few milliseconds after Player 1's RS_ASIO
+				// stream, before that stream has delivered a buffer, so the liveness gate above lets it
+				// through. It is a different device, not a replacement; keep the binding and move on.
+				if (replacesCapture)
+				{
+					LOG_INFO("[AsioHook] Ignoring a capture stream from a different implementation while Player "
+						<< routeIndex + 1 << " stays bound." << std::endl);
+					return;
+				}
 				LOG_ERROR("[AsioHook] Player " << routeIndex + 1
 					<< " uses a different capture implementation; processing stays disabled." << std::endl);
 				return;
 			}
 
 			processingGate.CloseAndWait();
+			bridgeStates[routeIndex].Reset();
+			stream->captureClient->QueryInterface(__uuidof(PersistentInput::ICaptureState),
+				reinterpret_cast<void**>(bridgeStates[routeIndex].GetAddressOf()));
+			bridgeGenerations[routeIndex] = bridgeStates[routeIndex] ? bridgeStates[routeIndex]->GetGeneration() : 0;
 			inputReady[routeIndex].store(false, std::memory_order_relaxed);
 			bufferLayoutReady.store(false, std::memory_order_release);
 			autoEnabledOnce.store(false, std::memory_order_relaxed);
 			routeLastBufferTick[routeIndex].store(0, std::memory_order_relaxed);
 			routeFormats[routeIndex] = format;
+			if (routeIndex == 0)
+			{
+				UINT32 frames = 0;
+				Microsoft::WRL::ComPtr<IAudioClient> audioClient;
+				HRESULT result = stream->input.clientProc
+					? stream->input.clientProc->QueryInterface(IID_PPV_ARGS(&audioClient)) : E_POINTER;
+				if (SUCCEEDED(result)) result = audioClient->GetBufferSize(&frames);
+				if (FAILED(result)) LOG_ERROR("[AsioHook] Could not read input buffer size: " << std::hex << result << std::dec << std::endl);
+				AsioBufferState::Configure(SUCCEEDED(result) ? frames : 0, format.sampleRate);
+			}
 			routeCaptureClients[routeIndex].store(stream->captureClient, std::memory_order_release);
 			if (replacesCapture)
 			{
@@ -655,7 +1447,7 @@ namespace Audio::AsioHook
 					<< " capture stream went quiet and was replaced; rebinding to the newest stream." << std::endl);
 			}
 
-			LOG_INFO("[AsioHook] Player " << routeIndex + 1 << " attached to existing RS_ASIO capture client "
+			LOG_INFO("[InputCapture] Player " << routeIndex + 1 << " attached to the game capture client "
 				<< stream->captureClient << " using " << DescribeFormat(format) << "." << std::endl);
 			UpdateBufferLayoutReady();
 		}
@@ -667,6 +1459,14 @@ namespace Audio::AsioHook
 			{
 				auto* audioStream = reinterpret_cast<PaWasapiStreamPrefix*>(stream);
 #if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
+				// INPUT DIAG (unplugged-boot -> RTC re-select never detects ASIO input): this fires whenever
+				// the game unmarshals a stream's COM pointers, i.e. when it actually opens a stream. If the
+				// game re-opens capture on RTC re-selection we see capture-shaped=1 here and RegisterCaptureStream
+				// binds (logs "attached to the game capture client"); if we only ever see capture-shaped=0, the
+				// game re-opens output but never a capture stream after an unplugged boot.
+				LOG_INFO("(INPUT DIAG) game unmarshalled a PortAudio stream; capture-shaped="
+					<< ((audioStream->input.clientParent && audioStream->captureClient) ? 1 : 0)
+					<< "." << std::endl);
 				if (audioStream->input.clientParent && audioStream->captureClient)
 				{
 					LifecycleTrace::Attach(reinterpret_cast<IAudioClient*>(audioStream->input.clientProc), stream);
@@ -730,7 +1530,7 @@ namespace Audio::AsioHook
 				// two known direct callers missed the input stream even though the cable opened
 				// successfully; the input path reaches this function through a different caller.
 				// The function detour covers every caller and returns a trampoline for the game.
-				if (RsAsioFileExists())
+				if (IsRsAsioEnabled())
 				{
 					if (!hasLoggedWaitingForRsAsio)
 					{
@@ -823,7 +1623,7 @@ namespace Audio::AsioHook
 #if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
 		LifecycleTrace::Initialize();
 #endif
-		const bool hasRsAsio = RsAsioFileExists();
+		const bool hasRsAsio = IsRsAsioEnabled();
 		const RsAsioConfiguration configuration = hasRsAsio
 			? ReadRsAsioConfiguration()
 			: RsAsioConfiguration{};
@@ -874,14 +1674,32 @@ namespace Audio::AsioHook
 		AttemptUnmarshalHookInstallation();
 	}
 
-	void Poll()
-	{
-		std::lock_guard<std::mutex> guard(registrationMutex);
-		if (isUnmarshalHookInstallPending
-			&& GetTickCount64() >= nextUnmarshalHookAttemptTick)
+		void Poll()
 		{
-			AttemptUnmarshalHookInstallation();
-		}
+			std::lock_guard<std::mutex> guard(registrationMutex);
+			TryInstallProxyInputObserver();
+			if (proxyInputSeen.load(std::memory_order_acquire) && !routeCaptureClients[0].load(std::memory_order_acquire))
+			{
+				routeFormats[0] = {
+					static_cast<SampleFormat>(proxyInputSampleFormat.load(std::memory_order_acquire)),
+					proxyInputRate.load(std::memory_order_acquire), 1 };
+				bufferLayoutReady.store(false, std::memory_order_release);
+				UpdateBufferLayoutReady();
+			}
+			for (size_t route = 0; route < INPUT_ROUTE_COUNT; ++route)
+			{
+				if (!bridgeStates[route] || bridgeStates[route]->GetGeneration() == bridgeGenerations[route].load()) continue;
+				processingGate.CloseAndWait();
+				bridgeGenerations[route] = bridgeStates[route]->GetGeneration();
+				routeLastBufferTick[route] = 0;
+				inputReady[route] = false;
+				autoEnabledOnce = false;
+			}
+			if (isUnmarshalHookInstallPending
+				&& GetTickCount64() >= nextUnmarshalHookAttemptTick)
+			{
+				AttemptUnmarshalHookInstallation();
+			}
 
 		if (autoEnabledOnce.load(std::memory_order_relaxed)) return;
 		if (processingGate.IsOpen()) return;
@@ -952,6 +1770,86 @@ namespace Audio::AsioHook
 		inputSourceArmed[routeIndex].store(active, std::memory_order_release);
 	}
 
+	void SetInputGainDb(float decibels)
+	{
+		// Clamp to a sane make-up range: cut a little, boost up to a cable's hot preamp and beyond.
+		if (!std::isfinite(decibels)) return;
+		decibels = std::clamp(decibels, -24.0f, 24.0f);
+		g_inputGainLinear.store(std::pow(10.0f, decibels / 20.0f), std::memory_order_relaxed);
+	}
+
+	void SetNoiseGateThresholdDb(float decibels)
+	{
+		// A threshold at or above 0 dBFS is meaningless as a gate, so it doubles as the "off" signal:
+		// store 0 (disabled, raw input untouched). Otherwise clamp to a sane gate range and store the
+		// linear threshold the expander compares its envelope against.
+		if (!std::isfinite(decibels) || decibels >= 0.0f)
+		{
+			g_gateThresholdLinear.store(0.0f, std::memory_order_relaxed);
+			return;
+		}
+		decibels = std::clamp(decibels, -90.0f, -20.0f);
+		g_gateThresholdLinear.store(std::pow(10.0f, decibels / 20.0f), std::memory_order_relaxed);
+	}
+
+	void StartLatencyCapture(int frames)
+	{
+		if (frames < 1) frames = 1;
+		if (frames > kLatencyMaxFrames) frames = kLatencyMaxFrames;
+		g_latencyTarget.store(0, std::memory_order_relaxed);    // disarm before reset so the audio thread stops appending
+		g_latencyFilled.store(0, std::memory_order_relaxed);
+		g_latencyTarget.store(frames, std::memory_order_relaxed);   // arm last
+	}
+
+	bool IsLatencyCaptureDone()
+	{
+		const int target = g_latencyTarget.load(std::memory_order_relaxed);
+		return target > 0 && g_latencyFilled.load(std::memory_order_relaxed) >= target;
+	}
+
+	int GetLatencyCapture(const float** out)
+	{
+		if (out) *out = g_latencyCapture;
+		return g_latencyFilled.load(std::memory_order_relaxed);
+	}
+
+	float GetInputGainDb()
+	{
+		const float gain = g_inputGainLinear.load(std::memory_order_relaxed);
+		return gain > 0.0f ? 20.0f * std::log10(gain) : -24.0f;
+	}
+
+	float GetNoiseGateThresholdDb()
+	{
+		const float threshold = g_gateThresholdLinear.load(std::memory_order_relaxed);
+		return threshold > 0.0f ? 20.0f * std::log10(threshold) : 0.0f; // 0 = off
+	}
+
+	void SetCompressorStrength(float strength)
+	{
+		// 0 = off (bypass, input untouched); 1 = maximum squeeze. Clamped to a sane macro range.
+		if (!std::isfinite(strength)) return;
+		g_compressorStrength.store(std::clamp(strength, 0.0f, 1.0f), std::memory_order_relaxed);
+	}
+
+	float GetCompressorStrength()
+	{
+		return g_compressorStrength.load(std::memory_order_relaxed);
+	}
+
+	void SetHumFilterBaseHz(float baseHz)
+	{
+		// 0 (or <20) = off; else the mains fundamental (50 or 60). Clamped so a stray value can't build a
+		// nonsensical notch bank. Any positive base arms the front-of-chain notch cascade.
+		if (!std::isfinite(baseHz) || baseHz < 20.0f) { g_humFilterBaseHz.store(0.0f, std::memory_order_relaxed); return; }
+		g_humFilterBaseHz.store(std::clamp(baseHz, 20.0f, 120.0f), std::memory_order_relaxed);
+	}
+
+	float GetHumFilterBaseHz()
+	{
+		return g_humFilterBaseHz.load(std::memory_order_relaxed);
+	}
+
 	namespace
 	{
 		void UpdateProcessingEnabled(bool enabled)
@@ -969,7 +1867,8 @@ namespace Audio::AsioHook
 					if (!configuredInputs[routeIndex]) continue;
 					if ((!activeProcessors[routeIndex].load(std::memory_order_relaxed)
 							&& !inputSources[routeIndex].load(std::memory_order_relaxed))
-						|| !routeCaptureClients[routeIndex].load(std::memory_order_acquire)
+						|| (!routeCaptureClients[routeIndex].load(std::memory_order_acquire)
+							&& !(routeIndex == 0 && proxyInputSeen.load(std::memory_order_acquire)))
 						|| !routeFormats[routeIndex].IsUsable()
 						|| !inputReady[routeIndex].load(std::memory_order_acquire))
 					{
@@ -1009,8 +1908,11 @@ namespace Audio::AsioHook
 
 	bool IsInputReady(size_t routeIndex)
 	{
-		if (routeIndex >= INPUT_ROUTE_COUNT || !processingGate.IsOpen()
+		CaptureCallbackScope callback(processingGate);
+		if (routeIndex >= INPUT_ROUTE_COUNT || !callback
 			|| !inputReady[routeIndex].load(std::memory_order_acquire)) return false;
+		if (bridgeStates[routeIndex] && (!bridgeStates[routeIndex]->IsPhysicalPacket()
+			|| bridgeStates[routeIndex]->GetGeneration() != bridgeGenerations[routeIndex].load())) return false;
 		const uint64_t lastBuffer = routeLastBufferTick[routeIndex].load(std::memory_order_relaxed);
 		return lastBuffer != 0 && GetTickCount64() - lastBuffer < INPUT_STALL_MILLISECONDS;
 	}

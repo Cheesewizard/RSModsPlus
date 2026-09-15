@@ -1,13 +1,18 @@
 #include "stdafx.h"
 #include "CableInput.hpp"
 #include "SharedOutput.hpp"
+#include "OutputTap.hpp"
+#include "PersistentInput.hpp"
+#include "AsioHook.hpp"
 #include "ComVTable.hpp"
 
 #include <functiondiscoverykeys_devpkey.h>
 #include <timeapi.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace Audio::CableInput
@@ -18,6 +23,7 @@ namespace Audio::CableInput
 		constexpr size_t SLOT_MMDEVICE_ACTIVATE = 3;
 		constexpr uint64_t FIRST_REPORT_DELAY_MS = 5000;
 		constexpr uint64_t STALL_THRESHOLD_MS = 3000;
+		bool masterEnabled = false;
 
 		// PortAudio v19 (2012) public structs, 32-bit layout. Verified live against the game's
 		// Pa_OpenStream trace (handover 2026-09-04).
@@ -57,13 +63,13 @@ namespace Audio::CableInput
 		MmDeviceActivate_t originalActivate = nullptr;
 		// Set only while THIS thread is inside a PortAudio open, so the Activate wrapper never
 		// touches PortAudio's enumeration probes. Input-only opens get the modern capture
-		// client; output-only opens (the Wwise sink) are taken by the shared output adapter when
-		// audio routing is enabled, and otherwise may get the passive monitor that only observes.
+		// client; output-only opens may get the passive diagnostic monitor.
 		thread_local bool wrapCaptureActivation = false;
-		thread_local bool wrapOutputActivation = false;
 		thread_local bool monitorRenderActivation = false;
 		bool modernInputEnabled = true;
 		bool inputOwnedByAsio = false;
+		bool persistentInputEnabled = false;
+		bool persistentOutputEnabled = false;
 		SharedOutput::Configuration routingConfiguration;
 		// Output monitoring is OFF by default: two launches with it on (2026-09-05, build
 		// 8bb14663) stalled before the profile screen with no PortAudio processing thread ever
@@ -136,6 +142,10 @@ namespace Audio::CableInput
 		StreamStats inputStats;
 		StreamStats tapStats;
 		StreamStats outputStats;
+		// Player 2's input, whichever path carries it (P2 cable wrapper or ASIO route 1). Its own
+		// stats + decaying meter so the second overlay row never borrows Player 1's figures.
+		StreamStats playerTwoStats;
+		std::atomic<uint32_t> playerTwoMeterBits{ 0 };
 		std::atomic<bool> asioPath{ false };
 		std::atomic<uint32_t> tapFrames{ 0 };
 		std::atomic<uint32_t> tapRate{ 0 };
@@ -143,15 +153,16 @@ namespace Audio::CableInput
 		std::mutex statusMutex;
 		std::string statusDescription = "not installed";
 		Diagnostics diagnostics;   // guarded by statusMutex
-		bool overlayEnabled = true;
+		std::atomic_bool overlayEnabled{ true };
 
 		// Decaying peak for the on-screen signal bar: written per packet on the audio thread,
 		// read by the render thread. Decays ~8% per packet, so a strum lingers ~0.5 s.
 		std::atomic<uint32_t> meterBits{ 0 };
 		std::atomic<uint64_t> dropoutCount{ 0 };
-		// Exponential average of the measured input age, in ms, as float bits.
-		std::atomic<uint32_t> measuredAgeBits{ 0 };
+		// Exponential average of the capture timestamp lag, in ms, as float bits.
+		std::atomic<uint32_t> measuredLagBits{ 0 };
 		std::atomic<bool> measuredAny{ false };
+		std::atomic<uint64_t> measuredTick{ 0 };
 		// Raw inputs of the last measurement, for the throttled evidence line in Poll.
 		std::atomic<int64_t> lastRawDelta100ns{ 0 };
 		std::atomic<uint32_t> lastRawFrames{ 0 };
@@ -168,14 +179,24 @@ namespace Audio::CableInput
 				: 0;
 		}
 
-		void UpdateMeter(float peak)
+		void UpdateMeterBits(std::atomic<uint32_t>& target, float peak)
 		{
-			uint32_t bits = meterBits.load(std::memory_order_relaxed);
+			uint32_t bits = target.load(std::memory_order_relaxed);
 			float meter;
 			std::memcpy(&meter, &bits, sizeof(meter));
 			meter = std::max(peak, meter * 0.92f);
 			std::memcpy(&bits, &meter, sizeof(bits));
-			meterBits.store(bits, std::memory_order_relaxed);
+			target.store(bits, std::memory_order_relaxed);
+		}
+
+		void UpdateMeter(float peak) { UpdateMeterBits(meterBits, peak); }
+
+		float ReadMeterBits(const std::atomic<uint32_t>& source)
+		{
+			const uint32_t bits = source.load(std::memory_order_relaxed);
+			float meter = 0.0f;
+			std::memcpy(&meter, &bits, sizeof(meter));
+			return meter;
 		}
 
 		void SetStatus(const std::string& description)
@@ -465,9 +486,11 @@ namespace Audio::CableInput
 					lastRawDelta100ns.store(delta, std::memory_order_relaxed);
 					lastRawFrames.store(chunkFrames, std::memory_order_relaxed);
 					lastRawSource.store(2, std::memory_order_relaxed);
-					// The timestamp identifies the first frame, so subtract half the packet for its midpoint.
-					const double meanAgeMs = delta / 10000.0 - 500.0 * chunkFrames / presentedLayout.rate;
-					if (meanAgeMs > -20.0 && meanAgeMs < 500.0) ReportMeasuredInputAge(meanAgeMs);
+					ReportCaptureTimestampLag(delta / 10000.0);
+				}
+				else
+				{
+					ReportCaptureTimestampLag(-1.0);
 				}
 				pendingFrames = chunkFrames;
 				return S_OK;
@@ -1219,7 +1242,7 @@ namespace Audio::CableInput
 		{
 			const HRESULT hr = originalActivate(self, iid, clsContext, activationParams, ppv);
 			if (FAILED(hr) || !ppv || !*ppv || iid != __uuidof(IAudioClient)
-				|| (!wrapCaptureActivation && !wrapOutputActivation && !monitorRenderActivation))
+				|| (!wrapCaptureActivation && !monitorRenderActivation))
 				return hr;
 
 			EDataFlow flow = eRender;
@@ -1257,21 +1280,6 @@ namespace Audio::CableInput
 				*ppv = static_cast<IAudioClient*>(new ModernAudioClient(static_cast<IAudioClient*>(*ppv), selected));
 				if (routingConfiguration.enabled && !routingConfiguration.inputDeviceId.empty()) selected->Release();
 			}
-			else if (flow == eRender && wrapOutputActivation)
-			{
-				std::wstring endpointId = routingConfiguration.outputDeviceId;
-				if (endpointId.empty())
-				{
-					LPWSTR id = nullptr;
-					const HRESULT result = self->GetId(&id);
-					if (FAILED(result)) return result;
-					endpointId = id;
-					CoTaskMemFree(id);
-				}
-				static_cast<IAudioClient*>(*ppv)->Release();
-				*ppv = nullptr;
-				return SharedOutput::CreateClient(endpointId, reinterpret_cast<IAudioClient**>(ppv));
-			}
 			else if (flow == eRender && monitorRenderActivation)
 			{
 				// Diagnostic only, and only when routing did not already claim the render open.
@@ -1301,7 +1309,7 @@ namespace Audio::CableInput
 			}
 
 			IMMDeviceCollection* collection = nullptr;
-			hr = enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &collection);
+			hr = enumerator->EnumAudioEndpoints(eAll, DEVICE_STATE_ACTIVE, &collection);
 			UINT count = 0;
 			if (SUCCEEDED(hr) && collection) collection->GetCount(&count);
 			IMMDevice* device = nullptr;
@@ -1309,7 +1317,7 @@ namespace Audio::CableInput
 			if (collection) collection->Release();
 			if (!device)
 			{
-				LOG_WARNING("(CABLE INPUT) No active capture endpoint to hook; staying on the legacy shared input" << std::endl);
+				LOG_ERROR("(AUDIO ROUTING) No active audio endpoint is available for activation" << std::endl);
 				enumerator->Release();
 				return false;
 			}
@@ -1355,7 +1363,11 @@ namespace Audio::CableInput
 			}
 			if (outputOnlyOpen && routingConfiguration.enabled)
 			{
-				if (!outputParameters->hostApiSpecificStreamInfo || !EnsureActivateHook()) return -9999;
+				if (!persistentOutputEnabled || !outputParameters->hostApiSpecificStreamInfo)
+				{
+					LOG_ERROR("(AUDIO ROUTING) Refusing output open: permanent bridge output is not installed or stream information is missing." << std::endl);
+					return -9999;
+				}
 				PaStreamParameters parameters = *outputParameters;
 				const auto* callerInfo = static_cast<const PaWasapiStreamInfo*>(parameters.hostApiSpecificStreamInfo);
 				if (callerInfo->size < offsetof(PaWasapiStreamInfo, flags) + sizeof(callerInfo->flags) || callerInfo->size > 4096) return -9999;
@@ -1365,25 +1377,52 @@ namespace Audio::CableInput
 				auto* info = reinterpret_cast<PaWasapiStreamInfo*>(infoStorage.data());
 				info->flags |= PA_WASAPI_EXCLUSIVE;
 				parameters.hostApiSpecificStreamInfo = info;
-				wrapOutputActivation = true;
 				const int result = originalPaOpenStream(stream, inputParameters, &parameters, sampleRate,
 					framesPerBuffer, streamFlags, streamCallback, userData);
-				wrapOutputActivation = false;
-				LOG_INFO("(AUDIO ROUTING) Shared output open result " << result << std::endl);
+				LOG_INFO("(AUDIO ROUTING) Game output stream open result " << result << std::endl);
 				return result;
 			}
 			if (!inputOnlyOpen || inputOwnedByAsio)
 			{
+#if defined(RSMODS_AUDIO_LIFECYCLE_TRACE)
+				// INPUT DIAG (unplugged-boot -> RTC re-select never detects ASIO input): when RS_ASIO
+				// owns capture we pass every open straight through, so this is the only place we can see
+				// whether the game even ISSUES an input open after re-selecting Real Tone Cable. If no
+				// "(INPUT DIAG) game opened an input stream" line appears when you re-select RTC, the game
+				// never re-opens capture and the break is upstream of our hook.
+				if (inputParameters != nullptr && inputOwnedByAsio)
+				{
+					LOG_INFO("(INPUT DIAG) game opened an input stream under RS_ASIO ownership: device "
+						<< inputParameters->device << " ch " << inputParameters->channelCount
+						<< " sr " << sampleRate << " frames " << framesPerBuffer
+						<< " (input-only=" << (inputOnlyOpen ? 1 : 0) << ")." << std::endl);
+				}
+#endif
 				return originalPaOpenStream(stream, inputParameters, outputParameters, sampleRate,
 					framesPerBuffer, streamFlags, streamCallback, userData);
 			}
 
 			const unsigned long callerFlags = streamInfo->flags;
+			if (persistentInputEnabled)
+			{
+				streamInfo->flags = callerFlags | PA_WASAPI_EXCLUSIVE;
+				const int result = originalPaOpenStream(stream, inputParameters, outputParameters, sampleRate,
+					framesPerBuffer, streamFlags, streamCallback, userData);
+				streamInfo->flags = callerFlags;
+				LOG_INFO("(PERSISTENT INPUT) Game capture open result " << result << std::endl);
+				return result;
+			}
 			int result = -1;
 			bool usedModernPath = false;
 
-			if (modernInputEnabled && EnsureActivateHook())
+			if (modernInputEnabled)
 			{
+				if (!EnsureActivateHook())
+				{
+					SetStatus("modern input activation hook unavailable");
+					LOG_ERROR("(CABLE INPUT) Modern input activation hook unavailable" << std::endl);
+					return -9999;
+				}
 				// Ask PortAudio for its exclusive, event-driven shape regardless of the ini: the
 				// wrapped client turns that into a modern shared stream, and event mode is the
 				// low-latency path PortAudio only takes for "exclusive" streams.
@@ -1395,21 +1434,20 @@ namespace Audio::CableInput
 				usedModernPath = true;
 				if (result != 0)
 				{
-					LOG_WARNING("(CABLE INPUT) Modern input open failed (PortAudio " << result
-						<< "); retrying on the legacy shared path" << std::endl);
+					SetStatus("modern input open failed");
+					LOG_ERROR("(CABLE INPUT) Modern input open failed (PortAudio " << result << ")" << std::endl);
 				}
 			}
 
-			if (result != 0 && !routingConfiguration.enabled)
+			else
 			{
-				// Last resort (issue #76 fix, kept as the floor): the cable has no exclusive
-				// input format, so strip the exclusive bit and let PortAudio open legacy shared.
+				// Legacy capture uses the device's shared format, independently of bridge playback.
 				streamInfo->flags = callerFlags & ~PA_WASAPI_EXCLUSIVE;
 				result = originalPaOpenStream(stream, inputParameters, outputParameters, sampleRate,
 					framesPerBuffer, streamFlags, streamCallback, userData);
 				if (result == 0)
 				{
-					SetStatus("legacy shared input (polled), modern path unavailable");
+					SetStatus("legacy shared input (polled), ModernCableInput=off");
 					std::lock_guard<std::mutex> guard(statusMutex);
 					diagnostics.inputPath = "stock shared (polled)";
 					diagnostics.inputFormat.clear();
@@ -1440,6 +1478,14 @@ namespace Audio::CableInput
 			GetPrivateProfileStringA("Mod Settings", "AudioDiagnosticsOverlay", "on", overlay, sizeof(overlay), iniPath.c_str());
 			overlayEnabled = _stricmp(overlay, "off") != 0;
 			return _stricmp(value, "off") != 0;
+		}
+
+		bool ReadCableForPlayerTwoSetting(const std::filesystem::path& gameDirectory)
+		{
+			const auto iniPath = (gameDirectory / "RSMods.ini").string();
+			char value[16]{};
+			GetPrivateProfileStringA("Mod Settings", "CableForPlayerTwo", "off", value, sizeof(value), iniPath.c_str());
+			return _stricmp(value, "on") == 0;
 		}
 
 		// The game writes its own view of both streams to audiodump.txt at start-up (when
@@ -1496,23 +1542,32 @@ namespace Audio::CableInput
 		if (installed) return;
 		installed = true;
 
-		// Hold the 1 ms system timer for the life of the process, as most games do. The
-		// stock polled cable path sleeps between polls and wakes on this timer, so its
-		// hand-off delay follows the timer resolution: about 15.6 ms at the Windows default
-		// tick, about 1 ms while any process holds a 1 ms timer. Holding it here makes the
-		// stock path (and every other sleep in the game) behave the same on every machine,
-		// whether or not the modern client is in use. Never released: the OS drops the
-		// request when the process exits.
-		if (timeBeginPeriod(1) == TIMERR_NOERROR)
-			LOG_INFO("(CABLE INPUT) Holding the 1 ms system timer for the game's lifetime" << std::endl);
-		else
-			LOG_WARNING("(CABLE INPUT) Could not request the 1 ms system timer; the stock polled input follows the default tick" << std::endl);
-
 		char executablePath[MAX_PATH];
 		GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
 		const auto gameDir = std::filesystem::path(executablePath).parent_path();
+		const auto routingPath = gameDir / "AudioRouting.ini";
+		if (GetPrivateProfileIntW(L"Audio", L"MasterEnabled", 1, routingPath.c_str()) != 1)
+		{
+			LOG_INFO("(CABLE INPUT) Audio Bridge master power is off; leaving audio setup untouched" << std::endl);
+			return;
+		}
+		masterEnabled = true;
 		routingConfiguration = SharedOutput::ReadConfiguration();
-		if (std::filesystem::exists(gameDir / "RS_ASIO.dll"))
+		// Host the control pipe regardless of routing state so the GUI can always find the running
+		// game. When routing is off the bridge passes audio through untouched and the pipe reports a
+		// passthrough status; engaging routing later registers the live output session with it.
+		SharedOutput::StartControlServer();
+		const auto asioSettings = (gameDir / "RS_ASIO.ini").string();
+		char asioInputZero[512]{};
+		char asioInputOne[512]{};
+		char asioInputMicrophone[512]{};
+		GetPrivateProfileStringA("Asio.Input.0", "Driver", "", asioInputZero, sizeof(asioInputZero), asioSettings.c_str());
+		GetPrivateProfileStringA("Asio.Input.1", "Driver", "", asioInputOne, sizeof(asioInputOne), asioSettings.c_str());
+		GetPrivateProfileStringA("Asio.Input.Mic", "Driver", "", asioInputMicrophone, sizeof(asioInputMicrophone), asioSettings.c_str());
+		const bool hasConfiguredAsioInput = asioInputZero[0] != '\0' || asioInputOne[0] != '\0' || asioInputMicrophone[0] != '\0';
+		const bool asioEnabled = GetPrivateProfileIntA("Config", "EnableAsio", 0, asioSettings.c_str()) == 1;
+		const bool usesWindowsInput = GetPrivateProfileIntA("Config", "EnableWasapiInputs", 0, asioSettings.c_str()) == 1;
+		if (asioEnabled && std::filesystem::exists(gameDir / "RS_ASIO.dll") && hasConfiguredAsioInput && !usesWindowsInput)
 		{
 			inputOwnedByAsio = true;
 			asioPath.store(true, std::memory_order_release);
@@ -1523,26 +1578,42 @@ namespace Audio::CableInput
 				diagnostics.rsAsio = true;
 			}
 			LOG_INFO("(CABLE INPUT) RS_ASIO present; leaving the input path to it" << std::endl);
-			if (!routingConfiguration.enabled) return;
-			const auto asioSettings = (gameDir / "RS_ASIO.ini").string();
+			PersistentInput::SetCableForPlayerTwoEnabled(ReadCableForPlayerTwoSetting(gameDir));
+			if (!routingConfiguration.enabled)
+			{
+				if (!PersistentInput::Install(L"", L"", false, false, PersistentInput::EnumeratorSource::RsAsio))
+					LOG_ERROR("(CABLE INPUT) Could not install the live Player 2 Cable wrapper around RS_ASIO" << std::endl);
+				return;
+			}
 			char outputDriver[512]{};
 			GetPrivateProfileStringA("Asio.Output", "Driver", "", outputDriver, sizeof(outputDriver), asioSettings.c_str());
-			if (GetPrivateProfileIntA("Config", "EnableWasapiOutputs", 0, asioSettings.c_str()) != 1 || outputDriver[0] != '\0'
-				|| !routingConfiguration.inputDeviceId.empty())
+			if (GetPrivateProfileIntA("Config", "EnableWasapiOutputs", 0, asioSettings.c_str()) != 1 || outputDriver[0] != '\0')
 			{
-				LOG_ERROR("(AUDIO ROUTING) RS_ASIO must use EnableWasapiOutputs=1 and an empty Asio.Output Driver; input selection stays with RS_ASIO. Routing was not installed." << std::endl);
+				LOG_ERROR("(AUDIO ROUTING) RS_ASIO must use EnableWasapiOutputs=1 and an empty Asio.Output Driver; output routing stays with RS_ASIO. Routing was not installed." << std::endl);
+				if (!PersistentInput::Install(L"", L"", false, false, PersistentInput::EnumeratorSource::RsAsio))
+					LOG_ERROR("(CABLE INPUT) Could not install the live Player 2 Cable wrapper around RS_ASIO" << std::endl);
 				return;
 			}
 		}
+		else if (asioEnabled)
+			LOG_WARNING("(CABLE INPUT) RS_ASIO is enabled without an ASIO input; Cable mode requires EnableAsio=0" << std::endl);
+		if (!routingConfiguration.enabled && !inputOwnedByAsio)
+		{
+			SetStatus("Audio Bridge on; output setup not configured");
+			LOG_INFO("(AUDIO ROUTING) Audio Bridge is on, but no output has been applied; game audio left untouched" << std::endl);
+			return;
+		}
 
 		const bool requestedModernInput = ReadModernInputSetting();
-		modernInputEnabled = !inputOwnedByAsio && (requestedModernInput || routingConfiguration.enabled);
-		if (!requestedModernInput)
-			LOG_INFO("(CABLE INPUT) ModernCableInput=off; the capture client stands down"
-				<< (routingConfiguration.enabled ? ", audio routing still opens the output" : ", input opening unchanged") << std::endl);
+		modernInputEnabled = !inputOwnedByAsio && requestedModernInput;
+		if (inputOwnedByAsio)
+			LOG_INFO("(CABLE INPUT) RS_ASIO owns capture; ModernCableInput does not apply" << std::endl);
+		else if (!requestedModernInput)
+			LOG_INFO("(CABLE INPUT) Modern capture disabled; legacy shared input selected" << std::endl);
 		auto* target = reinterpret_cast<byte*>(Offsets::func_PortAudioOpenStream.Get());
 		if (target == nullptr)
 		{
+			if (inputOwnedByAsio) PersistentInput::Install(L"", L"", false, false, PersistentInput::EnumeratorSource::RsAsio);
 			SetStatus("unsupported game version");
 			LOG_ERROR("(CABLE INPUT) Pa_OpenStream offset unknown for this Rocksmith version; input left stock" << std::endl);
 			return;
@@ -1552,20 +1623,43 @@ namespace Audio::CableInput
 			DetourFunction(target, reinterpret_cast<byte*>(&Hook_PaOpenStream)));
 		if (originalPaOpenStream == nullptr)
 		{
+			if (inputOwnedByAsio) PersistentInput::Install(L"", L"", false, false, PersistentInput::EnumeratorSource::RsAsio);
 			SetStatus("Pa_OpenStream detour failed");
 			LOG_ERROR("(CABLE INPUT) Failed to detour Pa_OpenStream; input left stock" << std::endl);
 			return;
 		}
+		if (!inputOwnedByAsio)
+		{
+			// Cable mode owns both game-facing endpoints. Do not ask RS_ASIO to enumerate or
+			// initialize an ASIO driver just to reach a Windows speaker. The permanent output
+			// stays valid while its independent physical backend opens, disappears or recovers.
+			const bool replaceOutput = true;
+			const auto source = asioEnabled
+				? PersistentInput::EnumeratorSource::RsAsio
+				: PersistentInput::EnumeratorSource::Game;
+			const bool installed = PersistentInput::Install(routingConfiguration.inputDeviceId,
+				routingConfiguration.outputDeviceId, true, replaceOutput, source);
+			if (!installed)
+			{
+				SetStatus("permanent Cable installation failed: unsupported or modified game calls");
+				LOG_ERROR("(PERSISTENT INPUT) Could not verify the device-enumeration call sites. Cable capture was not installed." << std::endl);
+				return;
+			}
+			persistentInputEnabled = true;
+			persistentOutputEnabled = replaceOutput;
+			modernInputEnabled = false;
+		}
 
-		SetStatus(inputOwnedByAsio ? "ASIO input; shared output armed" :
+		SetStatus(persistentInputEnabled ? "Persistent input: waiting for cable" : inputOwnedByAsio ? "ASIO input; shared output armed" :
 			(modernInputEnabled ? "armed, waiting for the game to open its input" : "legacy shared input (ModernCableInput=off)"));
 		{
 			std::lock_guard<std::mutex> guard(statusMutex);
 			diagnostics.installed = true;
+			if (persistentInputEnabled) diagnostics.inputPath = "persistent Cable input";
 		}
 		LOG_INFO("(CABLE INPUT) Pa_OpenStream detoured; "
-			<< (modernInputEnabled ? "modern capture client enabled" : "ModernCableInput=off, legacy shared input only")
-			<< (routingConfiguration.enabled ? "; shared output enabled" : "; game output unchanged")
+			<< (persistentInputEnabled ? "persistent Cable input enabled" : modernInputEnabled ? "modern capture client enabled" : "ModernCableInput=off, legacy shared input only")
+			<< (persistentOutputEnabled ? "; permanent shared output enabled" : "; game output unchanged")
 			<< (outputMonitorEnabled ? "; output monitor ON (MonitorOutput=on)" : "; output monitor off")
 			<< std::endl);
 	}
@@ -1634,27 +1728,60 @@ namespace Audio::CableInput
 
 	void Poll()
 	{
+		if (!masterEnabled) return;
+
+		SharedOutput::RefreshProxyOutput();
+		if (inputOwnedByAsio)
+		{
+			const int proxyInputMode = OutputTap::ProxyInputMode();
+			if (proxyInputMode == 2) SetStatus("Real Tone Cable fallback is live");
+			else if (proxyInputMode == 1) SetStatus("ASIO input unavailable; waiting for Real Tone Cable");
+			else SetStatus("ASIO input is live");
+			std::lock_guard<std::mutex> guard(statusMutex);
+			diagnostics.proxyInputMode = proxyInputMode;
+		}
+		if (persistentInputEnabled)
+		{
+			const bool ready = AsioHook::IsInputReady(0);
+			SetStatus(ready ? "Persistent input: cable ready" : "Persistent input: waiting for cable");
+			if (!ready) { UpdateMeter(0.0f); measuredAny.store(false, std::memory_order_relaxed); }
+		}
 		static PollState inputState;
 		static PollState outputState;
+		static PollState playerTwoState;
 		PollDirection(tapStats, inputState, "(INPUT)", "Input");
 		PollDirection(outputStats, outputState, "(OUTPUT)", "Output");
+		PollDirection(playerTwoStats, playerTwoState, "(INPUT P2)", "Player 2 input");
 
 		// Overlay figures: packets per second over a 1 s window, stall state, and the
 		// game's own latency lines. Off the audio thread, a few dozen bytes of work.
 		static uint64_t rateTick = 0;
 		static uint64_t ratePackets = 0;
+		static uint64_t ratePlayerTwoPackets = 0;
 		const uint64_t now = GetTickCount64();
 		const uint64_t packets = tapStats.packets.load(std::memory_order_relaxed);
-		if (rateTick == 0) { rateTick = now; ratePackets = packets; }
+		const uint64_t playerTwoPackets = playerTwoStats.packets.load(std::memory_order_relaxed);
+		if (rateTick == 0) { rateTick = now; ratePackets = packets; ratePlayerTwoPackets = playerTwoPackets; }
 		else if (now - rateTick >= 1000)
 		{
 			const double perSecond = 1000.0 * static_cast<double>(packets - ratePackets) / static_cast<double>(now - rateTick);
+			const double playerTwoPerSecond = 1000.0 * static_cast<double>(playerTwoPackets - ratePlayerTwoPackets) / static_cast<double>(now - rateTick);
 			rateTick = now;
 			ratePackets = packets;
+			ratePlayerTwoPackets = playerTwoPackets;
+			// Player 2's path: the P2 cable wrapper beside RS_ASIO (always listed once installed;
+			// its toggle gates the audio per packet) or a configured second ASIO input route.
+			const bool playerTwoCable = PersistentInput::IsCableForPlayerTwoAvailable();
+			const bool playerTwoRoute = AsioHook::IsInputConfigured(1);
 			std::lock_guard<std::mutex> guard(statusMutex);
 			diagnostics.packetsPerSecond = perSecond;
 			diagnostics.streamActive = tapStats.startTick.load(std::memory_order_acquire) != 0;
 			diagnostics.stalled = inputState.stalled;
+			diagnostics.playerTwoInput = playerTwoCable || playerTwoRoute;
+			diagnostics.playerTwoCableFeedOff = playerTwoCable && !playerTwoRoute && !PersistentInput::IsCableForPlayerTwoEnabled();
+			diagnostics.playerTwoPacketsPerSecond = playerTwoPerSecond;
+			diagnostics.playerTwoStreamActive = playerTwoStats.startTick.load(std::memory_order_acquire) != 0;
+			diagnostics.playerTwoStalled = playerTwoState.stalled;
 		}
 		RefreshAudioDumpFigures();
 
@@ -1666,14 +1793,10 @@ namespace Audio::CableInput
 		if (measuredAny.load(std::memory_order_relaxed) && now - lastEvidenceTick >= 5000)
 		{
 			lastEvidenceTick = now;
-			const uint32_t bits = measuredAgeBits.load(std::memory_order_relaxed);
+			const uint32_t bits = measuredLagBits.load(std::memory_order_relaxed);
 			float ema = 0.0f;
 			std::memcpy(&ema, &bits, sizeof(ema));
-			// The system timer resolution decides how often the STOCK polled path wakes:
-			// 15.6 ms hand-off delay at the Windows default, ~1 ms when any process holds a
-			// 1 ms timer (live 2026-09-05: the same stock stream measured 15.6 ms and 0.8 ms in
-			// two launches, Chrome/Python holding the timer in the second). The event-driven
-			// modern path does not depend on it.
+			// Record timer resolution as diagnostic context without changing it.
 			ULONG timerMax = 0, timerMin = 0, timerCurrent = 0;
 			using NtQueryTimerResolution_t = LONG(NTAPI*)(PULONG, PULONG, PULONG);
 			static const auto queryTimer = reinterpret_cast<NtQueryTimerResolution_t>(
@@ -1681,7 +1804,7 @@ namespace Audio::CableInput
 			if (queryTimer) queryTimer(&timerMax, &timerMin, &timerCurrent);
 			LOG_INFO("(CABLE INPUT) latency evidence: source=" << lastRawSource.load(std::memory_order_relaxed)
 				<< " now-qpc=" << std::fixed << std::setprecision(2) << lastRawDelta100ns.load(std::memory_order_relaxed) / 10000.0
-				<< " ms, packet=" << lastRawFrames.load(std::memory_order_relaxed) << " frames, mean-age ema=" << ema
+				<< " ms, packet=" << lastRawFrames.load(std::memory_order_relaxed) << " frames, timestamp-lag ema=" << ema
 				<< " ms, system timer " << std::setprecision(3) << timerCurrent / 10000.0 << " ms" << std::endl);
 		}
 	}
@@ -1699,14 +1822,18 @@ namespace Audio::CableInput
 			std::lock_guard<std::mutex> guard(statusMutex);
 			copy = diagnostics;
 		}
-		const uint32_t bits = meterBits.load(std::memory_order_relaxed);
-		std::memcpy(&copy.meterPeak, &bits, sizeof(copy.meterPeak));
+		copy.meterPeak = ReadMeterBits(meterBits);
+		copy.playerTwoMeterPeak = ReadMeterBits(playerTwoMeterBits);
 		copy.dropouts = dropoutCount.load(std::memory_order_relaxed);
-		const uint32_t ageBits = measuredAgeBits.load(std::memory_order_relaxed);
+		const uint32_t ageBits = measuredLagBits.load(std::memory_order_relaxed);
 		float age = 0.0f;
 		std::memcpy(&age, &ageBits, sizeof(age));
-		copy.measuredValid = measuredAny.load(std::memory_order_relaxed);
-		copy.measuredInputMs = std::max(0.0f, age);
+		copy.captureTimestampValid = measuredAny.load(std::memory_order_acquire)
+			&& GetTickCount64() - measuredTick.load(std::memory_order_relaxed) < 1000
+			&& std::isfinite(age) && age >= 0.0f;
+		const uint32_t rate = tapRate.load(std::memory_order_relaxed);
+		copy.capturePacketMs = rate ? 1000.0 * lastRawFrames.load(std::memory_order_relaxed) / rate : 0.0;
+		copy.captureTimestampLagMs = age;
 		copy.tapPacketFrames = tapFrames.load(std::memory_order_relaxed);
 		copy.tapSampleRate = tapRate.load(std::memory_order_relaxed);
 		return copy;
@@ -1721,6 +1848,13 @@ namespace Audio::CableInput
 		UpdateMeter(silent ? 0.0f : peak);
 	}
 
+	void ReportPlayerTwoPacket(float peak, bool silent)
+	{
+		if (playerTwoStats.startTick.load(std::memory_order_acquire) == 0) playerTwoStats.OnStart();
+		playerTwoStats.OnPacket(peak, silent);
+		UpdateMeterBits(playerTwoMeterBits, silent ? 0.0f : peak);
+	}
+
 	bool IsAsioPath()
 	{
 		return asioPath.load(std::memory_order_acquire);
@@ -1733,24 +1867,34 @@ namespace Audio::CableInput
 		lastRawSource.store(1, std::memory_order_relaxed);
 	}
 
-	void ReportMeasuredInputAge(double ageMs)
+	void ReportCaptureTimestampLag(double lagMs)
 	{
-		// Slow exponential average (about 100 packets, one second at a 10 ms period) so the
-		// overlay shows a steady figure rather than the per-packet jitter. Values near or
-		// below zero are legitimate (an event-driven packet is handed over the moment it
-		// completes), so validity is tracked separately from the value.
-		uint32_t bits = measuredAgeBits.load(std::memory_order_relaxed);
+		if (!std::isfinite(lagMs) || lagMs < 0.0)
+		{
+			measuredAny.store(false, std::memory_order_release);
+			return;
+		}
+		uint32_t bits = measuredLagBits.load(std::memory_order_relaxed);
 		float current = 0.0f;
 		std::memcpy(&current, &bits, sizeof(current));
-		const bool first = !measuredAny.exchange(true, std::memory_order_relaxed);
-		const float next = first ? static_cast<float>(ageMs)
-			: current + 0.01f * (static_cast<float>(ageMs) - current);
+		const uint64_t now = GetTickCount64();
+		const bool first = !measuredAny.load(std::memory_order_relaxed)
+			|| now - measuredTick.load(std::memory_order_relaxed) >= 1000;
+		const float next = first ? static_cast<float>(lagMs)
+			: current + 0.01f * (static_cast<float>(lagMs) - current);
 		std::memcpy(&bits, &next, sizeof(bits));
-		measuredAgeBits.store(bits, std::memory_order_relaxed);
+		measuredLagBits.store(bits, std::memory_order_relaxed);
+		measuredTick.store(now, std::memory_order_relaxed);
+		measuredAny.store(true, std::memory_order_release);
 	}
 
 	bool IsOverlayEnabled()
 	{
-		return overlayEnabled;
+		return overlayEnabled.load(std::memory_order_acquire);
+	}
+
+	void SetOverlayEnabled(bool enabled)
+	{
+		overlayEnabled.store(enabled, std::memory_order_release);
 	}
 }

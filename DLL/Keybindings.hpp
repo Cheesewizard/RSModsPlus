@@ -20,6 +20,8 @@ struct ModCommand {
 };
 
 namespace Keybindings {
+    void EnsureAudioBridgeRunning();
+
     void DispatchCommand(WPARAM keyPressed, const std::map<std::string, ModCommand, std::less<>>& commands);
 
     void HandleKeyUp(WPARAM keyPressed);

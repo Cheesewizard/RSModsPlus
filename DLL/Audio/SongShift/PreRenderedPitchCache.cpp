@@ -478,10 +478,10 @@ namespace
 		const std::filesystem::path& errorPath,
 		const volatile LONG* cancellationRequested)
 	{
-		const auto helperPath = rocksmithDirectory / L"RSMods" / L"RSMods.exe";
+		const auto helperPath = rocksmithDirectory / L"RSMods.exe";
 		if (!std::filesystem::exists(helperPath))
 		{
-			throw std::runtime_error("RSMods\\RSMods.exe is required to prepare Speaker Mode audio");
+			throw std::runtime_error("RSMods.exe is required to prepare Speaker Mode audio");
 		}
 
 		std::wstring commandLine = QuoteArgument(helperPath.wstring())

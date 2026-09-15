@@ -2,9 +2,12 @@
 #include "ModManager.hpp"
 #include "Mods/DropPedal/DropPedal.hpp"
 #include "Mods/FakeGuitar/FakeGuitarInjector.hpp"
+#include "Mods/RocksmithGate.hpp"
 #include "Research/ResearchBridge.hpp"
 #include "Audio/MlAudioExporter.hpp"
 #include "Audio/CableInput.hpp"
+#include "Audio/AsioHook.hpp"
+#include "Audio/OutputTap.hpp"
 #include "OverlayToggles.hpp"
 #include "Audio/SongShift/WwiseMusicHook.hpp"
 #include "Audio/CableInput.hpp"
@@ -29,9 +32,6 @@ namespace ModManager {
 		BugPrevention::PreventExtraAudioDevicesCrash();
 		// Modern WASAPI capture for the Real Tone Cable (issue #76): replaces the game's
 		// legacy exclusive/shared input open so the cable works regardless of Rocksmith.ini.
-		Audio::CableInput::Install();
-
-		// Modern WASAPI capture for the Real Tone Cable (issue #76).
 		Audio::CableInput::Install();
 
 		if (Settings::ReturnSettingValue("FixBrokenTones") == "on") {
@@ -139,10 +139,15 @@ namespace ModManager {
 		CrowdControl::StartServer();
 	}
 
+	// True once the capture hook has been installed to carry the front-of-chain input conditioner in
+	// normal play (a non-zero AsioInputGain or NoiseGateThreshold at launch). Keeps the per-frame Poll
+	// running so the hook's detour stays installed even when Drop Pedal is off.
+	static bool inputConditionerHookActive = false;
+
 	/// <summary>
 	/// Applies all mods and fixes that must run at startup.
 	/// </summary>
-	void ApplyStartupMods() 
+	void ApplyStartupMods()
 	{
 		if (DropPedal::IsConfiguredEnabled())
 		{
@@ -152,6 +157,18 @@ namespace ModManager {
 		// Runs before the game instantiates its ASIO driver, so the detour is in place
 		// when RS_ASIO loads the same module.
 		DropPedal::InstallInputHooks();
+
+		// The guitar input conditioner (make-up gain + noise gate) is a front-of-chain stage inside the
+		// same capture hook, but it must work without Drop Pedal. When either is saved, install the hook
+		// here (before RS_ASIO attaches its capture stream, same reason as above) so it applies in normal
+		// play on cable or RS_ASIO. Install() is idempotent, so this is a no-op if Drop Pedal already
+		// installed it.
+		if (Settings::GetModSetting("AsioInputGain") != 0 || Settings::GetModSetting("NoiseGateThreshold") != 0
+			|| Settings::GetModSetting("CompressorStrength") != 0 || Settings::GetModSetting("HumFilter") != 0)
+		{
+			Audio::AsioHook::Install();
+			inputConditionerHookActive = true;
+		}
 
 #if defined(_DEBUG)
 		// Install the synthetic-guitar test harness as a source stage on the same input tap,
@@ -308,6 +325,13 @@ namespace ModManager {
 				DropPedal::ReportInputShifterUnavailable();
 			}
 		}
+		else if (inputConditionerHookActive)
+		{
+			// Keep the capture hook's detour-install attempts and housekeeping running so the
+			// front-of-chain input conditioner (gain + gate) stays live, without engaging the Drop Pedal
+			// processor path (no processor/source means Poll never auto-enables the shift stage).
+			Audio::AsioHook::Poll();
+		}
 
 		if (Settings::ReturnSettingValue("RemoveHeadstockEnabled") == "on" &&
 			Settings::ReturnSettingValue("RemoveHeadstockWhen") == "startup") {
@@ -364,6 +388,12 @@ namespace ModManager {
 		GameState::currentMenu = GameState::GetCurrentMenu(); // This loads without checking if memory is safe... This can cause crashes if used when GameLoaded is false.
 
 		HandleExternalMonitor(state);
+		HandleAsioInputGain();
+		HandleNoiseGate();
+		HandleCompressor();
+		HandleHumFilter();
+		HandleRocksmithGate();
+		HandleAudioBridgeLimiter();
 		HandleMicrophoneVolumeOverride();
 		HandleAudioBackgroundToggle();
 		HandleTwoRTCBypassToggle();
@@ -548,6 +578,88 @@ namespace ModManager {
 			);
 			state.movedToExternalDisplay = true;
 		}
+	}
+
+	/// <summary>
+	/// Applies the saved guitar input make-up gain once the game is loaded, so it takes effect at
+	/// launch even if the audio bridge window is never opened. Runs one time; live changes from the
+	/// bridge arrive over the control pipe, so re-reading every frame here would fight them.
+	/// </summary>
+	void HandleAsioInputGain() {
+		static bool applied = false;
+		if (applied) return;
+		applied = true;
+		// Stored as tenths of a dB in RSMods.ini (0 = unity/off).
+		Audio::AsioHook::SetInputGainDb(Settings::GetModSetting("AsioInputGain") / 10.0f);
+	}
+
+	/// <summary>
+	/// Applies the saved guitar-input noise gate threshold once at startup. Stored as signed tenths of a
+	/// dB in RSMods.ini (0 = off, else a negative threshold). Live changes arrive over the control pipe,
+	/// so this only seeds the launch value.
+	/// </summary>
+	void HandleNoiseGate() {
+		static bool applied = false;
+		if (applied) return;
+		applied = true;
+		Audio::AsioHook::SetNoiseGateThresholdDb(Settings::GetModSetting("NoiseGateThreshold") / 10.0f);
+	}
+
+	/// <summary>
+	/// Applies the saved guitar-input compressor strength once at startup. Stored as 0-100 in RSMods.ini
+	/// (0 = off). Live changes arrive over the control pipe, so this only seeds the launch value.
+	/// </summary>
+	void HandleCompressor() {
+		static bool applied = false;
+		if (applied) return;
+		applied = true;
+		Audio::AsioHook::SetCompressorStrength(Settings::GetModSetting("CompressorStrength") / 100.0f);
+	}
+
+	/// <summary>
+	/// Applies the saved mains-hum notch once at startup. Stored as the base frequency in RSMods.ini
+	/// (0 = off, else 50 or 60). Live changes arrive over the control pipe, so this only seeds launch.
+	/// </summary>
+	void HandleHumFilter() {
+		static bool applied = false;
+		if (applied) return;
+		applied = true;
+		Audio::AsioHook::SetHumFilterBaseHz(static_cast<float>(Settings::GetModSetting("HumFilter")));
+	}
+
+	/// <summary>
+	/// Seeds the manual Rocksmith gate override once at startup. RocksmithGateOverride is 0/1;
+	/// RocksmithGateThreshold is the forced P1_NoiseFloor in tenths of a dB. Live changes arrive over the
+	/// control pipe, and the value is re-asserted each frame in the EndScene hook, so this only seeds launch.
+	/// </summary>
+	void HandleRocksmithGate() {
+		static bool applied = false;
+		if (applied) return;
+		applied = true;
+		RocksmithGate::SetOverride(Settings::GetModSetting("RocksmithGateOverride") != 0,
+			Settings::GetModSetting("RocksmithGateThreshold") / 10.0f);
+	}
+
+	/// <summary>
+	/// Seeds the Rocksmith Audio Bridge proxy's output loudness guard from the saved settings once the proxy
+	/// driver is loaded. Cable mode seeds its shared-output engine when that stream initializes. Live changes
+	/// arrive over the control pipe (op 16). The guard is a
+	/// look-ahead brickwall limiter that holds the ceiling (hearing safety) plus a slow loudness AGC that
+	/// equalises song-to-song; each stage toggles independently.
+	/// </summary>
+	void HandleAudioBridgeLimiter() {
+		static bool applied = false;
+		if (applied) return;
+		if (!Audio::OutputTap::ProxyAvailable()) return;
+		// Levels are stored in tenths of a dBFS (e.g. -60 = -6.0 dBFS ceiling; -200 = -20.0 dBFS AGC target).
+		const bool limiterOn = Settings::GetModSetting("AudioBridgeLimiter") != 0;
+		const float ceilingDb = Settings::GetModSetting("AudioBridgeLimiterLevel") / 10.0f;
+		const bool agcOn = Settings::GetModSetting("AudioBridgeLoudnessMatch") != 0;
+		const float targetDb = Settings::GetModSetting("AudioBridgeLoudnessTarget") / 10.0f;
+		const float ceiling = std::pow(10.0f, ceilingDb / 20.0f);
+		const float target = std::pow(10.0f, targetDb / 20.0f);
+		applied = Audio::OutputTap::ConfigureOutputGuard(limiterOn, ceiling, agcOn, target);
+		if (applied) LOG_INFO("(AUDIO ROUTING) Saved output limiter applied to the ASIO proxy" << std::endl);
 	}
 
 	/// <summary>

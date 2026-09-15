@@ -1,5 +1,37 @@
 #include "stdafx.h"
 #include "Settings.hpp"
+#include <atomic>
+
+namespace
+{
+	std::atomic<bool> noteByNoteDetectionVisible{ true };
+	std::atomic<bool> noteByNoteCustomColours{ false };
+	std::atomic<int> noteByNoteUiSize{ 100 };
+	std::atomic<int> noteByNoteTargetSize{ 150 };
+	std::atomic<uint32_t> noteByNoteColors[] = { 0xFFFFFFFF, 0xFF55DD77, 0xFFFFAA44, 0xFFFF5555 };
+}
+
+bool Settings::IsNoteByNoteDetectionVisible()
+{
+	return noteByNoteDetectionVisible.load();
+}
+
+int Settings::GetNoteByNoteUiSize()
+{
+	return noteByNoteUiSize.load();
+}
+
+int Settings::GetNoteByNoteTargetSize()
+{
+	return noteByNoteTargetSize.load();
+}
+
+NoteByNote::DetectionPalette Settings::GetNoteByNoteDetectionPalette()
+{
+	if (!noteByNoteCustomColours.load()) return {};
+	return { noteByNoteColors[0].load(), noteByNoteColors[1].load(),
+		noteByNoteColors[2].load(), noteByNoteColors[3].load() };
+}
 
 /// <summary>
 /// Load Default Settings.
@@ -26,6 +58,7 @@ void Settings::Initialize()
 		{"DropPedalPitchUpKey", "VK_OEM_PERIOD"},
 		{"DropPedalToggleKey", "VK_F7"},
 		{"DropPedalBaseTuningKey", "VK_F9"},
+		{"RecordingHotkey", "VK_F9"},
 
 		{"MasterVolumeKey", "5"},
 		{"SongVolumeKey", "6"},
@@ -114,6 +147,16 @@ void Settings::Initialize()
 		{"SecondaryMonitorYPosition", 0},
 		{"SeparateNoteColorsMode", 0},
 		{"OverrideInputVolume", 17},
+		{"AsioInputGain", 0},
+		{"NoiseGateThreshold", 0},
+		{"CompressorStrength", 0},
+		{"HumFilter", 0},
+		{"RocksmithGateOverride", 0},
+		{"RocksmithGateThreshold", -593},
+		{"AudioBridgeLimiter", 0},
+		{"AudioBridgeLimiterLevel", -60},
+		{"AudioBridgeLoudnessMatch", 0},
+		{"AudioBridgeLoudnessTarget", -200},
 		{"CustomStringColors", 0},
 		{"AlternativeOutputSampleRate", 48000},
 		{"LoopingLeadUp", 0},
@@ -199,6 +242,7 @@ void Settings::ReadKeyBinds() {
 		{ "DropPedalPitchUpKey", reader.GetValue("Keybinds", "DropPedalPitchUpKey", "VK_OEM_PERIOD")},
 		{ "DropPedalToggleKey", reader.GetValue("Keybinds", "DropPedalToggleKey", "VK_F7")},
 		{ "DropPedalBaseTuningKey", reader.GetValue("Keybinds", "DropPedalBaseTuningKey", "VK_F9")},
+		{ "RecordingHotkey", reader.GetValue("Keybinds", "RecordingHotkey", "VK_F9")},
 
 		{ "MasterVolumeKey", reader.GetValue("Audio Keybindings", "MasterVolumeKey", "5") },
 		{ "SongVolumeKey", reader.GetValue("Audio Keybindings", "SongVolumeKey", "6") },
@@ -235,6 +279,16 @@ void Settings::ReadModSettings() {
 		{"SeparateNoteColorsMode", reader.GetLongValue("Mod Settings", "SeparateNoteColorsMode", 0)}, // 0 = same as strings, 1 = default, 2 = custom
 		{"CustomStringColors", reader.GetLongValue("Toggle Switches", "CustomStringColors", 0)}, //0 = default, 1 = Zag, 2 = custom colors
 		{"OverrideInputVolume", reader.GetLongValue("Mod Settings", "OverrideInputVolume", 17)}, // 17 is what Rocksmith calls default.
+		{"AsioInputGain", reader.GetLongValue("Mod Settings", "AsioInputGain", 0)}, // tenths of a dB of guitar input make-up gain (0 = off)
+		{"NoiseGateThreshold", reader.GetLongValue("Mod Settings", "NoiseGateThreshold", 0)}, // guitar input noise-gate threshold in tenths of a dB (0 = off, else negative)
+		{"CompressorStrength", reader.GetLongValue("Mod Settings", "CompressorStrength", 0)}, // guitar input compressor strength, 0-100 (0 = off); flattens string-beat wobble before the game amp
+		{"HumFilter", reader.GetLongValue("Mod Settings", "HumFilter", 0)}, // mains-hum notch base frequency (0 = off, else 50 or 60); notches out the 50/60 Hz ground-loop hum comb on a grounded interface
+		{"RocksmithGateOverride", reader.GetLongValue("Mod Settings", "RocksmithGateOverride", 0)}, // 1 = take over the game's own amp noise gate (P1_NoiseFloor); 0 = leave the game's calibrated gate alone
+		{"RocksmithGateThreshold", reader.GetLongValue("Mod Settings", "RocksmithGateThreshold", -593)}, // forced P1_NoiseFloor in tenths of a dB while the override is on (-593 = game default; lower opens the gate for longer sustain)
+		{"AudioBridgeLimiter", reader.GetLongValue("Mod Settings", "AudioBridgeLimiter", 0)}, // output limiter / safety ceiling (0 = off, 1 = on)
+		{"AudioBridgeLimiterLevel", reader.GetLongValue("Mod Settings", "AudioBridgeLimiterLevel", -60)}, // limiter ceiling in tenths of a dBFS (-60 = -6.0 dBFS); nothing leaves above this
+		{"AudioBridgeLoudnessMatch", reader.GetLongValue("Mod Settings", "AudioBridgeLoudnessMatch", 0)}, // loudness equalisation / AGC (0 = off, 1 = on)
+		{"AudioBridgeLoudnessTarget", reader.GetLongValue("Mod Settings", "AudioBridgeLoudnessTarget", -200)}, // AGC target loudness in tenths of a dBFS RMS (-200 = -20.0 dBFS)
 		{"AlternativeOutputSampleRate", reader.GetLongValue("Mod Settings", "AlternativeOutputSampleRate", 48000)},
 		{"LoopingLeadUp", reader.GetLongValue("Mod Settings", "LoopingLeadUp", 0)},
 		{"RewindBy", reader.GetLongValue("Mod Settings", "RewindBy", 0)},
@@ -323,6 +377,43 @@ void Settings::ReadModSettings() {
 	modSettings["DropPedalOverlayDownColor"] = reader.GetValue("Drop Pedal", "OverlayDownColor", "6BE06B");
 	modSettings["DropPedalOverlayUpColor"] = reader.GetValue("Drop Pedal", "OverlayUpColor", "FFC24D");
 	modSettings["DropPedalOverlayStatusColor"] = reader.GetValue("Drop Pedal", "OverlayStatusColor", "FFFFFF");
+
+	noteByNoteCustomColours.store(std::string(reader.GetValue("Note by Note", "NoteByNoteCustomColours", "off")) == "on");
+	noteByNoteDetectionVisible.store(std::string(reader.GetValue("Note by Note", "NoteByNoteDetectionOverlay", "on")) != "off");
+	const char* sizeKeys[] = { "NoteByNoteUiSize", "NoteByNoteTargetSize" };
+	// Target text ships larger than the UI readout: at 100% the target label was too small to
+	// read comfortably, so its default is 150%. The UI readout stays at 100%.
+	const char* sizeDefaults[] = { "100", "150" };
+	std::atomic<int>* sizes[] = { &noteByNoteUiSize, &noteByNoteTargetSize };
+	for (unsigned index = 0; index < 2; ++index)
+	{
+		const std::string value = reader.GetValue("Note by Note", sizeKeys[index], sizeDefaults[index]);
+		if (value.empty() || value.size() > 3 || value.find_first_not_of("0123456789") != std::string::npos)
+		{
+			LOG_ERROR("Invalid " << sizeKeys[index] << ": expected a whole percentage from 50 to 300; keeping the current size." << std::endl);
+			continue;
+		}
+		const int size = std::stoi(value);
+		if (size < 50 || size > 300)
+		{
+			LOG_ERROR("Invalid " << sizeKeys[index] << ": expected 50 to 300; keeping the current size." << std::endl);
+			continue;
+		}
+		sizes[index]->store(size);
+	}
+	const char* colorKeys[] = { "NoteByNoteNeutralColor", "NoteByNoteConfirmedColor", "NoteByNotePartialColor", "NoteByNoteRejectedColor" };
+	const char* colorDefaults[] = { "FFFFFF", "55DD77", "FFAA44", "FF5555" };
+	for (unsigned index = 0; index < 4; ++index)
+	{
+		const std::string value = reader.GetValue("Note by Note", colorKeys[index], colorDefaults[index]);
+		if (value.size() != 6 || value.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+		{
+			LOG_ERROR("Invalid Note by Note colour for " << colorKeys[index] << ": expected six hexadecimal digits; keeping the current colour." << std::endl);
+			continue;
+		}
+		noteByNoteColors[index].store(0xFF000000u | static_cast<uint32_t>(std::stoul(value, nullptr, 16)));
+	}
+
 }
 
 /// <summary>

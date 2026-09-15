@@ -1,7 +1,13 @@
 #pragma once
+#include "Mods/DetectionFeedback.hpp"
 #include <functional> 
 
 namespace Settings {
+	bool IsNoteByNoteDetectionVisible();
+	int GetNoteByNoteUiSize();
+	int GetNoteByNoteTargetSize();
+	NoteByNote::DetectionPalette GetNoteByNoteDetectionPalette();
+
 	void Initialize(); // Default Settings
 
 	// Read INI

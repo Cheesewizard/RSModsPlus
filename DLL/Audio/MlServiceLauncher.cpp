@@ -102,11 +102,11 @@ void MlServiceLauncher::EnsureStarted()
 		PublishStatus();
 		return;
 	}
-	const auto directory = std::filesystem::path(gamePath).parent_path() / L"RSMods";
+	const auto directory = std::filesystem::path(gamePath).parent_path();
 	const auto executable = directory / L"RSMods.exe";
 	std::error_code error;
 	if (!std::filesystem::is_regular_file(executable, error)
-		|| !std::filesystem::is_regular_file(directory.parent_path() / L"rsmodsplus.dll", error))
+		|| !std::filesystem::is_regular_file(directory / L"rsmodsplus.dll", error))
 	{
 		LOG_ERROR("[MlServiceLauncher] Bundled ML service is missing. Install the complete matching release package." << std::endl);
 		serviceError = ERROR_FILE_NOT_FOUND;

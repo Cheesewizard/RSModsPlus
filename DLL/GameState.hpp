@@ -204,6 +204,7 @@ namespace GameState {
 	};
 
 	namespace Menus {
+		bool IsOnMainMenu();
 		bool IsInMultiplayerTunerMenus();
 		bool IsInScoreMenus();
 		bool IsInTuningMenus();

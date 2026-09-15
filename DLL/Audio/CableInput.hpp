@@ -53,12 +53,25 @@ namespace Audio::CableInput
 		float meterPeak = 0.0f;        // decaying linear peak (0..1) for the signal bar
 		std::string deviceFormat;      // the Windows format the cable came up with ("16 kHz")
 		uint64_t dropouts = 0;         // packets discarded because the game's audio thread fell behind
-		double measuredInputMs = 0.0;  // MEASURED: mean sample age when the game takes a packet (see ReportMeasuredInputAge)
-		bool measuredValid = false;    // at least one measurement has been taken this stream
+		double captureTimestampLagMs = 0.0;  // QPC timestamp to game delivery; not physical input latency.
+		double capturePacketMs = 0.0;
+		bool captureTimestampValid = false;    // at least one measurement has been taken this stream
 		// ASIO path (RS_ASIO present). The AsioHook tap on RS_ASIO's capture client is the
 		// only observer, so the signal meter, packet rate and stall state above come from it.
 		uint32_t tapPacketFrames = 0;  // frames per packet the tap sees (the ASIO buffer size)
 		uint32_t tapSampleRate = 0;
+		int proxyInputMode = 0;        // 0 = physical ASIO, 1 = waiting for RTC, 2 = RTC fallback live
+
+		// Player 2 input (the second SIGNAL row of the overlay, drawn in 2-player only). Fed by
+		// whichever path carries Player 2: the Real Tone Cable wrapper beside RS_ASIO
+		// (PersistentCapture, gated by "Use the Real Tone Cable for Player 2") or the second ASIO
+		// input route (AsioHook route 1). Same semantics as the Player 1 fields above.
+		bool playerTwoInput = false;       // some Player 2 input path exists at all
+		bool playerTwoCableFeedOff = false; // the P2 cable wrapper exists but its toggle is off (silence)
+		bool playerTwoStreamActive = false; // at least one packet has been delivered to the game
+		bool playerTwoStalled = false;
+		double playerTwoPacketsPerSecond = 0.0;
+		float playerTwoMeterPeak = 0.0f;   // decaying linear peak (0..1)
 	};
 	Diagnostics GetDiagnostics();
 
@@ -66,12 +79,14 @@ namespace Audio::CableInput
 	// The capture client does not also feed this meter. Audio thread; never blocks.
 	void ReportTapPacket(float peak, bool silent, uint32_t frames, uint32_t sampleRate);
 
-	// Feeds the measured input latency. Called on the audio thread with the MEAN age, in ms,
-	// of the samples in a packet at the moment the game's capture call received it (device
-	// timestamp of the first sample vs. now, minus half the packet). A pick lands anywhere in
-	// the packet, so the mean is the delay a player experiences. Works on the stock path
-	// too, via the AsioHook tap.
-	void ReportMeasuredInputAge(double ageMs);
+	// Per-packet signal feed for Player 2's input, from every path that can carry it (the P2
+	// cable wrapper's GetBuffer and AsioHook route 1). Audio thread; lock-free; never blocks.
+	void ReportPlayerTwoPacket(float peak, bool silent);
+
+	// QPC timestamp to game delivery in ms. Device timestamp semantics vary, so this
+	// measures timestamp lag only, without a packet midpoint correction. Negative or
+	// non-finite values invalidate the measurement; they never enter the average.
+	void ReportCaptureTimestampLag(double lagMs);
 	// Raw inputs of the tap's measurement (clock delta in 100 ns units, packet frames), for
 	// the evidence line in Poll.
 	void ReportMeasuredInputRaw(int64_t delta100ns, uint32_t frames);
@@ -80,4 +95,5 @@ namespace Audio::CableInput
 
 	// RSMods.ini [Mod Settings] AudioDiagnosticsOverlay (default on).
 	bool IsOverlayEnabled();
+	void SetOverlayEnabled(bool enabled);
 }

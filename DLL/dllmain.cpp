@@ -1,9 +1,11 @@
 #include "stdafx.h"
 #include "Main.hpp"
 #include "Mods/NoteByNoteNativeScoring.hpp"
+#include "Mods/RocksmithGate.hpp"
 #include "Research/ResearchBridge.hpp"
 #include "Audio/MlServiceLauncher.hpp"
 #include "Audio/AudioLifecycleTrace.hpp"
+#include "ProductVersion.hpp"
 
 #if defined(_DEBUG) || defined(_WWISE_LOGS)
 bool debug = true;
@@ -15,10 +17,6 @@ bool debug = false;
 bool wwiseLogging = true;
 #else
 bool wwiseLogging = false;
-#endif
-
-#ifndef _RSMODS_VERSION
-#define _RSMODS_VERSION "RSModsPlus 4 (based on RSMods 1.2.8.2). DEBUG: " << std::boolalpha << debug << ". Wwise Logs: " << std::boolalpha << wwiseLogging << "."
 #endif
 
 /// <summary>
@@ -205,6 +203,10 @@ HRESULT APIENTRY D3DHooks::Hook_EndScene(IDirect3DDevice9* pDevice) {
 	}
 	D3DHooks::FinishNoteByNoteRenderFrame();
 
+	// Re-assert the manual Rocksmith gate override (P1_NoiseFloor) every presented frame while it is on,
+	// so it survives the game rewriting that RTPC on calibration and song transitions. No-op when off.
+	RocksmithGate::ApplyPerFrame();
+
 	Menu::Init(pDevice, (LONG_PTR)WndProc);
 	Menu::RenderImGuiMenu();
 	Menu::UpdateStringTextures(pDevice);
@@ -235,13 +237,17 @@ unsigned WINAPI HandleEffectQueueThread() {
 /// </summary>
 /// <returns>NULL. Loops while game is open.</returns>
 unsigned WINAPI MainThread() {
-	LOG_NOHEAD(_RSMODS_VERSION << std::endl);
+	LOG_NOHEAD(ProductVersion::DISPLAY_NAME
+		<< " (based on RSMods " << ProductVersion::UPSTREAM_VERSION << "). DEBUG: "
+		<< std::boolalpha << debug << ". Wwise Logs: " << std::boolalpha << wwiseLogging << "."
+		<< std::endl);
 
 	GameLoopState loopState = {};
 
 	Keybindings::InitializeCommands();
 	ModManager::InitializeConfiguration();
 	ModManager::InitializeMods(debug);
+	Keybindings::EnsureAudioBridgeRunning();
 	ModManager::ApplyStartupMods();
 
 	// Note by Note is a FEATURE and must initialize in every configuration: the

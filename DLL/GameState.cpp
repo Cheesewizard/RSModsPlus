@@ -176,6 +176,10 @@ void GameState::ToggleCB(bool enabled) {
 
 namespace GameState {
 	namespace Menus {
+		bool IsOnMainMenu() {
+			return currentMenu == "MainMenu";
+		}
+
 		bool IsInMultiplayerTunerMenus() {
 			return Contains(currentMenu, learnASongModes);
 		}

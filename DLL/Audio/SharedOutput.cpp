@@ -1,18 +1,60 @@
 #include "stdafx.h"
 #include "SharedOutput.hpp"
+#include "AsioBufferState.hpp"
 #include "AudioPacketQueue.hpp"
 #include "GameAudioRecorder.hpp"
+#include "DrySignalRecording.hpp"
 #include "AudioControl.hpp"
+#include "OutputTap.hpp"
+#include "PersistentInput.hpp"
+#include "AsioHook.hpp"
+#include "CableInput.hpp"
+#include "../AsioProxy/LatencyDsp.h"
 #include "../Mods/VolumeControl.hpp"
+#include "../Mods/RocksmithGate.hpp"
+#include <vector>
 #include <avrt.h>
+#include <cstdlib>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <array>
+#include "OutputBackend.hpp"
+#include <wrl/client.h>
+#include <functiondiscoverykeys_devpkey.h>
 
 #pragma comment(lib, "avrt.lib")
 
 namespace Audio::SharedOutput
 {
+	namespace
+	{
+		// Latency round-trip result, shared by both control handlers (a class member would not be visible to
+		// the free-function passthrough handler). g_latencyProbeLen is captured when a measure is armed (op 17).
+		int g_latencyProbeLen = 0;
+		void WriteLatencyResult(ControlResponse& response)
+		{
+			if (!AsioHook::IsLatencyCaptureDone()) { wcsncpy_s(response.file, L"measuring", _TRUNCATE); return; }
+			const float* cap = nullptr;
+			const int filled = AsioHook::GetLatencyCapture(&cap);
+			const int refLen = g_latencyProbeLen > 0 ? g_latencyProbeLen : 256;
+			const int maxLag = filled - refLen;
+			LatencyDsp::Match m{ -1, 0.0f };
+			if (cap && maxLag > 0)
+			{
+				std::vector<float> ref(refLen);
+				LatencyDsp::GenerateProbe(ref.data(), refLen);
+				m = LatencyDsp::FindLag(ref.data(), refLen, cap, filled, maxLag);
+			}
+			wchar_t buf[128]{};
+			if (m.lag >= 0 && m.confidence >= 0.5f)
+				swprintf_s(buf, L"ms=%.2f;conf=%.2f", LatencyDsp::LagToMilliseconds(m.lag, 48000.0), m.confidence);
+			else
+				swprintf_s(buf, L"no_signal;conf=%.2f", m.confidence);
+			wcsncpy_s(response.file, buf, _TRUNCATE);
+		}
+	}
+
 	UINT32 ReadSavedPeriod(const std::wstring& endpointId)
 	{
 		wchar_t executable[MAX_PATH]{};
@@ -26,34 +68,65 @@ namespace Audio::SharedOutput
 		return fundamental && value >= minimum && value <= maximum && value % fundamental == 0;
 	}
 
-	HRESULT PrimeExtraBuffer(IAudioRenderClient* client, UINT32 selected, UINT32 minimum)
+	bool ReadContainer(IMMDevice* endpoint, GUID& container)
 	{
-		if (selected <= minimum) return S_OK;
-		BYTE* data = nullptr;
-		const HRESULT result = client->GetBuffer(selected - minimum, &data);
-		return FAILED(result) ? result : client->ReleaseBuffer(selected - minimum, AUDCLNT_BUFFERFLAGS_SILENT);
+		Microsoft::WRL::ComPtr<IPropertyStore> properties;
+		if (!endpoint || FAILED(endpoint->OpenPropertyStore(STGM_READ, &properties))) return false;
+		PROPVARIANT value{};
+		const HRESULT result = properties->GetValue(PKEY_Device_ContainerId, &value);
+		const bool valid = SUCCEEDED(result) && value.vt == VT_CLSID && value.puuid && *value.puuid != GUID_NULL;
+		if (valid) container = *value.puuid;
+		PropVariantClear(&value);
+		return valid;
 	}
 
-	using EndpointFactory = std::function<HRESULT(const std::wstring&, IAudioClient3**)>;
-
-	HRESULT OpenEndpoint(const std::wstring& endpointId, IAudioClient3** client)
+	HRESULT OpenEndpoint(std::wstring& endpointId, IAudioClient3** client)
 	{
-		IMMDeviceEnumerator* enumerator = nullptr;
-		HRESULT result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-			__uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator));
+		using Microsoft::WRL::ComPtr;
+		ComPtr<IMMDeviceEnumerator> enumerator;
+		HRESULT result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
 		if (FAILED(result)) return result;
-		IMMDevice* endpoint = nullptr;
-		result = enumerator->GetDevice(endpointId.c_str(), &endpoint);
-		enumerator->Release();
+		ComPtr<IMMDevice> endpoint;
+		result = endpointId.empty() ? enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &endpoint)
+			: enumerator->GetDevice(endpointId.c_str(), &endpoint);
 		if (FAILED(result)) return result;
-		IMMEndpoint* direction = nullptr;
-		result = endpoint->QueryInterface(__uuidof(IMMEndpoint), reinterpret_cast<void**>(&direction));
+		ComPtr<IMMEndpoint> direction;
+		result = endpoint.As(&direction);
 		EDataFlow flow = eAll;
-		if (SUCCEEDED(result)) { result = direction->GetDataFlow(&flow); direction->Release(); }
-		if (SUCCEEDED(result) && flow != eRender) result = E_INVALIDARG;
-		if (SUCCEEDED(result)) result = endpoint->Activate(__uuidof(IAudioClient3), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(client));
-		endpoint->Release();
-		return result;
+		if (SUCCEEDED(result)) result = direction->GetDataFlow(&flow);
+		if (FAILED(result)) return result;
+		if (flow != eRender) return E_INVALIDARG;
+		DWORD state = 0;
+		result = endpoint->GetState(&state);
+		if (FAILED(result)) return result;
+		if (!(state & DEVICE_STATE_ACTIVE))
+		{
+			GUID container{};
+			if (!ReadContainer(endpoint.Get(), container)) return AUDCLNT_E_DEVICE_INVALIDATED;
+			ComPtr<IMMDeviceCollection> candidates;
+			result = enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &candidates);
+			if (FAILED(result)) return result;
+			UINT count = 0;
+			result = candidates->GetCount(&count);
+			if (FAILED(result)) return result;
+			ComPtr<IMMDevice> match;
+			for (UINT index = 0; index < count; ++index)
+			{
+				ComPtr<IMMDevice> candidate;
+				GUID identity{};
+				if (FAILED(candidates->Item(index, &candidate)) || !ReadContainer(candidate.Get(), identity) || identity != container) continue;
+				if (match) return HRESULT_FROM_WIN32(ERROR_DUP_NAME);
+				match = candidate;
+			}
+			if (!match) return AUDCLNT_E_DEVICE_INVALIDATED;
+			endpoint = match;
+		}
+		LPWSTR resolved = nullptr;
+		result = endpoint->GetId(&resolved);
+		if (FAILED(result)) return result;
+		endpointId = resolved;
+		CoTaskMemFree(resolved);
+		return endpoint->Activate(__uuidof(IAudioClient3), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(client));
 	}
 
 	bool IsGameFormat(const WAVEFORMATEX* format)
@@ -75,132 +148,259 @@ namespace Audio::SharedOutput
 			&& format->nAvgBytesPerSec == format->nSamplesPerSec * format->nBlockAlign;
 	}
 
+	// Control ops whose handling is the same whether or not an owned output session exists. They are
+	// parsed and dispatched ONCE here; OutputSession::HandleControl and PassthroughStatus only add the
+	// ops that genuinely differ (recording 2/3/14, switching the game's own output 4/6, alternate-device
+	// routing 21/22). The single shared op whose TARGET differs is the loudness guard (16): the session
+	// applies it in its owned backend, passthrough in the proxy driver, so the caller passes that in.
+	// Returns true when the op was recognised and response.result is set.
+	static bool HandleSharedControl(const ControlRequest& request, ControlResponse& response,
+		const std::function<bool(bool limiterOn, float ceilingLin, bool agcOn, float targetRms)>& configureGuard)
+	{
+		// Signed integer, optionally newline-terminated (ini-style values the GUI relays as-is).
+		const auto parseInteger = [&request](long& out) -> bool
+		{
+			wchar_t* end = nullptr;
+			out = wcstol(request.value, &end, 10);
+			return end != request.value && (*end == 0 || *end == L'\n');
+		};
+		long integer = 0;
+		switch (request.operation)
+		{
+		case 7: case 8: case 9: case 10: case 11: case 12: case 13:
+		{
+			// Playback mixer bus (op - 7) volume, digits only, 0-100. The mixer is the game's own bus
+			// volumes (VolumeControl), so it is live with or without routing.
+			unsigned int volume = 0;
+			bool valid = request.value[0] != 0;
+			for (const wchar_t* digit = request.value; *digit && valid; ++digit)
+			{
+				valid = *digit >= L'0' && *digit <= L'9';
+				if (valid) volume = volume * 10 + (*digit - L'0');
+				valid = valid && volume <= 100;
+			}
+			response.result = !valid ? E_INVALIDARG
+				: VolumeControl::SetPlaybackVolume(request.operation - 7, static_cast<float>(volume)) ? S_OK : E_FAIL;
+			return true;
+		}
+		case 15:
+			// Guitar input make-up gain, signed tenths of a dB ("60" = +6.0 dB), as RSMods.ini stores it.
+			if (!parseInteger(integer)) response.result = E_INVALIDARG;
+			else { AsioHook::SetInputGainDb(static_cast<float>(integer) / 10.0f); response.result = S_OK; }
+			return true;
+		case 16:
+		{
+			// Output loudness guard: "<limiterOn>,<ceiling>,<agcOn>,<target>" (on flags 0/1; ceiling and
+			// target linear 0..1). A look-ahead brickwall limiter that holds the ceiling plus a slow loudness
+			// AGC that equalises song-to-song. Malformed = E_INVALIDARG; no target to apply it to = NOT_READY.
+			wchar_t* e = nullptr;
+			const long limOn = wcstol(request.value, &e, 10);
+			const bool hasCeiling = e && *e == L',';
+			const double ceiling = hasCeiling ? wcstod(e + 1, &e) : 1.0;
+			const bool hasAgc = e && *e == L',';
+			const long agcOn = hasAgc ? wcstol(e + 1, &e, 10) : 0;
+			const bool hasTarget = e && *e == L',';
+			const double target = hasTarget ? wcstod(e + 1, &e) : 0.10;
+			const bool valid = hasCeiling && hasAgc && hasTarget && e && (*e == 0 || *e == L'\n')
+				&& (limOn == 0 || limOn == 1) && (agcOn == 0 || agcOn == 1);
+			if (!valid) response.result = E_INVALIDARG;
+			else response.result = configureGuard(limOn != 0, static_cast<float>(ceiling), agcOn != 0, static_cast<float>(target))
+				? S_OK : HRESULT_FROM_WIN32(ERROR_NOT_READY);
+			return true;
+		}
+		case 17:
+			// Start a round-trip latency measurement: capture ~0.25 s of input, then inject the probe on
+			// output. The loopback (physical out->in) carries the probe back into the capture.
+			AsioHook::StartLatencyCapture(12000);
+			g_latencyProbeLen = OutputTap::ArmLatencyProbe();
+			response.result = g_latencyProbeLen > 0 ? S_OK : HRESULT_FROM_WIN32(ERROR_NOT_READY);
+			return true;
+		case 18:
+			response.result = S_OK;   // the latency result is written into response.file after the common fill
+			return true;
+		case 19:
+			// Guitar input noise gate threshold, signed tenths of a dB ("-600" = -60 dB); 0 or above = off.
+			if (!parseInteger(integer)) response.result = E_INVALIDARG;
+			else { AsioHook::SetNoiseGateThresholdDb(static_cast<float>(integer) / 10.0f); response.result = S_OK; }
+			return true;
+		case 20:
+			// Guitar input compressor strength, integer 0-100 (0 = off).
+			if (!parseInteger(integer)) response.result = E_INVALIDARG;
+			else { AsioHook::SetCompressorStrength(static_cast<float>(integer) / 100.0f); response.result = S_OK; }
+			return true;
+		case 23:
+		{
+			// Rocksmith gate override: "<on>,<tenths>" (on 0/1; tenths = P1_NoiseFloor in tenths of a dB,
+			// signed). Takes over the game's own amp noise gate; re-asserted live on the render thread
+			// (RocksmithGate::ApplyPerFrame) whether or not the bridge routes.
+			wchar_t* end = nullptr;
+			const long on = wcstol(request.value, &end, 10);
+			if (end == request.value) { response.result = E_INVALIDARG; return true; }
+			const long tenths = (*end == L',') ? wcstol(end + 1, nullptr, 10) : 0;
+			RocksmithGate::SetOverride(on != 0, static_cast<float>(tenths) / 10.0f);
+			response.result = S_OK;
+			return true;
+		}
+		case 24:
+			// Mains-hum notch base frequency (0 = off, else 50 or 60).
+			if (!parseInteger(integer)) response.result = E_INVALIDARG;
+			else { AsioHook::SetHumFilterBaseHz(static_cast<float>(integer)); response.result = S_OK; }
+			return true;
+		case 25:
+		{
+			// Ask the proxy to bind the named real ASIO driver. A virtual proxy promotes. A proxy that already
+			// reports the device bound (2) or bound-but-stalled (3) is torn down and bound again: Apply is the
+			// user's one explicit recovery when the real device is dead but still calling back.
+			const int mode = OutputTap::ProxyOutputMode();
+			const bool bound = mode == 2 || mode == 3;
+			if (bound) LOG_INFO("(AUDIO ROUTING) Apply on a bound ASIO device: releasing and rebinding it" << std::endl);
+			const bool ok = bound ? OutputTap::TryRebindProxyOutput(request.value) : OutputTap::TryPromoteProxyOutput(request.value);
+			response.result = ok ? S_OK : HRESULT_FROM_WIN32(ERROR_NOT_READY);
+			return true;
+		}
+		case 26:
+		{
+			// Live Player 2 Cable toggle ("0"/"1"); needs the persistent-input wrapper to be installed.
+			wchar_t* end = nullptr;
+			const long enabled = wcstol(request.value, &end, 10);
+			if (end == request.value || *end != L'\0' || (enabled != 0 && enabled != 1)) response.result = E_INVALIDARG;
+			else if (!PersistentInput::IsCableForPlayerTwoAvailable()) response.result = HRESULT_FROM_WIN32(ERROR_NOT_READY);
+			else { PersistentInput::SetCableForPlayerTwoEnabled(enabled != 0); response.result = S_OK; }
+			return true;
+		}
+		case 27:
+		{
+			wchar_t* end = nullptr;
+			const long enabled = wcstol(request.value, &end, 10);
+			if (end == request.value || *end != L'\0' || (enabled != 0 && enabled != 1)) response.result = E_INVALIDARG;
+			else { CableInput::SetOverlayEnabled(enabled != 0); response.result = S_OK; }
+			return true;
+		}
+		default:
+			return false;
+		}
+	}
+
 	class OutputSession
 	{
 	public:
-		explicit OutputSession(EndpointFactory factory = OpenEndpoint) : endpointFactory(std::move(factory))
+		OutputSession() : OutputSession(OpenEndpoint, true, true) {}
+
+		explicit OutputSession(EndpointFactory factory, bool watchDevices = false, bool allowDefaultFallback = false)
+			: physical(std::make_shared<OutputBackend>(std::move(factory), watchDevices, Microsoft::WRL::Make<OutputNotifications>(), allowDefaultFallback))
 		{
-			commandEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-			completedEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-			engineEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 			packetEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 			gameTimer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
 			LARGE_INTEGER frequency{};
 			QueryPerformanceFrequency(&frequency);
 			wakeFrequency = frequency.QuadPart;
-			if (!commandEvent || !completedEvent || !engineEvent || !packetEvent || !gameTimer || !wakeFrequency)
+			if (!packetEvent || !gameTimer || !wakeFrequency)
 			{
 				CloseEvents();
 				throw std::runtime_error("Could not create output synchronization events");
 			}
-			try { worker = std::thread(&OutputSession::Run, this); }
-			catch (...) { CloseEvents(); throw; }
+			try { physical->Launch(); worker = std::thread(&OutputSession::Run, this); }
+			catch (...) { physical->Shutdown(); CloseEvents(); throw; }
 		}
 
 		~OutputSession()
 		{
-			control.Stop();
-			Invoke([this]() { quitting = true; return S_OK; });
+			Invoke([this]() { quitting = true; SetEvent(packetEvent); return S_OK; });
 			worker.join();
+			physical->Shutdown();
 			CloseEvents();
 		}
 
 		HRESULT Invoke(std::function<HRESULT()> action)
 		{
-			std::lock_guard<std::mutex> guard(commandMutex);
-			command = std::move(action);
-			SetEvent(commandEvent);
-			WaitForSingleObject(completedEvent, INFINITE);
-			return commandResult;
+			std::lock_guard<std::mutex> guard(stateMutex);
+			try { return action(); }
+			catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
+			catch (...) { return E_FAIL; }
 		}
 
 		HRESULT Open(const std::wstring& endpointId)
 		{
-			savedPeriod = ReadSavedPeriod(endpointId);
-			activeEndpoint = endpointId;
-			return Invoke([this, &endpointId]()
+			return Invoke([&]()
 			{
-				if (FAILED(comResult)) return comResult;
-				HRESULT result = endpointFactory(endpointId, &backend);
-				if (FAILED(result)) return result;
-				return backend->GetDevicePeriod(&defaultPeriod, &minimumPeriod);
+				activeEndpoint = endpointId;
+				defaultPeriod = minimumPeriod = 100000;
+				clockFrequency = 48000;
+				return S_OK;
 			});
 		}
 
-		HRESULT Initialize(const WAVEFORMATEX* format, DWORD flags, LPCGUID sessionId)
+		HRESULT Initialize(const WAVEFORMATEX* format, DWORD flags, LPCGUID)
 		{
 			if (!format) return E_POINTER;
 			if (!IsGameFormat(format)) return AUDCLNT_E_UNSUPPORTED_FORMAT;
 			if (!(flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK)) return E_INVALIDARG;
 			if (initialized.load()) return AUDCLNT_E_ALREADY_INITIALIZED;
-			return Invoke([this, format, sessionId]()
+			return Invoke([this, format]()
 			{
 				gameFormat = *format;
-				WAVEFORMATEX engineFormat{ WAVE_FORMAT_IEEE_FLOAT, 2, 48000, 384000, 8, 32, 0 };
-				UINT32 defaultFrames = 0, fundamental = 0, minimum = 0, maximum = 0;
-				HRESULT result = backend->GetSharedModeEnginePeriod(&engineFormat, &defaultFrames, &fundamental, &minimum, &maximum);
-				if (FAILED(result)) return result;
-				if (minimum == 0 || minimum > 48000) return E_UNEXPECTED;
-				const UINT32 selected = savedPeriod ? savedPeriod : minimum;
-				if (!IsEnginePeriod(selected, minimum, fundamental, maximum)) return E_INVALIDARG;
-				result = backend->InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, selected, &engineFormat, sessionId);
-				if (FAILED(result)) return result;
-				result = backend->SetEventHandle(engineEvent);
-				if (FAILED(result)) return result;
-				result = backend->GetBufferSize(&backendFrames);
-				if (FAILED(result)) return result;
-				if (backendFrames < selected) return E_UNEXPECTED;
-				result = backend->GetService(__uuidof(IAudioRenderClient), reinterpret_cast<void**>(&render));
-				if (FAILED(result)) return result;
-				result = backend->GetService(__uuidof(IAudioClock), reinterpret_cast<void**>(&clock));
-				if (FAILED(result)) return result;
-				result = clock->GetFrequency(&clockFrequency);
-				if (FAILED(result)) return result;
-				if (!clockFrequency) return E_UNEXPECTED;
-				result = PrimeExtraBuffer(render, selected, minimum);
-				if (FAILED(result)) return result;
-				backendFrequency = clockFrequency;
-				result = backend->GetStreamLatency(&streamLatency);
-				if (FAILED(result)) return result;
-				periodFrames = minimum;
+				periodFrames = 480;
 				gamePacketFrames.store(periodFrames);
-				backendPeriodFrames = selected;
-				engineMinimum = minimum; engineFundamental = fundamental; engineMaximum = maximum;
 				queue.Initialize(periodFrames * gameFormat.nBlockAlign, 2);
 				converted.resize(periodFrames * 2);
 				initialized.store(true, std::memory_order_release);
-				LOG_INFO("(AUDIO ROUTING) Shared output: 48 kHz stereo, game block " << periodFrames
-					<< " frames; Windows period " << backendPeriodFrames << " frames; live recording ready" << std::endl);
+				ConfigureSavedOutputGuard();
+				const HRESULT result = ConnectOutput(activeEndpoint, ReadSavedPeriod(activeEndpoint));
+
+				LOG_INFO("(AUDIO ROUTING) Permanent game output initialized: 48 kHz stereo, 480-frame capacity; physical output HRESULT "
+					<< std::hex << result << std::dec << std::endl);
 				return S_OK;
 			});
-		}
-
-		HRESULT StartControl()
-		{
-			return control.Start([this](const ControlRequest& request) { return HandleControl(request); });
 		}
 
 		ControlResponse HandleControl(const ControlRequest& request)
 		{
 			ControlResponse response;
+			// The loudness guard (op 16) runs inside this session's owned backend when routing owns output.
+			const auto configureGuard = [this](bool limiterOn, float ceilingLin, bool agcOn, float targetRms)
+			{
+				return physical->ConfigureOutputGuard(limiterOn, ceilingLin, agcOn, targetRms);
+			};
+			// Player 2 Cable does not need the session at all, so it is answered even before Initialize.
+			if (request.operation == 26) { HandleSharedControl(request, response, configureGuard); return response; }
 			if (!initialized.load()) { response.result = AUDCLNT_E_NOT_INITIALIZED; return response; }
-			if (request.operation == 2)
+			if (request.operation == 2 || request.operation == 14)
 			{
 				bool alreadyRecording = false;
 				Invoke([&]() { alreadyRecording = recorder != nullptr; return S_OK; });
 				if (alreadyRecording) response.result = HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
+				else if (request.operation == 14 && !DrySignalRecording::IsReady()) response.result = AUDCLNT_E_DEVICE_INVALIDATED;
 				else
 				{
 					auto next = std::make_shared<GameAudioRecorder>();
 					const std::filesystem::path directory(request.value);
-					response.result = directory.is_absolute() ? next->Open(directory, periodFrames) : E_INVALIDARG;
-					if (SUCCEEDED(response.result)) Invoke([&]() { recorder = next; recordedFrames = 0; recordingStarted = 0; lastRecordingPath = next->GetPath(); recordingError = S_OK; return S_OK; });
+					const bool dry = request.operation == 14;
+					response.result = directory.is_absolute() ? next->Open(directory, dry ? 4096 : periodFrames, dry ? L"dry" : L"wet") : E_INVALIDARG;
+					if (SUCCEEDED(response.result)) response.result = Invoke([&]()
+					{
+						lastRecordingPath = next->GetPath();
+						if (dry)
+						{
+							const HRESULT attached = DrySignalRecording::Attach(*next);
+							if (FAILED(attached)) return attached;
+							isDryRecording = true;
+						}
+						recorder = next; recordedFrames = 0; recordingStarted = 0; recordingError = S_OK;
+						return S_OK;
+					});
 				}
 			}
 			else if (request.operation == 3)
 			{
 				std::shared_ptr<GameAudioRecorder> finished;
-				Invoke([&]() { finished.swap(recorder); return S_OK; });
+				Invoke([&]()
+				{
+					if (isDryRecording) DrySignalRecording::Detach();
+					isDryRecording = false;
+					if (recorder) { recordedFrames = recorder->GetFrames(); recordingStarted = recorder->GetStarted(); }
+					finished.swap(recorder);
+					return S_OK;
+				});
 				if (finished)
 				{
 					finished->Close();
@@ -217,24 +417,12 @@ namespace Audio::SharedOutput
 				std::wstring endpoint;
 				Invoke([&]() { recording = recorder != nullptr; endpoint = activeEndpoint; return S_OK; });
 				if (recording) response.result = HRESULT_FROM_WIN32(ERROR_BUSY);
-				else if (end == request.value || *end != L'\n' || !end[1] || !period || period > 48000) response.result = E_INVALIDARG;
+				else if (end == request.value || *end != L'\n' || !end[1] || period > 48000) response.result = E_INVALIDARG;
 				else if (endpoint != end + 1) response.result = HRESULT_FROM_WIN32(ERROR_RETRY);
-				else response.result = SwitchOutput(endpoint, static_cast<UINT32>(period));
+				else response.result = SwitchOutput(endpoint, static_cast<UINT32>(period), false);
 			}
-			else if (request.operation >= 7 && request.operation <= 13)
-			{
-				unsigned int volume = 0;
-				bool valid = request.value[0] != 0;
-				for (const wchar_t* digit = request.value; *digit && valid; ++digit)
-				{
-					valid = *digit >= L'0' && *digit <= L'9';
-					if (valid) volume = volume * 10 + (*digit - L'0');
-					valid = valid && volume <= 100;
-				}
-				response.result = !valid ? E_INVALIDARG
-					: VolumeControl::SetPlaybackVolume(request.operation - 7, static_cast<float>(volume)) ? S_OK : E_FAIL;
-			}
-			else if (request.operation != 1 && request.operation != 5) response.result = E_INVALIDARG;
+			else if (!HandleSharedControl(request, response, configureGuard)
+				&& request.operation != 1 && request.operation != 5) response.result = E_INVALIDARG;
 			for (unsigned int channel = 0; channel < 7; ++channel)
 			{
 				if (!VolumeControl::GetPlaybackVolume(channel, response.volumes[channel]))
@@ -245,14 +433,21 @@ namespace Audio::SharedOutput
 			}
 			Invoke([&]()
 			{
-				response.outputError = streamError.load();
+				const auto backendStatus = physical->GetStatus();
+				response.outputError = FAILED(streamError.load()) ? streamError.load() : backendStatus.error;
 				response.recordingError = recorder ? recorder->GetError() : recordingError;
 				response.recording = recorder && SUCCEEDED(response.recordingError) ? 1 : 0;
-				response.recordedFrames = recordedFrames;
-				response.recordingStarted = recordingStarted;
+				response.recordedFrames = recorder ? recorder->GetFrames() : recordedFrames;
+				response.recordingStarted = recorder ? recorder->GetStarted() : recordingStarted;
+				response.dryInputReady = DrySignalRecording::IsReady() ? 1 : 0;
+				response.recordingSource = isDryRecording ? 1 : 0;
+				OutputTap::ReadOutputLevels(response.outputPeak, response.outputRms, 2);
+				response.proxyInputMode = static_cast<uint32_t>(OutputTap::ProxyInputMode());
 				response.peak = peak;
+				if (request.operation == 1) peak = 0;
 				wcsncpy_s(response.file, recorder ? recorder->GetPath().c_str() : lastRecordingPath.c_str(), _TRUNCATE);
-				wcsncpy_s(response.endpoint, activeEndpoint.c_str(), _TRUNCATE);
+				wcsncpy_s(response.endpoint, (SUCCEEDED(backendStatus.error) ? backendStatus.activeEndpoint : activeEndpoint).c_str(), _TRUNCATE);
+				if (request.operation == 18) WriteLatencyResult(response);   // overwrites file with the latency result
 				if (request.operation == 5)
 				{
 					response.recording = running ? 1 : 0;
@@ -268,72 +463,49 @@ namespace Audio::SharedOutput
 						+ L" releaseCalls=" + std::to_wstring(releaseCalls.load())
 						+ L" releaseHr=" + std::to_wstring(lastReleaseResult.load())
 						+ L" queuePackets=" + std::to_wstring(queue.Count())
-						+ L" padding=" + std::to_wstring(lastPadding)
+						+ L" padding=" + std::to_wstring(backendStatus.padding)
 						+ L" repeatedGameBlocks=" + std::to_wstring(repeatedGameBlocks.load())
 						+ L" inspectedGameBlocks=" + std::to_wstring(inspectedGameBlocks.load())
-						+ L" emptyOutputObservations=" + std::to_wstring(emptyOutputObservations)
-						+ L" longestPumpGapMs=" + std::to_wstring(longestPumpGapMs);
-					const std::wstring tuning = L" engineMinimum=" + std::to_wstring(engineMinimum)
-						+ L" engineFundamental=" + std::to_wstring(engineFundamental)
-						+ L" engineMaximum=" + std::to_wstring(engineMaximum)
-						+ L" enginePeriod=" + std::to_wstring(backendPeriodFrames);
-					wcsncpy_s(response.file, (trace + tuning).c_str(), _TRUNCATE);
+						+ L" emptyOutputObservations=" + std::to_wstring(backendStatus.emptyObservations)
+						+ L" longestPumpGapMs=" + std::to_wstring(backendStatus.longestPumpGapMs);
+					const std::wstring tuning = L" engineMinimum=" + std::to_wstring(backendStatus.minimum)
+						+ L" engineFundamental=" + std::to_wstring(backendStatus.fundamental)
+						+ L" engineMaximum=" + std::to_wstring(backendStatus.maximum)
+						+ L" enginePeriod=" + std::to_wstring(backendStatus.period);
+					const std::wstring recovery = L" backendState=" + std::to_wstring(static_cast<int>(backendStatus.state))
+						+ L" generation=" + std::to_wstring(backendStatus.generation)
+						+ L" fifoFrames=" + std::to_wstring(backendStatus.queuedFrames)
+						+ L" expiredFrames=" + std::to_wstring(backendStatus.expiredFrames)
+						+ L" overruns=" + std::to_wstring(backendStatus.overruns)
+						+ L" clockMeasured=" + std::to_wstring(backendStatus.clockMeasured)
+						+ L" clockPpm=" + std::to_wstring(backendStatus.clockPpm)
+						+ L" correctionPpm=" + std::to_wstring(backendStatus.correctionPpm);
+					const auto inputFormat = AsioBufferState::Read();
+					const std::wstring input = L" asioInputFrames=" + std::to_wstring(uint32_t(inputFormat))
+						+ L" asioInputRate=" + std::to_wstring(uint32_t(inputFormat >> 32));
+					wcsncpy_s(response.file, (input + trace + tuning + recovery).c_str(), _TRUNCATE);
 				}
 				return S_OK;
 			});
 			return response;
 		}
 
-		HRESULT SwitchOutput(const std::wstring& endpointId, UINT32 requestedPeriod = 0)
+		HRESULT SwitchOutput(const std::wstring& endpointId, UINT32 requestedPeriod = 0, bool useSavedPeriod = true)
 		{
 			if (endpointId.empty()) return E_INVALIDARG;
-			const UINT32 desired = requestedPeriod ? requestedPeriod : ReadSavedPeriod(endpointId);
-			return Invoke([&]()
-			{
-				IAudioClient3* next = nullptr;
-				IAudioRenderClient* nextRender = nullptr;
-				IAudioClock* nextClock = nullptr;
-				UINT32 nextFrames = 0;
-				UINT64 nextFrequency = 0;
-				HRESULT result = endpointFactory(endpointId, &next);
-				WAVEFORMATEX engineFormat{ WAVE_FORMAT_IEEE_FLOAT, 2, 48000, 384000, 8, 32, 0 };
-				UINT32 normal = 0, fundamental = 0, minimum = 0, maximum = 0;
-				if (SUCCEEDED(result)) result = next->GetSharedModeEnginePeriod(&engineFormat, &normal, &fundamental, &minimum, &maximum);
-				if (SUCCEEDED(result) && (!minimum || !fundamental || minimum > 48000)) result = E_UNEXPECTED;
-				const UINT32 selected = desired ? desired : minimum;
-				if (SUCCEEDED(result) && !IsEnginePeriod(selected, minimum, fundamental, maximum)) result = E_INVALIDARG;
-				if (SUCCEEDED(result)) result = next->InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, selected, &engineFormat, nullptr);
-				if (SUCCEEDED(result)) result = next->SetEventHandle(engineEvent);
-				if (SUCCEEDED(result)) result = next->GetBufferSize(&nextFrames);
-				if (SUCCEEDED(result) && nextFrames < std::max(periodFrames, selected)) result = AUDCLNT_E_BUFFER_SIZE_ERROR;
-				if (SUCCEEDED(result)) result = next->GetService(__uuidof(IAudioRenderClient), reinterpret_cast<void**>(&nextRender));
-				if (SUCCEEDED(result)) result = next->GetService(__uuidof(IAudioClock), reinterpret_cast<void**>(&nextClock));
-				if (SUCCEEDED(result)) result = nextClock->GetFrequency(&nextFrequency);
-				if (SUCCEEDED(result) && !nextFrequency) result = E_UNEXPECTED;
-				if (SUCCEEDED(result)) result = PrimeExtraBuffer(nextRender, selected, minimum);
-				if (SUCCEEDED(result) && running) result = next->Start();
-				if (FAILED(result))
-				{
-					if (nextClock) nextClock->Release();
-					if (nextRender) nextRender->Release();
-					if (next) next->Release();
-					LOG_ERROR("(AUDIO ROUTING) Output switch rejected, HRESULT " << std::hex << result << std::dec << std::endl);
-					return result;
-				}
-				if (running) backend->Stop();
-				clock->Release(); render->Release(); backend->Release();
-				backend = next; render = nextRender; clock = nextClock; backendFrames = nextFrames;
-				backendPeriodFrames = selected;
-				engineMinimum = minimum; engineFundamental = fundamental; engineMaximum = maximum;
-				clockOffset = clockPosition.load();
-				backendFrequency = nextFrequency;
-				activeEndpoint = endpointId;
-				streamError.store(S_OK);
-				SetEvent(packetEvent);
-				SignalGame();
-				LOG_INFO("(AUDIO ROUTING) Output changed without reopening the game-facing client" << std::endl);
-				return S_OK;
-			});
+			const UINT32 desired = requestedPeriod ? requestedPeriod : (useSavedPeriod ? ReadSavedPeriod(endpointId) : 0);
+			const auto snapshot = physical->GetStatus();
+			if (desired && snapshot.activeEndpoint == endpointId && !IsEnginePeriod(desired, snapshot.minimum, snapshot.fundamental, snapshot.maximum)) return E_INVALIDARG;
+			return Invoke([&]() { return ConnectOutput(endpointId, desired); });
+		}
+
+		HRESULT ConnectOutput(const std::wstring& endpointId, UINT32 desired)
+		{
+			activeEndpoint = endpointId;
+			selectedPeriod = desired;
+			routeGeneration.fetch_add(1);
+			physical->Request(endpointId, desired);
+			return S_OK;
 		}
 
 		HRESULT Start()
@@ -347,8 +519,8 @@ namespace Audio::SharedOutput
 				if (running) return AUDCLNT_E_NOT_STOPPED;
 				HRESULT result = Pump();
 				if (FAILED(result)) return result;
-				result = backend->Start();
-				if (SUCCEEDED(result)) { running = true; lastGameWakeTick = 0; SignalGame(); }
+				physical->SetRunning(true);
+				if (SUCCEEDED(result)) { running = true; clockBase = clockPosition.load(); QueryPerformanceCounter(&clockStarted); lastGameWakeTick = 0; SignalGame(); }
 				return result;
 			});
 			lastLifecycleResult.store(started);
@@ -362,9 +534,12 @@ namespace Audio::SharedOutput
 			if (!initialized.load()) return AUDCLNT_E_NOT_INITIALIZED;
 			const HRESULT stopped = Invoke([this]()
 			{
-				const HRESULT result = backend->Stop();
+				routeGeneration.fetch_add(1);
+				physical->SetRunning(false);
+				HRESULT result = S_OK;
 				if (SUCCEEDED(result))
 				{
+					UpdateClock();
 					running = false;
 					CancelWaitableTimer(gameTimer);
 					if (gameEvent) ResetEvent(gameEvent);
@@ -384,8 +559,10 @@ namespace Audio::SharedOutput
 			return Invoke([this]()
 			{
 				if (running) return AUDCLNT_E_NOT_STOPPED;
-				const HRESULT result = backend->Reset();
-				if (SUCCEEDED(result)) { queue.Reset(); clockPosition.store(0); clockOffset = 0; }
+				routeGeneration.fetch_add(1);
+				physical->Request(activeEndpoint, selectedPeriod);
+				HRESULT result = S_OK;
+				if (SUCCEEDED(result)) { queue.Reset(); packetWriteIndex = packetReadIndex = 0; clockPosition.store(0); clockBase = 0; }
 				return result;
 			});
 		}
@@ -426,6 +603,7 @@ namespace Audio::SharedOutput
 			gameWakeOutstanding.store(true);
 			gamePacketFrames.store(frames);
 			pendingFrames = frames;
+			pendingGeneration = routeGeneration.load();
 			*data = packet;
 			return S_OK;
 		}
@@ -454,6 +632,9 @@ namespace Audio::SharedOutput
 			if (flags & ~AUDCLNT_BUFFERFLAGS_SILENT) return E_INVALIDARG;
 			if (flags & AUDCLNT_BUFFERFLAGS_SILENT) std::memset(queue.BeginWrite(), 0, frames * gameFormat.nBlockAlign);
 			InspectGameBlocks(queue.BeginWrite(), frames * gameFormat.nBlockAlign);
+			packetGenerations[packetWriteIndex % 2] = pendingGeneration;
+			packetTimes[packetWriteIndex % 2] = GetTickCount64();
+			++packetWriteIndex;
 			queue.CommitWrite(frames * gameFormat.nBlockAlign);
 			pendingFrames = 0;
 			gameWakeOutstanding.store(false);
@@ -462,7 +643,6 @@ namespace Audio::SharedOutput
 		}
 
 		std::atomic<bool> initialized{ false };
-		bool exposeControl = false;
 		std::atomic<HRESULT> streamError{ S_OK };
 		std::atomic<UINT64> clockPosition{ 0 };
 		std::atomic<UINT64> clockQpc{ 0 };
@@ -473,7 +653,41 @@ namespace Audio::SharedOutput
 		REFERENCE_TIME minimumPeriod = 0;
 		REFERENCE_TIME streamLatency = 0;
 
+		bool IsRecording()
+		{
+			std::lock_guard<std::mutex> guard(stateMutex);
+			return recorder != nullptr && SUCCEEDED(recorder->GetError());
+		}
+
+		HRESULT RecordingError()
+		{
+			std::lock_guard<std::mutex> guard(stateMutex);
+			return recorder ? recorder->GetError() : recordingError;
+		}
+
 	private:
+		void ConfigureSavedOutputGuard()
+		{
+			wchar_t executable[MAX_PATH]{};
+			GetModuleFileNameW(nullptr, executable, MAX_PATH);
+			const auto settingsPath = std::filesystem::path(executable).parent_path() / L"RSMods.ini";
+			auto read = [&settingsPath](const wchar_t* key, long fallback)
+			{
+				wchar_t value[32]{};
+				GetPrivateProfileStringW(L"Mod Settings", key, L"", value, 32, settingsPath.c_str());
+				if (!value[0]) return fallback;
+				wchar_t* end = nullptr;
+				const long parsed = wcstol(value, &end, 10);
+				return end != value && *end == 0 ? parsed : fallback;
+			};
+			const bool limiterOn = read(L"AudioBridgeLimiter", 0) != 0;
+			const float ceiling = std::pow(10.0f, static_cast<float>(read(L"AudioBridgeLimiterLevel", -60)) / 200.0f);
+			const bool agcOn = read(L"AudioBridgeLoudnessMatch", 0) != 0;
+			const float target = std::pow(10.0f, static_cast<float>(read(L"AudioBridgeLoudnessTarget", -200)) / 200.0f);
+			if (physical->ConfigureOutputGuard(limiterOn, ceiling, agcOn, target))
+				LOG_INFO("(AUDIO ROUTING) Saved output limiter applied to the Cable shared-output engine" << std::endl);
+		}
+
 		void InspectGameBlocks(const BYTE* data, UINT32 bytes)
 		{
 			const UINT32 blockBytes = 128 * gameFormat.nBlockAlign;
@@ -528,26 +742,27 @@ namespace Audio::SharedOutput
 			SetEvent(gameEvent);
 		}
 
+		void UpdateClock()
+		{
+			if (!running) return;
+			LARGE_INTEGER now{};
+			QueryPerformanceCounter(&now);
+			const auto elapsed = now.QuadPart - clockStarted.QuadPart;
+			clockSequence.fetch_add(1);
+			clockPosition.store(clockBase + elapsed / wakeFrequency * 48000 + elapsed % wakeFrequency * 48000 / wakeFrequency);
+			clockQpc.store(now.QuadPart / wakeFrequency * 10000000 + now.QuadPart % wakeFrequency * 10000000 / wakeFrequency);
+			clockSequence.fetch_add(1);
+		}
+
 		HRESULT Pump()
 		{
-			UINT32 padding = 0;
-			HRESULT result = backend->GetCurrentPadding(&padding);
-			if (FAILED(result)) return result;
-			lastPadding = padding;
-			const ULONGLONG now = GetTickCount64();
-			if (running && submittedFrames)
+			UpdateClock();
+			for (unsigned budget = 0; budget < 2; ++budget)
 			{
-				if (padding == 0) ++emptyOutputObservations;
-				if (lastPumpTick) longestPumpGapMs = std::max(longestPumpGapMs, now - lastPumpTick);
-			}
-			lastPumpTick = now;
-			if (padding > backendFrames) return E_UNEXPECTED;
-			uint32_t bytes = 0;
-			const uint8_t* packet = queue.BeginRead(bytes);
-			const UINT32 packetFrames = bytes / gameFormat.nBlockAlign;
-			const UINT32 targetPadding = std::min(backendFrames, std::max(periodFrames, backendPeriodFrames) * 2);
-			if (packet && packetFrames > 0 && padding <= targetPadding - packetFrames && backendFrames - padding >= packetFrames)
-			{
+				uint32_t bytes = 0;
+				const auto* packet = queue.BeginRead(bytes);
+				if (!packet) break;
+				const UINT32 packetFrames = bytes / gameFormat.nBlockAlign;
 				const size_t samples = packetFrames * 2;
 				if (gameFormat.wBitsPerSample == 32) std::memcpy(converted.data(), packet, samples * sizeof(float));
 				else
@@ -555,142 +770,93 @@ namespace Audio::SharedOutput
 					const auto* pcm = reinterpret_cast<const int16_t*>(packet);
 					for (size_t index = 0; index < samples; ++index) converted[index] = pcm[index] / 32768.0f;
 				}
-				BYTE* destination = nullptr;
-				result = render->GetBuffer(packetFrames, &destination);
-				if (FAILED(result)) return result;
-				std::memcpy(destination, converted.data(), samples * sizeof(float));
-				result = render->ReleaseBuffer(packetFrames, 0);
-				if (FAILED(result)) return result;
+				if (packetGenerations[packetReadIndex % 2] == routeGeneration.load())
+					physical->Submit(converted.data(), packetFrames, packetTimes[packetReadIndex % 2]);
 				submittedFrames += packetFrames;
-				peak = 0;
+				// Held as the loudest sample since the window last asked, not the last packet alone. A
+				// packet is about ten milliseconds and the window polls every hundred, so a per-packet
+				// value would show the meter a one-in-ten sample of what was played.
 				for (size_t index = 0; index < samples; ++index)
 				{
 					const float sample = converted[index];
 					if (std::isfinite(sample)) peak = std::max(peak, static_cast<uint32_t>(std::min(1.0f, std::abs(sample)) * 1000));
 				}
-				if (!reportedFirstPacket)
-				{
-					LOG_INFO("(AUDIO ROUTING) First game output submitted: " << packetFrames << " frames; Windows period " << backendPeriodFrames << " frames" << std::endl);
-					reportedFirstPacket = true;
-				}
-				if (recorder)
-				{
-					if (!recordingStarted)
-					{
-						FILETIME time; GetSystemTimePreciseAsFileTime(&time);
-						recordingStarted = (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
-					}
-					recorder->Submit(converted.data(), packetFrames); recordedFrames += packetFrames;
-				}
+				if (recorder && !isDryRecording) recorder->Submit(converted.data(), packetFrames);
+				++packetReadIndex;
 				queue.CommitRead();
-			}
-			UINT64 position = 0, qpc = 0;
-			result = clock->GetPosition(&position, &qpc);
-			if (SUCCEEDED(result))
-			{
-				clockSequence.fetch_add(1);
-				clockPosition.store(clockOffset + position * clockFrequency / backendFrequency);
-				clockQpc.store(qpc);
-				clockSequence.fetch_add(1);
 			}
 			return S_OK;
 		}
 
 		void Run()
 		{
-			comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 			DWORD taskIndex = 0;
 			HANDLE task = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
-			HANDLE events[] = { commandEvent, engineEvent, packetEvent, gameTimer };
-			while (!quitting)
+			HANDLE events[] = { packetEvent, gameTimer };
+			while (!quitting.load())
 			{
-				const DWORD wake = WaitForMultipleObjects(4, events, FALSE, INFINITE);
-				if (wake == WAIT_OBJECT_0)
+				const DWORD wake = WaitForMultipleObjects(2, events, FALSE, 2);
+				if (wake == WAIT_FAILED)
 				{
-					try { commandResult = command(); }
-					catch (const std::bad_alloc&) { commandResult = E_OUTOFMEMORY; }
-					catch (...) { commandResult = E_FAIL; }
-					SetEvent(completedEvent);
+					streamError.store(HRESULT_FROM_WIN32(GetLastError()));
+					break;
 				}
-				else if (initialized.load() && SUCCEEDED(streamError.load()))
+				std::lock_guard<std::mutex> guard(stateMutex);
+				if (initialized.load() && SUCCEEDED(streamError.load()))
 				{
-					const HRESULT result = Pump();
-					if (FAILED(result))
-					{
-						streamError.store(result);
-						LOG_ERROR("(AUDIO ROUTING) Output stopped, HRESULT " << std::hex << result << std::dec << std::endl);
-						if (gameEvent) SetEvent(gameEvent);
-					}
-					else
-					{
-						SignalGame();
-					}
+					Pump();
+					SignalGame();
 				}
 			}
-			if (backend && running) backend->Stop();
+			if (isDryRecording) DrySignalRecording::Detach();
 			if (recorder) recorder->Close();
-			if (clock) clock->Release();
-			if (render) render->Release();
-			if (backend) backend->Release();
 			if (task) AvRevertMmThreadCharacteristics(task);
-			if (SUCCEEDED(comResult)) CoUninitialize();
 		}
 
 		void CloseEvents()
 		{
-			for (HANDLE handle : { commandEvent, completedEvent, engineEvent, packetEvent, gameEvent, gameTimer })
+			for (HANDLE handle : { packetEvent, gameEvent, gameTimer })
 			{
 				if (handle) CloseHandle(handle);
 			}
 		}
 
-		EndpointFactory endpointFactory;
+		std::shared_ptr<OutputBackend> physical;
 		AudioPacketQueue queue;
+		std::array<uint64_t, 2> packetGenerations{}, packetTimes{};
+		std::atomic<uint64_t> routeGeneration{ 0 };
+		uint64_t pendingGeneration = 0;
+		uint32_t packetWriteIndex = 0, packetReadIndex = 0;
 		std::shared_ptr<GameAudioRecorder> recorder;
-		AudioControlServer control;
+		bool isDryRecording = false;
 		std::wstring activeEndpoint;
+		UINT32 selectedPeriod = 0;
 		std::wstring lastRecordingPath;
 		HRESULT recordingError = S_OK;
 		uint64_t recordedFrames = 0;
 		uint64_t recordingStarted = 0;
 		uint32_t peak = 0;
-		bool reportedFirstPacket = false;
 		uint64_t submittedFrames = 0;
-		UINT32 lastPadding = 0;
 		std::array<BYTE, 1024> diagnosticBlock{}, previousBlock{};
 		UINT32 diagnosticBytes = 0;
 		bool havePreviousBlock = false;
 		std::atomic<uint64_t> repeatedGameBlocks{ 0 }, inspectedGameBlocks{ 0 };
-		uint64_t emptyOutputObservations = 0;
-		ULONGLONG lastPumpTick = 0, longestPumpGapMs = 0;
 		std::atomic<uint32_t> startCalls{ 0 }, stopCalls{ 0 }, acquireCalls{ 0 }, acquireFailures{ 0 }, releaseCalls{ 0 }, lastRequestedFrames{ 0 };
 		std::atomic<HRESULT> lastLifecycleResult{ S_OK }, lastAcquireResult{ S_OK }, lastReleaseResult{ S_OK };
-		UINT64 backendFrequency = 48000;
-		UINT64 clockOffset = 0;
+		UINT64 clockBase = 0;
+		LARGE_INTEGER clockStarted{};
 		WAVEFORMATEX gameFormat{};
 		std::vector<float> converted;
 		UINT32 pendingFrames = 0;
 		std::atomic<bool> gameWakeOutstanding{ false };
 		std::atomic<UINT32> gamePacketFrames{ 0 };
 		LONGLONG wakeFrequency = 0, lastGameWakeTick = 0;
-		UINT32 backendFrames = 0;
-		UINT32 backendPeriodFrames = 0;
-		UINT32 savedPeriod = 0, engineMinimum = 0, engineFundamental = 0, engineMaximum = 0;
 		bool running = false;
-		bool quitting = false;
-		IAudioClient3* backend = nullptr;
-		IAudioRenderClient* render = nullptr;
-		IAudioClock* clock = nullptr;
-		HANDLE commandEvent = nullptr;
-		HANDLE completedEvent = nullptr;
-		HANDLE engineEvent = nullptr;
+		std::atomic<bool> quitting{ false };
 		HANDLE packetEvent = nullptr;
 		HANDLE gameTimer = nullptr;
 		HANDLE gameEvent = nullptr;
-		std::mutex commandMutex;
-		std::function<HRESULT()> command;
-		HRESULT commandResult = E_PENDING;
-		HRESULT comResult = E_PENDING;
+		std::mutex stateMutex;
 		std::thread worker;
 	};
 
@@ -795,11 +961,6 @@ namespace Audio::SharedOutput
 		{
 			if (mode != AUDCLNT_SHAREMODE_EXCLUSIVE) return E_INVALIDARG;
 			const HRESULT result = output->Initialize(format, flags, session);
-			if (SUCCEEDED(result) && output->exposeControl)
-			{
-				const HRESULT controlResult = output->StartControl();
-				if (FAILED(controlResult)) LOG_ERROR("(AUDIO ROUTING) Live controls unavailable, HRESULT " << std::hex << controlResult << std::dec << std::endl);
-			}
 			if (FAILED(result)) LOG_ERROR("(AUDIO ROUTING) Shared output initialization failed, HRESULT " << std::hex << result << std::dec << "; requires shared 48 kHz stereo support" << std::endl);
 			return result;
 		}
@@ -885,6 +1046,407 @@ namespace Audio::SharedOutput
 		return configuration;
 	}
 
+	// The control pipe is hosted for the whole process life, decoupled from routing, so the GUI
+	// can always find and talk to the game even when the bridge is passing audio through untouched
+	// (AudioRouting.ini Enabled=0). Only one server may own the pipe name (FILE_FLAG_FIRST_PIPE_INSTANCE),
+	// so it lives here rather than inside the routed output object; it delegates to the live output
+	// session when one exists (ROUTE engaged) and otherwise reports a benign passthrough status.
+	std::mutex g_sessionMutex;
+	std::weak_ptr<OutputSession> g_activeSession;
+	// Intentionally leaked: its worker thread runs for the whole process life. Never joined at DLL
+	// unload, which would risk a loader-lock deadlock during teardown; the OS reclaims it at exit.
+	AudioControlServer* g_control = nullptr;
+
+	bool IsRecording()
+	{
+		std::shared_ptr<OutputSession> session;
+		{
+			std::lock_guard<std::mutex> guard(g_sessionMutex);
+			session = g_activeSession.lock();
+		}
+		if (session && session->IsRecording()) return true;
+		return OutputTap::IsRecording() && SUCCEEDED(OutputTap::RecordingError());
+	}
+
+	HRESULT RecordingError()
+	{
+		std::shared_ptr<OutputSession> session;
+		{
+			std::lock_guard<std::mutex> guard(g_sessionMutex);
+			session = g_activeSession.lock();
+		}
+		if (session && session->IsRecording()) return session->RecordingError();
+		if (OutputTap::IsRecording()) return OutputTap::RecordingError();
+		if (session) return session->RecordingError();
+		return OutputTap::RecordingError();
+	}
+
+	// --- Alternate-device routing (ROUTE feed) --------------------------------------------------------
+	// Play the game mix out of a device the game is not bound to (e.g. laptop speakers) without a restart.
+	// On an ASIO/proxy setup the game's output is bound to the real ASIO device at launch and cannot be
+	// re-pointed live; but the Rocksmith Audio Bridge proxy already has the post-mix block every buffer.
+	// We register a routing sink that renders that block to a chosen WASAPI device through one shared-mode
+	// OutputBackend (the same rate-matched renderer the legacy bridge uses) and mute the proxy's forward,
+	// so the mix moves to the new device instead of doubling on both. Bridging two device clocks needs the
+	// OutputRateMatcher (crystals drift); switching back to the ASIO device just tears the route down.
+	// Only used in passthrough: when a full OutputSession owns the output, it switches devices itself.
+	std::mutex g_routeMutex;
+	std::shared_ptr<OutputBackend> g_routeBackend;   // non-null only while routing to another device
+	std::wstring g_routeEndpoint;                    // the device the route is currently rendering to
+	bool g_routeManaged = false;                     // true only for a virtual-ASIO route chosen by the host
+	std::atomic<uint64_t> g_lastProxyRefreshTick{ 0 };
+	std::atomic<bool> g_proxyDemotionRunning{ false };
+	// Route-source watchdog. On ASIO the routed mix is fed by the proxy's buffer callback; if the interface
+	// is unplugged that callback stops firing, so the route keeps a live WASAPI backend (green light) with no
+	// audio to render. These ticks let the status path tell that dead-source state from a healthy route, so
+	// the GUI stops claiming sound is playing. See RouteFeedStalled.
+	std::atomic<uint64_t> g_routeStartTick{ 0 };     // when the current route was started (0 = not routing)
+	std::atomic<uint64_t> g_routeLastFeedTick{ 0 };  // last time RouteSink received a block (0 = none yet)
+
+	// Convert one ASIO output block (the proxy's native format) to float stereo and feed the route
+	// backend. Runs on the proxy's ASIO buffer thread; a plain copy + convert, no blocking. Mirrors the
+	// recorder's ProxySink conversion (OutputTap.cpp). Sinks carry no context, so it reads the backend
+	// from file scope, exactly as the recorder sink reads its recorder.
+	void __cdecl RouteSink(const void* data, long frames, long channels, long asioType, double) noexcept
+	{
+		if (!data || frames <= 0 || channels <= 0) return;
+		std::shared_ptr<OutputBackend> backend;
+		{ std::lock_guard<std::mutex> guard(g_routeMutex); backend = g_routeBackend; }
+		if (!backend) return;
+		auto bytesOf = [](long t) -> int { switch (t) { case 0: case 16: return 2; case 1: case 17: return 3;
+			case 2: case 3: case 18: case 19: case 24: case 25: case 26: case 27: return 4; default: return 0; } };
+		auto toFloat = [](const BYTE* p, long t) -> float { switch (t) {
+			case 16: return *reinterpret_cast<const int16_t*>(p) / 32768.0f;
+			case 17: { int v = p[0] | (p[1] << 8) | (p[2] << 16); if (v & 0x800000) v |= ~0xFFFFFF; return v / 8388608.0f; }
+			case 19: return *reinterpret_cast<const float*>(p);
+			default: return *reinterpret_cast<const int32_t*>(p) / 2147483648.0f; } };
+		const int bytes = bytesOf(asioType);
+		if (bytes == 0) return;
+		static thread_local std::vector<float> stereo;
+		stereo.resize(static_cast<size_t>(frames) * 2);
+		const BYTE* base = reinterpret_cast<const BYTE*>(data);
+		for (long f = 0; f < frames; ++f)
+		{
+			const BYTE* fb = base + static_cast<size_t>(f) * channels * bytes;
+			const float left = toFloat(fb, asioType);
+			stereo[static_cast<size_t>(f) * 2] = left;
+			stereo[static_cast<size_t>(f) * 2 + 1] = channels > 1 ? toFloat(fb + bytes, asioType) : left;
+		}
+		g_routeLastFeedTick.store(GetTickCount64(), std::memory_order_release);   // source is alive this block
+		backend->Submit(stereo.data(), static_cast<UINT32>(frames), GetTickCount64());
+	}
+
+	// Start or retarget the route to endpointId. Idempotent: the first call spins up the backend, mutes
+	// the proxy forward and registers the sink; a later call with a new device just retargets the backend
+	// live (the rate matcher re-cools for the new clock). Needs the proxy loaded (ASIO bridge in chain).
+	HRESULT RouteStart(const std::wstring& endpointId)
+	{
+		if (endpointId.empty()) return E_INVALIDARG;
+		if (!OutputTap::ProxyAvailable()) return HRESULT_FROM_WIN32(ERROR_NOT_READY);
+		std::shared_ptr<OutputBackend> started;
+		{
+			std::lock_guard<std::mutex> guard(g_routeMutex);
+			g_routeManaged = false;
+			if (g_routeBackend)
+			{
+				g_routeBackend->Request(endpointId, ReadSavedPeriod(endpointId));
+				g_routeEndpoint = endpointId;
+				return S_OK;
+			}
+			started = std::make_shared<OutputBackend>(OpenEndpoint, true);
+			started->Launch();
+			started->Request(endpointId, ReadSavedPeriod(endpointId));
+			started->SetRunning(true);
+			g_routeBackend = started;
+			g_routeEndpoint = endpointId;
+			g_routeStartTick.store(GetTickCount64(), std::memory_order_release);   // start the source watchdog
+			g_routeLastFeedTick.store(0, std::memory_order_release);
+		}
+		// Register the sink and mute the forward outside nothing critical; if the sink cannot attach
+		// (proxy vanished), tear the backend back down and report not-ready rather than half-route.
+		if (!OutputTap::AddProxySink(&RouteSink))
+		{
+			std::shared_ptr<OutputBackend> failed;
+			{ std::lock_guard<std::mutex> guard(g_routeMutex); failed.swap(g_routeBackend); g_routeEndpoint.clear(); g_routeManaged = false; }
+			g_routeStartTick.store(0, std::memory_order_release);   // route did not attach: watchdog off
+			if (failed) failed->Shutdown();
+			return HRESULT_FROM_WIN32(ERROR_NOT_READY);
+		}
+		OutputTap::SetProxyForwardMuted(true);
+		LOG_INFO("(AUDIO ROUTING) ROUTE feed rendering the game mix to an alternate device" << std::endl);
+		return S_OK;
+	}
+
+	// Tear the route down: unmute the forward (the ASIO device plays again), drop the sink, stop the
+	// backend. Safe to call when no route is active. The backend is shut down outside the lock so the
+	// audio-thread sink never blocks on a driver stop.
+	HRESULT RouteStop()
+	{
+		std::shared_ptr<OutputBackend> backend;
+		{
+			std::lock_guard<std::mutex> guard(g_routeMutex);
+			backend.swap(g_routeBackend);
+			g_routeEndpoint.clear();
+			g_routeManaged = false;
+			g_routeStartTick.store(0, std::memory_order_release);   // no route: watchdog off
+			g_routeLastFeedTick.store(0, std::memory_order_release);
+		}
+		if (!backend) return S_OK;
+		OutputTap::RemoveProxySink(&RouteSink);
+		OutputTap::SetProxyForwardMuted(false);
+		backend->Shutdown();
+		LOG_INFO("(AUDIO ROUTING) ROUTE feed stopped; game mix back on its own device" << std::endl);
+		return S_OK;
+	}
+
+	// While routing, the reported endpoint includes the route transport so the GUI can distinguish
+	// real-ASIO-fed output from a route fed by the virtual proxy clock.
+	std::wstring RouteEndpointTag()
+	{
+		std::lock_guard<std::mutex> guard(g_routeMutex);
+		if (!g_routeBackend) return std::wstring();
+		const wchar_t* prefix = OutputTap::ProxyOutputMode() == 1 ? L"(route-virtual)" : L"(route)";
+		return std::wstring(prefix) + g_routeEndpoint;
+	}
+
+	// True when a route is live but its source (the proxy's ASIO buffer callback) has stopped delivering
+	// blocks, i.e. the game's ASIO output has stalled. This is what happens when the interface is unplugged:
+	// RS_ASIO opens its host once at launch and cannot re-bind a device, so the callback never resumes and
+	// the still-open WASAPI backend renders silence. A start grace covers backend spin-up. Continuous silence
+	// does NOT count as stalled (the callback keeps firing with zero-filled buffers, refreshing the feed tick),
+	// so only a genuinely stopped callback trips this. The proxy recovery loop replaces a stalled
+	// real callback source with its virtual clock.
+	bool RouteFeedStalled()
+	{
+		const uint64_t start = g_routeStartTick.load(std::memory_order_acquire);
+		if (start == 0) return false;                     // not routing
+		const uint64_t now = GetTickCount64();
+		if (now - start < 1500) return false;             // let the route and its first callback arrive
+		const uint64_t last = g_routeLastFeedTick.load(std::memory_order_acquire);
+		if (last == 0) return true;                       // past grace and never fed: source already dead
+		return now - last > 800;                          // fed before, then stopped: source stalled
+	}
+
+	bool ResolveActiveOutput(const std::wstring& requested, std::wstring& resolved, bool& usedDefault)
+	{
+		const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+		if (FAILED(com) && com != RPC_E_CHANGED_MODE) return false;
+		const bool uninitialize = SUCCEEDED(com);
+		auto finish = [uninitialize](bool result)
+		{
+			if (uninitialize) CoUninitialize();
+			return result;
+		};
+		usedDefault = requested.empty();
+		if (!requested.empty())
+		{
+			Microsoft::WRL::ComPtr<IAudioClient3> requestedClient;
+			resolved = requested;
+			if (SUCCEEDED(OpenEndpoint(resolved, &requestedClient))) return finish(true);
+			usedDefault = true;
+		}
+		Microsoft::WRL::ComPtr<IAudioClient3> defaultClient;
+		resolved.clear();
+		return finish(SUCCEEDED(OpenEndpoint(resolved, &defaultClient)));
+	}
+
+	// Status returned while nothing is routed. The playback mixer is the game's own bus volumes,
+	// set through VolumeControl (game code), so it works with or without routing and stays live here.
+	// Only the features that genuinely need an owned output - recording (2, 3, 14) and switching the
+	// physical output device (4, 6) - are refused, with a clear code so the GUI can say routing is
+	// required. A sentinel endpoint lets the GUI show "passthrough" without changing the wire layout.
+	ControlResponse PassthroughStatus(const ControlRequest& request)
+	{
+		ControlResponse response;
+		// With nothing routed, the loudness guard (op 16) runs in the proxy ASIO driver.
+		const auto configureGuard = [](bool limiterOn, float ceilingLin, bool agcOn, float targetRms)
+		{
+			return OutputTap::ConfigureOutputGuard(limiterOn, ceilingLin, agcOn, targetRms);
+		};
+		if (HandleSharedControl(request, response, configureGuard))
+		{
+			// handled: the input-hook DSP, mixer, latency probe, gate override, proxy promotion, Player 2 Cable
+		}
+		else if (request.operation == 14)
+		{
+			// Dry take: guitar input via the input hook - available without the tap.
+			response.result = OutputTap::StartRecording(request.value, true);
+		}
+		else if (request.operation == 2)
+		{
+			// Wet take needs the Rocksmith Audio Bridge proxy ASIO driver in the chain; refuse cleanly
+			// if it is not installed/loaded, so we never write a silent file.
+			response.result = OutputTap::ProxyAvailable()
+				? OutputTap::StartRecording(request.value, false)
+				: HRESULT_FROM_WIN32(ERROR_NOT_READY);
+		}
+		std::wstring stoppedPath;
+		uint64_t stoppedFrames = 0, stoppedStarted = 0;
+		bool didStop = false;
+		if (request.operation == 3)
+		{
+			response.result = OutputTap::StopRecording(stoppedPath, stoppedFrames, stoppedStarted);
+			didStop = true;
+		}
+		else if (request.operation == 4 || request.operation == 6)
+		{
+			// Switching the game's OWN output device is a routing feature; passthrough leaves it alone.
+			// Alternate-device routing (ops 21/22) is how passthrough plays elsewhere without a restart.
+			response.result = HRESULT_FROM_WIN32(ERROR_NOT_READY);
+		}
+		else if (request.operation == 21)
+		{
+			// Route the game mix to the given WASAPI device (e.g. laptop speakers) live, no restart.
+			// (Op 19 is the input noise gate, op 20 reserved; alternate-device routing is 21/22.)
+			response.result = RouteStart(request.value);
+		}
+		else if (request.operation == 22)
+		{
+			// Stop routing: hand the mix back to the game's own (ASIO) device.
+			response.result = RouteStop();
+		}
+		response.outputError = S_OK;
+		response.dryInputReady = DrySignalRecording::IsReady() ? 1 : 0;
+		response.recordingError = OutputTap::RecordingError();
+		response.recording = OutputTap::IsRecording() && SUCCEEDED(response.recordingError) ? 1 : 0;
+		response.recordedFrames = OutputTap::RecordedFrames();
+		response.recordingStarted = OutputTap::RecordingStarted();
+		response.recordingSource = OutputTap::IsRecordingDry() ? 1 : 0;
+		OutputTap::ReadOutputLevels(response.outputPeak, response.outputRms, 2);
+		response.proxyInputMode = static_cast<uint32_t>(OutputTap::ProxyInputMode());
+		// On stop, report the finished take's frame count and start FILETIME so a video take can align
+		// and mux against it (the live recorder is already cleared, so these come from StopRecording).
+		if (didStop)
+		{
+			response.recordedFrames = stoppedFrames;
+			response.recordingStarted = stoppedStarted;
+			wcsncpy_s(response.file, stoppedPath.c_str(), _TRUNCATE);
+		}
+		for (unsigned int channel = 0; channel < 7; ++channel)
+		{
+			if (!VolumeControl::GetPlaybackVolume(channel, response.volumes[channel]))
+			{
+				response.mixerError = E_FAIL;
+				response.volumes[channel] = -1.f;
+			}
+		}
+		// Report the real transport, not merely the presence of the proxy DLL. A virtual proxy with no
+		// Windows endpoint is a healthy silent device from Rocksmith's perspective, never high-performance.
+		const std::wstring routeTag = RouteEndpointTag();
+		if (!routeTag.empty() && RouteFeedStalled())
+		{
+			// Route is up but its ASIO source has stalled (interface unplugged). Keep the device id while
+			// the proxy recovery loop replaces the real callback source with its virtual clock.
+			const size_t prefixEnd = routeTag.find(L')');
+			const std::wstring stalled = L"(route-stalled)" +
+				(prefixEnd == std::wstring::npos ? routeTag : routeTag.substr(prefixEnd + 1));
+			wcsncpy_s(response.endpoint, stalled.c_str(), _TRUNCATE);
+		}
+		else
+		{
+			const int proxyMode = OutputTap::ProxyOutputMode();
+			const wchar_t* idleTag = proxyMode == 3 ? L"(downgrading)" : proxyMode == 2 ? L"(passthrough)" : proxyMode == 1 ? L"(silent)" : L"(starting)";
+			wcsncpy_s(response.endpoint, routeTag.empty() ? idleTag : routeTag.c_str(), _TRUNCATE);
+		}
+		if (request.operation == 18) WriteLatencyResult(response);   // overwrites file with the latency result
+		return response;
+	}
+
+	void StartControlServer()
+	{
+		if (!g_control) g_control = new AudioControlServer();
+		const HRESULT result = g_control->Start([](const ControlRequest& request) -> ControlResponse
+		{
+			std::shared_ptr<OutputSession> session;
+			{
+				std::lock_guard<std::mutex> guard(g_sessionMutex);
+				session = g_activeSession.lock();
+			}
+			return session ? session->HandleControl(request) : PassthroughStatus(request);
+		});
+		if (FAILED(result) && result != HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED))
+			LOG_ERROR("(AUDIO ROUTING) Control pipe could not start, HRESULT " << std::hex << result << std::dec << std::endl);
+	}
+
+	ProxyRouteAction PlanProxyRoute(int proxyMode, bool routeExists, bool routeManaged,
+		bool routedEndpointAvailable, bool resolvedOutputAvailable)
+	{
+		if (proxyMode == 3) return ProxyRouteAction::DemoteProxy;
+		if (proxyMode == 2)
+			return routeExists && routeManaged ? ProxyRouteAction::StopManagedRoute : ProxyRouteAction::None;
+		if (proxyMode != 1) return ProxyRouteAction::None;
+		if (!resolvedOutputAvailable)
+			return routeExists && routeManaged ? ProxyRouteAction::StopManagedRoute : ProxyRouteAction::None;
+		if (!routeExists) return ProxyRouteAction::StartManagedRoute;
+		if (routeManaged && !routedEndpointAvailable) return ProxyRouteAction::ReplaceLostManagedRoute;
+		return ProxyRouteAction::None;
+	}
+
+	void RefreshProxyOutput()
+	{
+		const uint64_t now = GetTickCount64();
+		uint64_t lastRefresh = g_lastProxyRefreshTick.load(std::memory_order_acquire);
+		if (now - lastRefresh < 250 || !g_lastProxyRefreshTick.compare_exchange_strong(lastRefresh, now)) return;
+		const int mode = OutputTap::ProxyOutputMode();
+		bool routeExists = false;
+		bool routeManaged = false;
+		std::wstring routedEndpoint;
+		{
+			std::lock_guard<std::mutex> guard(g_routeMutex);
+			routeExists = g_routeBackend != nullptr;
+			routeManaged = g_routeManaged;
+			routedEndpoint = g_routeEndpoint;
+		}
+		if (PlanProxyRoute(mode, routeExists, routeManaged, true, true) == ProxyRouteAction::DemoteProxy)
+		{
+			if (!g_proxyDemotionRunning.exchange(true))
+			{
+				std::thread([]
+				{
+					OutputTap::TryDemoteProxyOutput();
+					g_proxyDemotionRunning.store(false, std::memory_order_release);
+				}).detach();
+			}
+			return;
+		}
+		if (mode == 2)
+		{
+			if (PlanProxyRoute(mode, routeExists, routeManaged, true, true) == ProxyRouteAction::StopManagedRoute) RouteStop();
+			return;
+		}
+		if (mode != 1) return;
+
+		const auto configuration = ReadConfiguration();
+		std::wstring endpoint;
+		bool usedDefault = false;
+		const bool hasOutput = ResolveActiveOutput(configuration.outputDeviceId, endpoint, usedDefault);
+		bool routedEndpointAvailable = true;
+		std::wstring survivingEndpoint;
+		if (routeExists && routeManaged)
+		{
+			bool fellBackFromRoute = false;
+			routedEndpointAvailable = ResolveActiveOutput(routedEndpoint, survivingEndpoint, fellBackFromRoute)
+				&& !fellBackFromRoute;
+		}
+		const ProxyRouteAction action = PlanProxyRoute(mode, routeExists, routeManaged,
+			routedEndpointAvailable, hasOutput);
+		if (action == ProxyRouteAction::StopManagedRoute)
+		{
+			RouteStop();
+			return;
+		}
+		if (action == ProxyRouteAction::StartManagedRoute || action == ProxyRouteAction::ReplaceLostManagedRoute)
+		{
+			const std::wstring& target = action == ProxyRouteAction::ReplaceLostManagedRoute && !survivingEndpoint.empty()
+				? survivingEndpoint : endpoint;
+			if (SUCCEEDED(RouteStart(target)))
+			{
+				std::lock_guard<std::mutex> guard(g_routeMutex);
+				g_routeManaged = true;
+			}
+		}
+	}
+
 	HRESULT CreateClient(const std::wstring& endpointId, IAudioClient** client)
 	{
 		if (!client) return E_POINTER;
@@ -892,10 +1454,13 @@ namespace Audio::SharedOutput
 		try
 		{
 			auto session = std::make_shared<OutputSession>();
-			session->exposeControl = true;
 			const HRESULT result = session->Open(endpointId);
 			if (FAILED(result)) return result;
-			*client = new AudioClient(std::move(session));
+			*client = new AudioClient(session);
+			{
+				std::lock_guard<std::mutex> guard(g_sessionMutex);
+				g_activeSession = session;
+			}
 			return S_OK;
 		}
 		catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }

@@ -6,6 +6,67 @@ namespace Keybindings {
 	std::map<std::string, ModCommand, std::less<>> keyUpCommands;
 	std::map<std::string, ModCommand, std::less<>> keyDownCommands;
 
+	constexpr UINT TOGGLE_RECORDING_MESSAGE = WM_APP + 0x421;
+	// Cross-process contract with the GUI: must equal ProductInfo.AUDIO_BRIDGE_WINDOW_TITLE
+	// (GUI/ProductInfo.cs), which is what the bridge window sets as its title. Change both together.
+	constexpr wchar_t AUDIO_BRIDGE_WINDOW_TITLE[] = L"RSModsPlus 4 \x00B7 Audio bridge";
+
+	bool ResolveAudioBridgePaths(std::wstring& executable, std::wstring& directory)
+	{
+		wchar_t gamePath[MAX_PATH] = {};
+		const DWORD length = GetModuleFileNameW(nullptr, gamePath, static_cast<DWORD>(std::size(gamePath)));
+		if (length == 0 || length >= std::size(gamePath))
+		{
+			LOG_ERROR("[Audio Bridge] Cannot resolve the Rocksmith installation path." << std::endl);
+			return false;
+		}
+
+		directory = std::filesystem::path(gamePath).parent_path().wstring();
+		executable = std::filesystem::path(directory).append(L"RSMods.exe").wstring();
+		if (GetFileAttributesW(executable.c_str()) == INVALID_FILE_ATTRIBUTES)
+		{
+			LOG_ERROR("[Audio Bridge] RSMods.exe is missing; the bridge cannot start." << std::endl);
+			return false;
+		}
+		return true;
+	}
+
+	void EnsureAudioBridgeRunning()
+	{
+		if (FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE) != nullptr) return;
+
+		std::wstring executable;
+		std::wstring directory;
+		if (!ResolveAudioBridgePaths(executable, directory)) return;
+
+		std::wstring command = L"\"" + executable + L"\" --audio-bridge \"" + directory
+			+ L"\" --rocksmith-pid " + std::to_wstring(GetCurrentProcessId());
+		STARTUPINFOW startup = {};
+		startup.cb = sizeof(startup);
+		PROCESS_INFORMATION process = {};
+		if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+			CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &process))
+		{
+			LOG_ERROR("[Audio Bridge] Cannot start the background bridge, error=" << GetLastError() << std::endl);
+			return;
+		}
+		CloseHandle(process.hThread);
+		CloseHandle(process.hProcess);
+		LOG_INFO("[Audio Bridge] Started for Rocksmith process " << GetCurrentProcessId() << "." << std::endl);
+	}
+
+	void ToggleAudioBridgeRecording()
+	{
+		HWND bridgeWindow = FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE);
+		if (bridgeWindow == nullptr)
+		{
+			LOG_ERROR("[Audio Bridge] Recording hotkey ignored because the background bridge is unavailable." << std::endl);
+			return;
+		}
+		if (!PostMessageW(bridgeWindow, TOGGLE_RECORDING_MESSAGE, 0, 0))
+			LOG_ERROR("[Audio Bridge] Cannot deliver the recording hotkey, error=" << GetLastError() << std::endl);
+	}
+
 	void HandleTuningOffset()
 	{
 		bool isCtrlPressed = GetAsyncKeyState(VK_CONTROL) & 0x8000;
@@ -165,6 +226,8 @@ namespace Keybindings {
 	{
 		if (!GameState::GameLoaded) return; // Game must not be on the startup videos or it will crash
 		DispatchCommand(keyPressed, keyUpCommands);
+		if (keyPressed == Settings::GetKeyBind("RecordingHotkey"))
+			ToggleAudioBridgeRecording();
 
 		// Control + A. Force us to read the Settings from the INI again, to renew our cached values.
 		if (keyPressed == 0x41 && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) {

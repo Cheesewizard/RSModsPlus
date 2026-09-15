@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "D3DOverlay.hpp"
+#include "Audio/SharedOutput.hpp"
 #include "Mods/DropPedal/DropPedalOverlay.hpp"
 #include "Mods/DropPedal/DropPedal.hpp"
 #include "Mods/NoteByNoteNativeScoring.hpp"
@@ -11,6 +12,7 @@
 #include "OverlayToggles.hpp"
 #include "PitchNames.hpp"
 #include "Mods/ExtendedRangeMode.hpp"
+#include "ProductVersion.hpp"
 
 /// <returns>Size of Rocksmith Window</returns>
 Resolution GameOverlay::GetWindowSize() {
@@ -127,6 +129,40 @@ void GameOverlay::DisplayMixer() {
 			static_cast<int>(WindowSize.height / 16.0f), // 120 pixels from top
 			pDevice);
 	}
+}
+
+void GameOverlay::DisplayProductVersion()
+{
+	if (!GameState::Menus::IsOnMainMenu()) return;
+
+	const auto left = static_cast<int>(WindowSize.width * 0.70f);
+	const auto top = static_cast<int>(WindowSize.height * 0.895f);
+	const auto right = static_cast<int>(WindowSize.width * 0.985f);
+	const auto bottom = static_cast<int>(WindowSize.height * 0.93f);
+	const auto shadowOffset = std::max(1, static_cast<int>(WindowSize.height / 720.0f));
+	const Resolution fontSize = { 0u, std::max(16u, WindowSize.height / 60u) };
+
+	DX9DrawText(
+		ProductVersion::DISPLAY_NAME,
+		0xCC000000,
+		left + shadowOffset,
+		top + shadowOffset,
+		right + shadowOffset,
+		bottom + shadowOffset,
+		pDevice,
+		fontSize,
+		DT_RIGHT | DT_NOCLIP);
+
+	DX9DrawText(
+		ProductVersion::DISPLAY_NAME,
+		0xFF28D7F2,
+		left,
+		top,
+		right,
+		bottom,
+		pDevice,
+		fontSize,
+		DT_RIGHT | DT_NOCLIP);
 }
 
 void GameOverlay::DisplaySongTimer()
@@ -417,13 +453,73 @@ bool GameOverlay::IsAudioDiagnosticsVisible()
 	return d.installed || d.rsAsio;
 }
 
+namespace
+{
+	// The game's EndScene often runs with a SUB-REGION viewport active (measured 1920x1080 inside a
+	// 2560x1600 backbuffer). D3D clips ALL rendering to the viewport, DT_NOCLIP or not, so text anchored
+	// to the window's right edge is cut off at the viewport's edge (the "invisible wall"). This widens the
+	// viewport to the whole backbuffer for the scope of one overlay element and restores it afterwards.
+	// Used by every right-anchored element (REC badge, SIGNAL row).
+	struct FullSurfaceViewport
+	{
+		LPDIRECT3DDEVICE9 device = nullptr;
+		D3DVIEWPORT9 saved{};
+		bool overridden = false;
+		int width = 0;
+		int height = 0;
+
+		FullSurfaceViewport(LPDIRECT3DDEVICE9 pDevice, int fallbackWidth, int fallbackHeight)
+			: device(pDevice), width(fallbackWidth), height(fallbackHeight)
+		{
+			if (!device) return;
+			IDirect3DSurface9* renderTarget = nullptr;
+			if (SUCCEEDED(device->GetRenderTarget(0, &renderTarget)) && renderTarget)
+			{
+				D3DSURFACE_DESC desc{};
+				if (SUCCEEDED(renderTarget->GetDesc(&desc)) && desc.Width > 0 && desc.Height > 0)
+				{
+					width = static_cast<int>(desc.Width);
+					height = static_cast<int>(desc.Height);
+				}
+				renderTarget->Release();
+			}
+			if (SUCCEEDED(device->GetViewport(&saved)))
+			{
+				D3DVIEWPORT9 full{ 0, 0, static_cast<DWORD>(width), static_cast<DWORD>(height), 0.0f, 1.0f };
+				overridden = SUCCEEDED(device->SetViewport(&full));
+			}
+		}
+		~FullSurfaceViewport() { if (overridden) device->SetViewport(&saved); }
+		FullSurfaceViewport(const FullSurfaceViewport&) = delete;
+		FullSurfaceViewport& operator=(const FullSurfaceViewport&) = delete;
+	};
+}
+
 void GameOverlay::DisplayAudioDiagnostics()
 {
 	if (!IsAudioDiagnosticsVisible()) return;
 	const Audio::CableInput::Diagnostics d = Audio::CableInput::GetDiagnostics();
 
+	// One formatter for both players: the bar, the dB figure and the packet rate read the same
+	// way on each row, so the eye compares them directly.
+	auto formatLive = [](std::wostringstream& out, const wchar_t* label, float meterPeak,
+		double packetsPerSecond, uint64_t dropouts)
+	{
+		const double db = meterPeak > 0.0f ? 20.0 * std::log10(meterPeak) : -90.0;
+		const int bars = std::clamp(static_cast<int>((db + 60.0) / 60.0 * 12.0 + 0.5), 0, 12);
+		out << label << L"  ";
+		for (int i = 0; i < 12; ++i) out << (i < bars ? L'\u2588' : L'\u2591');
+		out << L"  " << std::fixed << std::setprecision(0) << std::max(db, -90.0) << L" dB   "
+			<< packetsPerSecond << L" pkt/s";
+		if (dropouts > 0) out << L"   dropouts " << dropouts;
+	};
+
 	std::wostringstream signal;
-	if (!d.streamActive)
+	if (d.proxyInputMode == 1)
+	{
+		signal << L"NO INPUT  connect a guitar input";
+	}
+	else if (!d.streamActive)
 	{
 		signal << L"SIGNAL  waiting for input";
 	}
@@ -433,28 +529,64 @@ void GameOverlay::DisplayAudioDiagnostics()
 	}
 	else
 	{
-		const double db = d.meterPeak > 0.0f ? 20.0 * std::log10(d.meterPeak) : -90.0;
-		const int bars = std::clamp(static_cast<int>((db + 60.0) / 60.0 * 12.0 + 0.5), 0, 12);
-		signal << L"SIGNAL  ";
-		for (int i = 0; i < 12; ++i) signal << (i < bars ? L'\u2588' : L'\u2591');
-		signal << L"  " << std::fixed << std::setprecision(0) << std::max(db, -90.0) << L" dB   "
-			<< d.packetsPerSecond << L" pkt/s";
-		if (d.dropouts > 0) signal << L"   dropouts " << d.dropouts;
+		formatLive(signal, L"SIGNAL", d.meterPeak, d.packetsPerSecond, d.dropouts);
 	}
 
-	// Same row grid as the Drop Pedal overlay, with white text and a black shadow.
-	const int rowPitch = static_cast<int>(WindowSize.height / 36.0f);
-	const int fontSize = std::max(14, static_cast<int>(WindowSize.height / 62.0f));
-	const int left = static_cast<int>(WindowSize.width / 96.0f);
-	const int right = static_cast<int>(WindowSize.width * 0.8f);
-	const int signalTop = static_cast<int>(WindowSize.height / 54.0f) + rowPitch;
-	const int bottom = signalTop + rowPitch;
-	auto draw = [&](const std::wstring& text, int top)
+	// Player 2's row (Philip, 2026-09-15: "I don't see why we shouldn't show player 2 if it's active
+	// and player 1 is as well"). Drawn whenever the game is in 2-player, directly under Player 1's
+	// row, mirroring the Drop Pedal overlay's second Pitch row on the left. Its states name what
+	// Player 2 actually has, so a silent second guitar is diagnosable from the screen alone.
+	std::wostringstream playerTwo;
+	const bool showPlayerTwo = GameState::IsMultiplayer();
+	if (showPlayerTwo)
 	{
-		DX9DrawTextW(text, 0xFF000000, left + 2, top + 2, right + 2, bottom + 2, pDevice, fontSize, DT_LEFT | DT_NOCLIP, FW_BOLD);
-		DX9DrawTextW(text, 0xFFFFFFFF, left, top, right, bottom, pDevice, fontSize, DT_LEFT | DT_NOCLIP, FW_BOLD);
+		if (!d.playerTwoInput)
+		{
+			playerTwo << L"P2 NO INPUT  no second input is configured";
+		}
+		else if (d.playerTwoCableFeedOff)
+		{
+			playerTwo << L"P2 CABLE OFF  enable the Real Tone Cable for Player 2";
+		}
+		else if (!d.playerTwoStreamActive)
+		{
+			playerTwo << L"P2 SIGNAL  waiting for input";
+		}
+		else if (d.playerTwoStalled)
+		{
+			playerTwo << L"P2 NO SIGNAL  the input stream has stalled";
+		}
+		else
+		{
+			formatLive(playerTwo, L"P2 SIGNAL", d.playerTwoMeterPeak, d.playerTwoPacketsPerSecond, 0);
+		}
+	}
+
+	// Top row (the Drop Pedal "Pitch" row; that overlay draws one Pitch row per player, so the signal
+	// readout must not take a row of its own), anchored to the TRUE right edge of the backbuffer with the
+	// viewport widened for the draw (see FullSurfaceViewport). While a take is recording the REC badge
+	// owns the corner, so the readout steps left of it. The Player 2 row uses the same row pitch as the
+	// Drop Pedal overlay (height / 36) so the two players' rows line up across the screen.
+	FullSurfaceViewport viewport(pDevice, static_cast<int>(WindowSize.width), static_cast<int>(WindowSize.height));
+	const int surfaceW = viewport.width;
+	const int surfaceH = viewport.height;
+	const int margin = std::max(8, surfaceW / 96);
+	const int fontSize = std::max(14, surfaceH / 62);
+	const int rowPitch = surfaceH / 36;
+	const int top = std::max(8, surfaceH / 54);
+	const int recBadgeWidth = Audio::SharedOutput::IsRecording() ? std::max(18, surfaceH / 44) * 5 : 0;
+	const int right = surfaceW - margin - recBadgeWidth;
+	const int left = surfaceW / 3;
+	const DWORD fmt = DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_NOCLIP;
+	auto drawRow = [&](const std::wstring& text, int row)
+	{
+		const int rowTop = top + row * rowPitch;
+		const int rowBottom = rowTop + rowPitch;
+		DX9DrawTextW(text, 0xFF000000, left + 2, rowTop + 2, right + 2, rowBottom + 2, pDevice, fontSize, fmt, FW_BOLD);
+		DX9DrawTextW(text, 0xFFFFFFFF, left, rowTop, right, rowBottom, pDevice, fontSize, fmt, FW_BOLD);
 	};
-	draw(signal.str(), signalTop);
+	drawRow(signal.str(), 0);
+	if (showPlayerTwo) drawRow(playerTwo.str(), 1);
 }
 
 // Paired detection readout: Rocksmith's OWN pitch read (line 1) with the FretNet ML
@@ -472,7 +604,7 @@ void GameOverlay::DisplayMlStringFretOverlay()
 {
 	if (!NoteByNoteProbe::IsAutomaticEnabledFast()) return;
 	if (!GameState::Menus::IsInSongModes() || GameState::Menus::IsInRiffRepeaterMenus()) return;
-	if (!OverlayToggles::Get("ml_fret")) return;
+	if (!OverlayToggles::Get("ml_fret") || !Settings::IsNoteByNoteDetectionVisible()) return;
 
 	ResearchProtocol::NoteByNoteState state;
 	const bool haveState = NoteByNoteNativeScoring::TryGetResearchState(state) && state.isInitialized;
@@ -488,14 +620,17 @@ void GameOverlay::DisplayMlStringFretOverlay()
 		&& (nativeColor != 0xFFFFFFFF || enhancedColor != 0xFFFFFFFF || mlColor != 0xFFFFFFFF);
 	const int targetMidi = haveState ? state.expectedMidi : -1;
 	const int targetString = haveState && state.selectedChordId == -1 ? state.selectedString : -1;
+	int targetColorString = targetString;
 	const int targetFret = haveState ? state.selectedFret : -1;
 	const int matchingMidi = haveState && state.isBendTarget ? state.bendAcceptMidi : targetMidi;
+	bool nativeMatchesLive = false;
+	bool mlMatchesLive = false;
 	int heard = -1;
 	if (showDecision) heard = feedback.nativeMidi;
 	else if (haveState && state.detectorSampleValid && state.detectorPassesLevel)
 		heard = state.detectorLoudestMidi;
 	if (!showDecision && targetString >= 0 && NoteByNote::MatchesDetectorTarget(heard, matchingMidi))
-		nativeColor = NoteByNote::GetDetectorColor(NoteByNote::DetectorRole::Confirmed, now, now);
+		nativeMatchesLive = true;
 	const std::string nativeText = NoteByNote::FormatPitch(heard);
 	const std::string enhancedText = NoteByNote::FormatPitch(showDecision ? feedback.enhancedMidi : -1);
 
@@ -520,7 +655,7 @@ void GameOverlay::DisplayMlStringFretOverlay()
 				&& (NoteByNote::MatchesDetectorTarget(midi, matchingMidi, sample.conf[stringIndex])
 					|| NoteByNote::MatchesDetectorTarget(midi, matchingMidi - appliedShift, sample.conf[stringIndex])))
 			{
-				mlColor = NoteByNote::GetDetectorColor(NoteByNote::DetectorRole::Confirmed, now, now);
+				mlMatchesLive = true;
 			}
 			if (midi < 0 || displayedPitches[midi % 12]) continue;
 			displayedPitches[midi % 12] = true;
@@ -550,36 +685,58 @@ void GameOverlay::DisplayMlStringFretOverlay()
 			targetText = "(tuning unavailable)";
 			if (!reportedMissingPhysicalTuning)
 			{
-				LOG_ERROR("(NBN HUD) Physical string tuning unavailable for target label." << std::endl);
+				LOG_ERROR("(NBN HUD) Physical string tuning unavailable for target display." << std::endl);
 				reportedMissingPhysicalTuning = true;
 			}
 		}
 	}
 	else if (haveState && state.selectedChordId >= 0)
 	{
-		char chord[256] = {};
-		if (NoteByNoteNativeScoring::TryDescribeChordTarget(state.selectedRecord, chord, sizeof(chord)))
-			targetText = chord;
+		char fingering[24] = {};
+		if (NoteByNoteNativeScoring::TryDescribeSelectedChordFingering(
+			state.selectedRecord,
+			fingering,
+			sizeof(fingering),
+			targetColorString))
+		{
+			targetText = fingering;
+		}
+		else
+			targetText = "(fingering unavailable)";
 	}
 
 	const int baseX = static_cast<int>(WindowSize.width / 96.0f);
 	const int baseY = static_cast<int>(WindowSize.height / 5.2f);
-	const int textHeight = std::max(14, static_cast<int>(WindowSize.height / 80.0f));
+	const int defaultTextHeight = std::max(14, static_cast<int>(WindowSize.height / 80.0f));
+	const int textHeight = std::max(7, defaultTextHeight * Settings::GetNoteByNoteUiSize() / 100);
+	const int targetTextHeight = std::max(7, defaultTextHeight * Settings::GetNoteByNoteTargetSize() / 100);
 	const int rowHeight = textHeight * 2;
 	const int valueX = baseX + textHeight * 7;
 	const int rightEdge = static_cast<int>(WindowSize.width);
-	int targetValueX = valueX;
-	if (targetString >= 0 && targetString < 6)
+	// Horizontal layout is anchored to the UI text size, NOT the target size, so raising the
+	// target size only grows the value glyphs; it never shifts the row sideways. The target
+	// value starts at the same left edge as the detector labels.
+	int targetValueX = baseX;
+	// The target value is a fixed-top box: its top-left is anchored here and never moves with the
+	// target size. The value text is top-aligned, so making it bigger only grows the box out to
+	// the right and downward - it never climbs into the Native/Enhanced/ML block above (there is a
+	// full textHeight gap above this anchor) and never shifts sideways. Scaling is purely downward.
+	// The lyric clearance is a fixed nudge so the anchor clears the game's audio/lyric line, which
+	// can render two lines across this band; proportional to text size so the gap holds at any
+	// resolution. (~two rows below the ML block clears both lyric lines seen in practice.)
+	const int targetLyricClearance = rowHeight * 2;
+	const int targetRowTop = baseY + rowHeight * 3 + targetLyricClearance;
+	if (targetColorString >= 0 && targetColorString < 6)
 	{
 		RSColor stringColor;
-		const bool hasStringColor = ERMode::TryGetActiveStringColor(targetString, stringColor);
+		const bool hasStringColor = ERMode::TryGetActiveStringColor(targetColorString, stringColor);
 		static bool reportedMissingStringColor = false;
 		if (hasStringColor)
 		{
 			reportedMissingStringColor = false;
-			const int y = baseY + rowHeight * 3;
+			const int y = targetRowTop;
 			DX9DrawTextW(L"\u25A0", D3DCOLOR_COLORVALUE(stringColor.r, stringColor.g, stringColor.b, 1.0f),
-				valueX, y, valueX + textHeight, y + rowHeight, pDevice, textHeight, DT_LEFT | DT_NOCLIP);
+				targetValueX, y, targetValueX + textHeight, y + textHeight * 2, pDevice, textHeight, DT_LEFT | DT_NOCLIP);
 			targetValueX += textHeight + textHeight / 2;
 		}
 		else if (!reportedMissingStringColor)
@@ -588,17 +745,87 @@ void GameOverlay::DisplayMlStringFretOverlay()
 			reportedMissingStringColor = true;
 		}
 	}
-	const char* labels[] = { "Native:", "Enhanced:", "ML:", "Target:" };
-	const std::string values[] = { nativeText, enhancedText, mlText, targetText };
-	const uint32_t colors[] = { nativeColor, enhancedColor, mlColor, 0xFFFFFFFF };
-	for (int row = 0; row < 4; ++row)
+	const char* labels[] = { "Native:", "Enhanced:", "ML:" };
+	const auto palette = Settings::GetNoteByNoteDetectionPalette();
+	// Each detector row's colour is derived from the SAME pitch it shows as text, never from a
+	// separate role/timer, so the swatch and the text can never disagree. A row is green only when
+	// the pitch it is displaying IS the target pitch, and neutral otherwise (a correct read always
+	// reads as correct; a wrong or absent read is calm neutral, not red). Detection here means "did
+	// I see the right pitch"; whether the note then PROGRESSES is a separate concern handled by the
+	// acceptance logic, deliberately not shown on these rows. A short hold keeps each row's text and
+	// colour on screen together for a moment so a flickering live reading does not strobe; they
+	// refresh and expire as one unit, so they always stay in sync.
+	auto matchesTarget = [&](int midi) { return matchingMidi >= 0 && midi == matchingMidi; };
+	const int shownEnhancedMidi = showDecision ? feedback.enhancedMidi : -1;
+	const bool nativeMatch = showDecision ? matchesTarget(heard) : nativeMatchesLive;
+	const bool enhancedMatch = matchesTarget(shownEnhancedMidi);
+	const bool mlMatch = showDecision ? matchesTarget(feedback.mlMidi) : mlMatchesLive;
+	struct RowHold { std::string text = "--"; uint32_t color = 0; uint64_t tick = 0; };
+	static RowHold holds[3];
+	constexpr uint64_t ROW_HOLD_MS = 300;
+	auto resolveRow = [&](int index, const std::string& text, bool match, bool hasReading)
+		-> std::pair<std::string, uint32_t> {
+		if (hasReading) holds[index] = { text, match ? palette.confirmed : palette.neutral, now };
+		else if (holds[index].tick && now - holds[index].tick > ROW_HOLD_MS)
+			holds[index] = { "--", palette.neutral, 0 };
+		return holds[index].tick
+			? std::pair<std::string, uint32_t>{ holds[index].text, holds[index].color }
+			: std::pair<std::string, uint32_t>{ std::string("--"), palette.neutral };
+	};
+	const auto nativeRow = resolveRow(0, nativeText, nativeMatch, heard >= 0);
+	const auto enhancedRow = resolveRow(1, enhancedText, enhancedMatch, shownEnhancedMidi >= 0);
+	const auto mlRow = resolveRow(2, mlText, mlMatch, mlText != "--");
+	const std::string values[] = { nativeRow.first, enhancedRow.first, mlRow.first };
+	const uint32_t colors[] = { nativeRow.second, enhancedRow.second, mlRow.second };
+	for (int row = 0; row < 3; ++row)
 	{
 		const int y = baseY + row * rowHeight;
-		DX9DrawText(labels[row], colors[row], baseX, y, valueX, y + rowHeight,
+		DX9DrawText(labels[row], colors[row], baseX, y, valueX, y + textHeight * 2,
 			pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
-		DX9DrawText(values[row], colors[row], row == 3 ? targetValueX : valueX, y, rightEdge, y + rowHeight,
+		DX9DrawText(values[row], colors[row], valueX, y, rightEdge, y + textHeight * 2,
 			pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
 	}
+
+	// Veto line (Philip, 2026-09-15: "green but no progress ... something vetoed it and the green is
+	// not the live sync of the decision"). The rows above stay detection truth by design (the
+	// acceptance-coloured rows were tried and rejected on 2026-09-10); this fourth line names the
+	// stage holding the note back whenever a detector row is green and the target has not moved on.
+	// "game gate" is the native detector's hidden onset/confidence test ("none-visible" in the log);
+	// the transport phases are the mod's own timing states where no accept is possible yet.
+	if (haveState && targetMidi >= 0 && (nativeMatch || enhancedMatch || mlMatch))
+	{
+		std::string veto;
+		const std::string phase = state.holdPhase;
+		const std::string refusal = state.holdRefusal;
+		if (phase == "dense-rebuild-pending" || phase == "dense-play-packet-pending"
+			|| phase == "dense-recommit-after-rebuild")
+			veto = "transport rebuilding";
+		else if (phase == "waiting-for-input-release")
+			veto = "previous note still ringing";
+		else if (phase == "commit-before-release" || phase == "post-release" || phase == "recommit-after-release")
+			veto = "committing";
+		else if (refusal == "none-visible")
+			veto = "game gate (onset / confidence)";
+		else if (refusal == "unsettled")
+			veto = "pitch not settled";
+		else if (refusal == "already-consumed")
+			veto = "pick already used";
+		else if (refusal == "level" || refusal == "quality" || refusal == "level+quality")
+			veto = "detector " + refusal + " gate";
+		else if (!refusal.empty())
+			veto = refusal;
+		if (!veto.empty())
+		{
+			const int y = baseY + 3 * rowHeight;
+			DX9DrawText("Held by:", palette.neutral, baseX, y, valueX, y + textHeight * 2,
+				pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
+			DX9DrawText(veto, palette.neutral, valueX, y, rightEdge, y + textHeight * 2,
+				pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
+		}
+	}
+	DX9DrawText(targetText, palette.neutral, targetValueX, targetRowTop, rightEdge,
+		targetRowTop + targetTextHeight * 2, pDevice,
+		{ 0, static_cast<unsigned>(targetTextHeight) }, DT_LEFT | DT_NOCLIP);
 }
 // The bend visualizer (Philip, 2026-08-18): a tuner-style ladder at the screen's
 // right edge while a bend gesture is the target. Five rungs - the bend target in
@@ -952,6 +1179,64 @@ void GameOverlay::DisplaySongAccuracy() {
 	}
 }
 
+void GameOverlay::DisplayRecordingIndicator()
+{
+	// Authoritative in-process take state. Audio::SharedOutput::IsRecording() unifies both recording
+	// backends (the managed output session AND the passive proxy output-tap used for wet takes), so
+	// this is true for every recording the audio bridge can start. The earlier build only saw the
+	// session recorder, so wet proxy takes (the common ASIO path) started a file but never lit the
+	// badge; that is why REC had never appeared even though takes were saving fine.
+	const bool isRecording = Audio::SharedOutput::IsRecording();
+
+	// Log the ON/off transition once. If the badge ever fails to appear again, the debug log then
+	// says plainly whether the overlay knew a take was running, separating "we didn't know" from
+	// "we knew but the pixels didn't land".
+	static bool loggedRecording = false;
+	if (isRecording != loggedRecording)
+	{
+		LOG_INFO("(REC OVERLAY) recording indicator " << (isRecording ? "ON" : "off") << std::endl);
+		loggedRecording = isRecording;
+	}
+
+	if (!isRecording) return;
+
+	// The badge must sit at the true right edge of the presented image. Two traps make that non-trivial:
+	//   1. GetWindowRect (WindowSize) is the OS window, which can be larger than the backbuffer.
+	//   2. When our EndScene hook runs, the game frequently has a SUB-REGION viewport active (measured
+	//      1920x1080 inside a 2560x1600 backbuffer). The D3D viewport clips ALL rendering to itself,
+	//      DT_NOCLIP or not, so anything drawn outside it is discarded. Anchoring to the window's right
+	//      edge fell outside that sub-viewport and vanished (the original bug); anchoring to the
+	//      sub-viewport's right edge landed ~75% across, not at the window edge.
+	// So: read the actual backbuffer (render target 0) size, widen the viewport to cover the whole
+	// backbuffer for this one badge, draw against the backbuffer's right edge, then restore the game's
+	// viewport so nothing else is affected.
+	FullSurfaceViewport viewport(pDevice, static_cast<int>(WindowSize.width), static_cast<int>(WindowSize.height));
+	const int surfaceW = viewport.width;
+	const int surfaceH = viewport.height;
+	const D3DVIEWPORT9& savedViewport = viewport.saved;
+
+	// One-shot geometry log so a take's log shows window vs backbuffer vs the game's live viewport.
+	static bool loggedGeometry = false;
+	if (!loggedGeometry)
+	{
+		LOG_INFO("(REC OVERLAY) window=" << static_cast<int>(WindowSize.width) << "x" << static_cast<int>(WindowSize.height)
+			<< " backbuffer=" << surfaceW << "x" << surfaceH
+			<< " gameViewport=" << savedViewport.Width << "x" << savedViewport.Height << std::endl);
+		loggedGeometry = true;
+	}
+
+	// Wide, single-line, right-anchored rect (no wrap, no self-clip). Shadow first, then the red fill.
+	const int margin = (std::max)(8, surfaceW / 96);
+	const int fontSize = (std::max)(18, surfaceH / 44);
+	const int top = (std::max)(8, surfaceH / 54);
+	const int left = surfaceW / 2;
+	const int right = surfaceW - margin;
+	const int bottom = top + fontSize * 2;
+	const DWORD fmt = DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_NOCLIP;
+	DX9DrawTextW(L"\x25CF  REC", 0xFF000000, left + 2, top + 2, right + 2, bottom + 2, pDevice, fontSize, fmt, FW_BOLD);
+	DX9DrawTextW(L"\x25CF  REC", 0xFFFF2020, left, top, right, bottom, pDevice, fontSize, fmt, FW_BOLD);
+}
+
 void GameOverlay::CheckCurrentFont() {
 	const std::string currentFontName = Settings::ReturnSettingValue("OnScreenFont");
 	const int currentFontSize = Settings::GetModSetting("OnScreenFontSize");
@@ -976,24 +1261,25 @@ void GameOverlay::CheckCurrentFont() {
 void GameOverlay::RenderOverlay(IDirect3DDevice9* device) {
 	// Draw text on screen
 	// NOTE: NEVER USE SET VALUES. Always do division of WindowSize width AND heigh so every resolution should have the text in around the same spot.
-	if (GameState::GameLoaded) {
-		WindowSize = GetWindowSize();
-		pDevice = device;
+	WindowSize = GetWindowSize();
+	pDevice = device;
 
-		CheckCurrentFont();
+	CheckCurrentFont();
 
-		DisplayMixer();
-		DisplaySongTimer();
-		DisplayRiffRepeaterOverHundredPercentSpeed();
-		DisplayNoteByNoteStatus();
-		DisplayAudioDiagnostics();
-		DisplayCurrentNote();
-		DisplayCurrentTuningForAutoTune();
-		static DropPedal::Overlay dropPedalOverlay;
-		dropPedalOverlay.Render(cachedFont, WindowSize);
-		DisplaySongAccuracy();
-		DisplayAudioDiagnostics();
+	DisplayRecordingIndicator();
+	if (!GameState::GameLoaded) return;
 
-		HandleLooping();
-	}
+	DisplayProductVersion();
+	DisplayMixer();
+	DisplaySongTimer();
+	DisplayRiffRepeaterOverHundredPercentSpeed();
+	DisplayNoteByNoteStatus();
+	DisplayAudioDiagnostics();
+	DisplayCurrentNote();
+	DisplayCurrentTuningForAutoTune();
+	static DropPedal::Overlay dropPedalOverlay;
+	dropPedalOverlay.Render(cachedFont, WindowSize);
+	DisplaySongAccuracy();
+
+	HandleLooping();
 }
