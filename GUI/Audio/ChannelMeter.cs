@@ -5,46 +5,54 @@ using System.Windows.Forms;
 
 namespace RSMods.Audio
 {
-	/// <summary>Slim vertical output meter that sits beside the master fader.</summary>
+	/// <summary>
+	/// Slim vertical output meter that sits beside the master fader. The bridge is polled a few times a
+	/// second, so the meter runs its own 30 fps clock and lets <see cref="MeterMotion"/> carry the bar
+	/// between reports; it repaints only when the bar or the peak line lands on a new pixel row.
+	/// </summary>
 	internal sealed class ChannelMeter : Control
 	{
 		private const int BarWidth = 10;
-		private double level;
-		private double hold;
+		private readonly MeterMotion motion = new MeterMotion();
+		private readonly Timer animation = new Timer { Interval = 33 };
 		private int paintedTop = -1;
 		private int paintedHold = -1;
-		private DateTime holdTaken = DateTime.MinValue;
 
 		public ChannelMeter()
 		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 			Width = 18;
+			animation.Tick += (sender, args) => Animate();
 		}
 
 		public void SetLevel(int peak)
 		{
-			double target = LevelMeter.Fraction(peak);
-			level = target > level ? target : level * 0.72 + target * 0.28;
-			if (level >= hold || (DateTime.UtcNow - holdTaken).TotalSeconds > 1.2)
-			{
-				hold = level;
-				holdTaken = DateTime.UtcNow;
-			}
-			InvalidateWhenMoved();
+			motion.Feed(LevelMeter.Fraction(peak));
+			if (!animation.Enabled)
+				animation.Start();
+			Animate();
 		}
 
 		public void Reset()
 		{
-			level = 0;
-			hold = 0;
+			animation.Stop();
+			motion.Reset();
+			InvalidateWhenMoved();
+		}
+
+		private void Animate()
+		{
+			motion.Advance();
+			if (!motion.IsMoving)
+				animation.Stop();
 			InvalidateWhenMoved();
 		}
 
 		/// <summary>Repaints only when the bar or its peak hold lands on a different pixel row.</summary>
 		private void InvalidateWhenMoved()
 		{
-			int top = (int)Math.Round(level * Math.Max(0, Height));
-			int peak = (int)Math.Round(hold * Math.Max(0, Height));
+			int top = (int)Math.Round(motion.Level * Math.Max(0, Height));
+			int peak = (int)Math.Round(motion.Hold * Math.Max(0, Height));
 			if (top == paintedTop && peak == paintedHold)
 				return;
 			paintedTop = top;
@@ -57,6 +65,8 @@ namespace RSMods.Audio
 			base.OnPaint(args);
 			var canvas = args.Graphics;
 			canvas.SmoothingMode = SmoothingMode.AntiAlias;
+			double level = motion.Level;
+			double hold = motion.Hold;
 			int inset = Math.Max(10, DeviceDpi / 10);
 			var bar = new Rectangle(Width / 2 - BarWidth / 2, inset, BarWidth, Math.Max(1, Height - inset * 2));
 			using (var path = StudioTheme.RoundedRectangle(bar, BarWidth / 2))
@@ -88,6 +98,13 @@ namespace RSMods.Audio
 				using (var pen = new Pen(StudioTheme.Line))
 					canvas.DrawPath(pen, path);
 			}
+		}
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing)
+				animation.Dispose();
+			base.Dispose(disposing);
 		}
 	}
 }

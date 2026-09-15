@@ -23,8 +23,7 @@ namespace RSMods.Audio
 			Height = 34;
 			Margin = new Padding(0, 4, 0, 4);
 			Cursor = Cursors.Hand;
-			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
-			BackColor = Color.Transparent;
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 			Measure();
 		}
 
@@ -104,31 +103,30 @@ namespace RSMods.Audio
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var path = StudioTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), 7))
-			{
-				using (var brush = new SolidBrush(StudioTheme.Field))
-					e.Graphics.FillPath(brush, path);
-				using (var pen = new Pen(StudioTheme.Line))
-					e.Graphics.DrawPath(pen, path);
-			}
+			e.Graphics.SmoothingMode = SmoothingMode.None;
+			using (var brush = new SolidBrush(StudioTheme.Field))
+				e.Graphics.FillRectangle(brush, 0, 0, Width, Height);
 			int offset = 4;
 			for (int index = 0; index < segments.Length; index++)
 			{
-				var bounds = new Rectangle(offset, 4, widths[index], Height - 9);
+				var bounds = new Rectangle(offset - 3, 1, widths[index], Height - 2);
 				bool active = index == selectedIndex;
 				if (active)
-					using (var path = StudioTheme.RoundedRectangle(bounds, 5))
-					using (var brush = new SolidBrush(Enabled ? StudioTheme.Blend(StudioTheme.Neutral, StudioTheme.Accent, 0.35) : StudioTheme.Neutral))
-						e.Graphics.FillPath(brush, path);
+					using (var brush = new SolidBrush(Enabled ? StudioTheme.Accent : StudioTheme.Neutral))
+						e.Graphics.FillRectangle(brush, bounds);
 				else if (Enabled && index == hoveredIndex)
-					using (var path = StudioTheme.RoundedRectangle(bounds, 5))
 					using (var brush = new SolidBrush(StudioTheme.Shift(StudioTheme.Field, 10)))
-						e.Graphics.FillPath(brush, path);
+						e.Graphics.FillRectangle(brush, bounds);
+				if (index > 0)
+					using (var pen = new Pen(StudioTheme.Line))
+						e.Graphics.DrawLine(pen, bounds.X, 1, bounds.X, Height - 2);
 				Color ink = !Enabled ? StudioTheme.Faint : active ? Color.White : StudioTheme.Muted;
 				TextRenderer.DrawText(e.Graphics, segments[index], active ? StudioTheme.Strong : StudioTheme.Body, bounds, ink,
 					TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				offset += widths[index];
 			}
+			using (var pen = new Pen(StudioTheme.Line))
+				e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
 		}
 	}
 }

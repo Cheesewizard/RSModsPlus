@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 
@@ -13,42 +15,67 @@ namespace RSMods.Audio
 
 	internal sealed class AudioInputModeConfiguration
 	{
+		private static readonly string[] asioFileNames = { "avrt.dll", "RS_ASIO.dll" };
+
 		private readonly string gameDirectory;
 		private readonly Func<bool> isGameRunning;
-		private static readonly string[] fileNames = { "avrt.dll", "RS_ASIO.dll" };
 
 		public AudioInputModeConfiguration(string gameDirectory, Func<bool> isGameRunning = null)
 		{
 			if (string.IsNullOrWhiteSpace(gameDirectory)) throw new ArgumentException("Rocksmith folder is required.", nameof(gameDirectory));
 			this.gameDirectory = Path.GetFullPath(gameDirectory);
-			this.isGameRunning = isGameRunning ?? IsGameRunning;
+			this.isGameRunning = isGameRunning ?? DetectGameRunning;
 		}
 
 		public AudioInputMode ReadMode()
 		{
-			int enabled = 0;
-			int disabled = 0;
-			foreach (string name in fileNames)
+			int enabledFiles = 0;
+			int disabledFiles = 0;
+			foreach (string fileName in asioFileNames)
 			{
-				if (File.Exists(Path.Combine(gameDirectory, name))) enabled++;
-				if (File.Exists(Path.Combine(gameDirectory, name + ".disabled"))) disabled++;
+				if (File.Exists(Path.Combine(gameDirectory, fileName))) enabledFiles++;
+				if (File.Exists(Path.Combine(gameDirectory, fileName + ".disabled"))) disabledFiles++;
 			}
-			if (enabled == 2 && disabled == 0) return AudioInputMode.Asio;
-			if (enabled == 0 && disabled == 2) return AudioInputMode.Cable;
-			if (enabled == 0 && disabled == 0) return AudioInputMode.Unavailable;
-			throw new InvalidOperationException("ASIO files are incomplete or conflicting. Expected both avrt.dll and RS_ASIO.dll, or both with .disabled appended. No files were changed.");
+			if (enabledFiles == 0 && disabledFiles == 0) return AudioInputMode.Unavailable;
+			if ((enabledFiles != asioFileNames.Length || disabledFiles != 0)
+				&& (disabledFiles != asioFileNames.Length || enabledFiles != 0))
+				throw new InvalidOperationException("ASIO files are incomplete or conflicting. Expected both enabled files or both .disabled files.");
+			return enabledFiles == asioFileNames.Length ? AudioInputMode.Asio : AudioInputMode.Cable;
 		}
 
 		public bool IsGameRunning()
+		{
+			return isGameRunning();
+		}
+
+		private bool DetectGameRunning()
 		{
 			foreach (var process in Process.GetProcessesByName("Rocksmith2014"))
 			{
 				using (process)
 				{
-					if (string.Equals(Path.GetDirectoryName(process.MainModule.FileName), gameDirectory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return true;
+					if (IsProcessInGameDirectory(process)) return true;
 				}
 			}
 			return false;
+		}
+
+		private bool IsProcessInGameDirectory(Process process)
+		{
+			try
+			{
+				return string.Equals(Path.GetDirectoryName(process.MainModule.FileName), gameDirectory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+			}
+			catch (InvalidOperationException)
+			{
+				return false;
+			}
+			catch (Win32Exception error)
+			{
+				// ERROR_PARTIAL_COPY is the normal race when Rocksmith exits between enumeration and
+				// MainModule. For any other inspection failure, keep the running-game protection active.
+				return error.NativeErrorCode != 299;
+			}
 		}
 
 		public void SetAsioEnabled(bool enabled)
@@ -57,24 +84,31 @@ namespace RSMods.Audio
 			{
 				if (isGameRunning()) throw new InvalidOperationException("Close Rocksmith before changing ASIO / Cable mode.");
 				var current = ReadMode();
-				if (current == AudioInputMode.Unavailable) throw new InvalidOperationException("Install RS_ASIO before enabling ASIO mode.");
+				if (current == AudioInputMode.Unavailable)
+					throw new InvalidOperationException("Install RS_ASIO before selecting an input mode.");
 				if ((current == AudioInputMode.Asio) == enabled) return;
+
 				string sourceSuffix = enabled ? ".disabled" : "";
 				string destinationSuffix = enabled ? "" : ".disabled";
-				string firstSource = Path.Combine(gameDirectory, fileNames[0] + sourceSuffix);
-				string firstDestination = Path.Combine(gameDirectory, fileNames[0] + destinationSuffix);
-				File.Move(firstSource, firstDestination);
+				var movedFiles = new List<KeyValuePair<string, string>>();
 				try
 				{
-					File.Move(Path.Combine(gameDirectory, fileNames[1] + sourceSuffix), Path.Combine(gameDirectory, fileNames[1] + destinationSuffix));
+					foreach (string fileName in asioFileNames)
+					{
+						string source = Path.Combine(gameDirectory, fileName + sourceSuffix);
+						string destination = Path.Combine(gameDirectory, fileName + destinationSuffix);
+						File.Move(source, destination);
+						movedFiles.Add(new KeyValuePair<string, string>(source, destination));
+					}
 				}
-				catch (Exception error)
+				catch
 				{
-					try { File.Move(firstDestination, firstSource); }
-					catch (Exception rollbackError) { throw new AggregateException("ASIO mode change and restoration failed. Check both DLL names before launching Rocksmith.", error, rollbackError); }
+					for (int index = movedFiles.Count - 1; index >= 0; --index)
+						File.Move(movedFiles[index].Value, movedFiles[index].Key);
 					throw;
 				}
 			}
 		}
+
 	}
 }

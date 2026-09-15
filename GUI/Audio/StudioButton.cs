@@ -28,8 +28,10 @@ namespace RSMods.Audio
 			Margin = new Padding(0, 4, 8, 4);
 			TabStop = true;
 			Cursor = Cursors.Hand;
-			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable | ControlStyles.SupportsTransparentBackColor, true);
-			BackColor = Color.Transparent;
+			// No transparent BackColor: the control inherits its parent's opaque colour (ambient BackColor), so
+			// the parent never has to repaint underneath it. Transparent children were the main reason the
+			// window visibly painted control by control.
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
 			MinimumTextWidth = 96;
 			Text = text;
 		}
@@ -124,15 +126,14 @@ namespace RSMods.Audio
 				fill = StudioTheme.Shift(fill, -16);
 			else if (hovered)
 				fill = StudioTheme.Shift(fill, 18);
-			using (var path = StudioTheme.RoundedRectangle(bounds, 6))
-			{
-				using (var brush = new SolidBrush(fill))
-					e.Graphics.FillPath(brush, path);
-				Color edge = Focused && Enabled ? StudioTheme.Accent : StudioTheme.Line;
-				if (kind == StudioButtonKind.Ghost || (Focused && Enabled))
-					using (var pen = new Pen(Enabled ? edge : StudioTheme.Blend(StudioTheme.Line, StudioTheme.Surface, 0.5)))
-						e.Graphics.DrawPath(pen, path);
-			}
+			e.Graphics.SmoothingMode = SmoothingMode.None;
+			using (var brush = new SolidBrush(fill))
+				e.Graphics.FillRectangle(brush, 0, 0, Width, Height);
+			Color edge = Focused && Enabled ? StudioTheme.Ink
+				: kind == StudioButtonKind.Ghost ? StudioTheme.Line : StudioTheme.Shift(fill, -30);
+			using (var pen = new Pen(Enabled ? edge : StudioTheme.Blend(StudioTheme.Line, StudioTheme.Surface, 0.5)))
+				e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+			e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 			var text = ClientRectangle;
 			if (showDot)
 			{
@@ -151,7 +152,7 @@ namespace RSMods.Audio
 			{
 				case StudioButtonKind.Record: return StudioTheme.Record;
 				case StudioButtonKind.Primary: return StudioTheme.Accent;
-				default: return StudioTheme.Neutral;
+				default: return StudioTheme.Field;
 			}
 		}
 	}

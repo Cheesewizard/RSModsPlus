@@ -5,11 +5,18 @@ using System.Windows.Forms;
 
 namespace RSMods.Audio
 {
-	/// <summary>Drop-down list that paints its own frame, so it does not carry the light Windows border into the dark studio.</summary>
+	/// <summary>
+	/// Drop-down list that paints its whole face itself. The system combo box, even flat-styled, draws a
+	/// light inner edge and its own arrow that the dark theme cannot recolour (the white line Philip saw on
+	/// the output selector), so after the base paint the entire client area is repainted: field, text,
+	/// arrow and a 1 px frame.
+	/// </summary>
 	internal sealed class StudioSelector : ComboBox
 	{
-		private const int WmPaint = 0x000F;
-		private const int ArrowWidth = 26;
+		private const int WM_PAINT = 0x000F;
+		private const int WM_PRINT = 0x0317;
+		private const int WM_PRINT_CLIENT = 0x0318;
+		private const int ARROW_WIDTH = 28;
 
 		public StudioSelector()
 		{
@@ -19,17 +26,21 @@ namespace RSMods.Audio
 		protected override void WndProc(ref Message message)
 		{
 			base.WndProc(ref message);
-			if (message.Msg != WmPaint || !IsHandleCreated)
+			if ((message.Msg != WM_PAINT && message.Msg != WM_PRINT && message.Msg != WM_PRINT_CLIENT) || !IsHandleCreated)
 				return;
-			using (var canvas = Graphics.FromHwnd(Handle))
+			using (var canvas = message.Msg == WM_PAINT ? Graphics.FromHwnd(Handle) : Graphics.FromHdc(message.WParam))
 			{
+				Color field = Enabled ? StudioTheme.Field : StudioTheme.Blend(StudioTheme.Field, StudioTheme.Surface, 0.5);
+				using (var brush = new SolidBrush(field))
+					canvas.FillRectangle(brush, 0, 0, Width, Height);
+				string text = SelectedItem?.ToString() ?? Text ?? "";
+				TextRenderer.DrawText(canvas, text, Font, new Rectangle(8, 0, Width - ARROW_WIDTH - 12, Height),
+					Enabled ? StudioTheme.Ink : StudioTheme.Faint,
+					TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 				canvas.SmoothingMode = SmoothingMode.AntiAlias;
-				var arrow = new Rectangle(Width - ArrowWidth, 1, ArrowWidth - 2, Height - 2);
-				using (var brush = new SolidBrush(StudioTheme.Field))
-					canvas.FillRectangle(brush, arrow);
 				using (var pen = new Pen(Enabled ? StudioTheme.Muted : StudioTheme.Faint, 1.8f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
 				{
-					float centre = arrow.X + arrow.Width / 2f;
+					float centre = Width - ARROW_WIDTH / 2f;
 					float middle = Height / 2f;
 					canvas.DrawLines(pen, new[]
 					{
@@ -37,7 +48,9 @@ namespace RSMods.Audio
 					});
 				}
 				canvas.SmoothingMode = SmoothingMode.None;
-				using (var pen = new Pen(Focused ? StudioTheme.Blend(StudioTheme.Line, StudioTheme.Accent, 0.7) : StudioTheme.Line, 2))
+				using (var pen = new Pen(StudioTheme.Line))
+					canvas.DrawLine(pen, Width - ARROW_WIDTH, 1, Width - ARROW_WIDTH, Height - 2);
+				using (var pen = new Pen(Focused ? StudioTheme.Accent : StudioTheme.Line))
 					canvas.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
 			}
 		}

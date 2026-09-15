@@ -9,11 +9,13 @@ namespace RSMods.Audio
 {
 	internal sealed class WindowCaptureRecorder : IDisposable
 	{
-		private const uint FramesPerSecond = 30;
-		private const uint BitsPerSecond = 12000000;
-		private const long MaximumDriftTicks = 30 * TimeSpan.TicksPerSecond;
-		private string videoPath;
-		private bool capturing;
+		private const uint FRAMES_PER_SECOND = 30;
+		private const uint BITS_PER_SECOND = 12000000;
+		private const long MAXIMUM_DRIFT_TICKS = 30 * TimeSpan.TicksPerSecond;
+		private const int ERROR_EMPTY = unchecked((int)0x800700FE);
+		private const int ERROR_NOT_SUPPORTED = unchecked((int)0x80070032);
+
+		public string RetainedVideoPath => videoPath;
 
 		public static bool Supported
 		{
@@ -35,6 +37,9 @@ namespace RSMods.Audio
 			get { return capturing; }
 		}
 
+		private string videoPath;
+		private bool capturing;
+
 		public Task StartAsync(int gameProcessId, string directory)
 		{
 			if (capturing)
@@ -45,7 +50,7 @@ namespace RSMods.Audio
 					throw new InvalidOperationException("Rocksmith has no capture window.");
 				Directory.CreateDirectory(directory);
 				videoPath = Path.Combine(directory, "Rocksmith-video-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N") + ".mp4");
-				Check(RsCaptureStart(game.MainWindowHandle, videoPath, BitsPerSecond, FramesPerSecond), "Video capture could not start");
+				Check(RsCaptureStart(game.MainWindowHandle, videoPath, BITS_PER_SECOND, FRAMES_PER_SECOND), "Video capture could not start");
 				capturing = true;
 			}
 			return Task.FromResult(true);
@@ -59,13 +64,13 @@ namespace RSMods.Audio
 			ulong startFileTime;
 			ulong frames;
 			int stopped = RsCaptureStop(out startFileTime, out frames);
-			if (stopped == ErrorEmpty)
+			if (stopped == ERROR_EMPTY)
 				throw new IOException("No frames were captured. Play in a visible window and try the take again.");
 			Check(stopped, "Video capture failed");
 			if (audio == null || audio.RecordingStarted == 0 || audio.Frames == 0 || !File.Exists(audio.FilePath))
 				throw new IOException("No game audio was captured. The video file was retained.");
 			long offset = (long)audio.RecordingStarted - (long)startFileTime;
-			if (Math.Abs(offset) > MaximumDriftTicks)
+			if (Math.Abs(offset) > MAXIMUM_DRIFT_TICKS)
 				throw new IOException("Video and audio clocks did not agree. Separate take files were retained.");
 			string output = Path.ChangeExtension(audio.FilePath, ".mp4");
 			string video = videoPath;
@@ -88,10 +93,16 @@ namespace RSMods.Audio
 				capturing = false;
 				ulong startFileTime;
 				ulong frames;
-				RsCaptureStop(out startFileTime, out frames);
+				int result = RsCaptureStop(out startFileTime, out frames);
+				if (result < 0)
+				{
+					Trace.TraceError("Video finalization failed (0x" + result.ToString("X8", CultureInfo.InvariantCulture) + "). Source retained at " + videoPath);
+				}
 			}
-			Delete(videoPath);
-			videoPath = null;
+			if (!string.IsNullOrEmpty(videoPath))
+			{
+				Trace.TraceInformation("Video retained at " + videoPath);
+			}
 		}
 
 		private static void Delete(string path)
@@ -107,13 +118,10 @@ namespace RSMods.Audio
 		{
 			if (result >= 0)
 				return;
-			if (result == ErrorNotSupported)
+			if (result == ERROR_NOT_SUPPORTED)
 				throw new NotSupportedException(Requirement);
 			throw new IOException(message + " (0x" + result.ToString("X8", CultureInfo.InvariantCulture) + ").");
 		}
-
-		private static readonly int ErrorEmpty = unchecked((int)0x800700FE);
-		private static readonly int ErrorNotSupported = unchecked((int)0x80070032);
 
 		[DllImport("rswindowcapture.dll")]
 		private static extern int RsCaptureSupported();

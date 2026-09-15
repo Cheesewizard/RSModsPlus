@@ -7,6 +7,15 @@ namespace RSMods
 {
     class ReadSettings
     {
+		public const string NOTE_BY_NOTE_CUSTOM_COLOURS_IDENTIFIER = "NoteByNoteCustomColours = ";
+		public const string NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER = "NoteByNoteDetectionOverlay = ";
+		public const string NOTE_BY_NOTE_UI_SIZE_IDENTIFIER = "NoteByNoteUiSize = ";
+		public const string NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER = "NoteByNoteTargetSize = ";
+		public const string NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER = "NoteByNoteNeutralColor = ";
+		public const string NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER = "NoteByNoteConfirmedColor = ";
+		public const string NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER = "NoteByNotePartialColor = ";
+		public const string NOTE_BY_NOTE_REJECTED_COLOR_IDENTIFIER = "NoteByNoteRejectedColor = ";
+
         #region Setup Variables
         private static string
                              // Song Lists (ones that come without modifying the profile).
@@ -20,7 +29,7 @@ namespace RSMods
                              ToggleLoftKey, ShowSongTimerKey, ForceReEnumerationKey, RainbowStringsKey, RainbowNotesKey,
                              RemoveLyricsKey, RRSpeedKey, TuningOffsetKey, ToggleExtendedRangeKey, LoopStartKey, LoopEndKey,
                              RewindKey, DropPedalPitchDownKey, DropPedalPitchUpKey, DropPedalToggleKey,
-                             DropPedalBaseTuningKey,
+                             DropPedalBaseTuningKey, RecordingHotkey,
 
                              // Audio Key Bindings
                              MasterVolumeKey, SongVolumeKey, Player1VolumeKey, Player2VolumeKey, MicrophoneVolumeKey, VoiceOverVolumeKey, SFXVolumeKey, DisplayMixerKey, MutePlayer1Key, MutePlayer2Key,
@@ -36,7 +45,7 @@ namespace RSMods
                              DropPedalEnabled, DropPedalCustomOverlayColors,
                              DropPedalOverlayDownColor, DropPedalOverlayUpColor, DropPedalOverlayStatusColor,
                              DropPedalPlayer1AsioChannel, DropPedalPlayer2AsioChannel,
-                             ModernCableInput, MonitorOutput, AudioDiagnosticsOverlay,
+							 ModernCableInput, CableForPlayerTwo, MonitorOutput, AudioDiagnosticsOverlay,
 
 
                              // String Colors
@@ -49,7 +58,7 @@ namespace RSMods
 
                              // Mod Settings
                              ExtendedRangeTuning, CheckForNewSongInterval, RiffRepeaterSpeedInterval, TuningPedal, MidiTuningOffset,
-                             VolumeControlInterval, SecondaryMonitorXPosition, SecondaryMonitorYPosition, OverrideInputVolume, AlternativeOutputSampleRate, LoopingLeadUp,
+                             VolumeControlInterval, SecondaryMonitorXPosition, SecondaryMonitorYPosition, OverrideInputVolume, AsioInputGain, NoiseGateThreshold, CompressorStrength, HumFilter, RocksmithGateOverride, RocksmithGateThreshold, AudioBridgeLimiter, AudioBridgeLimiterLevel, AlternativeOutputSampleRate, LoopingLeadUp,
                              RewindBy, RewindLeadup, CustomNSPTimeLimit,
 
                              // Guitar Speak
@@ -104,6 +113,7 @@ namespace RSMods
             DropPedalPitchUpKeyIdentifier       = "DropPedalPitchUpKey = ",
             DropPedalToggleKeyIdentifier        = "DropPedalToggleKey = ",
             DropPedalBaseTuningKeyIdentifier    = "DropPedalBaseTuningKey = ",
+			RecordingHotkeyIdentifier               = "RecordingHotkey = ",
 
             // Audio Keybindings
             MasterVolumeKeyIdentifier           = "MasterVolumeKey = ",
@@ -183,8 +193,9 @@ namespace RSMods
             DropPedalOverlayStatusColorIdentifier        = "OverlayStatusColor = ",
             DropPedalPlayer1AsioChannelIdentifier        = "Player1AsioChannel = ",
             DropPedalPlayer2AsioChannelIdentifier        = "Player2AsioChannel = ",
-            ModernCableInputIdentifier                   = "ModernCableInput = ",
-            MonitorOutputIdentifier                      = "MonitorOutput = ",
+			ModernCableInputIdentifier                   = "ModernCableInput = ",
+			CableForPlayerTwoIdentifier                  = "CableForPlayerTwo = ",
+			MonitorOutputIdentifier                      = "MonitorOutput = ",
             AudioDiagnosticsOverlayIdentifier            = "AudioDiagnosticsOverlay = ",
 
                 // String Colors (Normal {N} & Colorblind {CB})
@@ -231,6 +242,14 @@ namespace RSMods
             SecondaryMonitorYPositionIdentifier     = "SecondaryMonitorYPosition = ",
             SeparateNoteColorsModeIdentifier        = "SeparateNoteColorsMode = ",
             OverrideInputVolumeIdentifier           = "OverrideInputVolume = ",
+            AsioInputGainIdentifier                 = "AsioInputGain = ",
+            NoiseGateThresholdIdentifier            = "NoiseGateThreshold = ",
+            CompressorStrengthIdentifier            = "CompressorStrength = ",
+            HumFilterIdentifier                     = "HumFilter = ",
+            RocksmithGateOverrideIdentifier         = "RocksmithGateOverride = ",
+            RocksmithGateThresholdIdentifier        = "RocksmithGateThreshold = ",
+            AudioBridgeLimiterIdentifier            = "AudioBridgeLimiter = ",
+            AudioBridgeLimiterLevelIdentifier       = "AudioBridgeLimiterLevel = ",
             AlternativeOutputSampleRateIdentifier   = "AlternativeOutputSampleRate = ",
             LoopingLeadUpIdentifier                 = "LoopingLeadUp = ",
             RewindByIdentifier                      = "RewindBy = ",
@@ -327,14 +346,44 @@ namespace RSMods
                 return "-1";
             if (identifierToGrab == DropPedalPlayer2AsioChannelIdentifier)
                 return "-1";
-            if (identifierToGrab == ModernCableInputIdentifier)
-                return "on";
+			if (identifierToGrab == ModernCableInputIdentifier)
+				return "on";
+			if (identifierToGrab == RecordingHotkeyIdentifier)
+				return "VK_F9";
+			if (identifierToGrab == CableForPlayerTwoIdentifier)
+				return "off";
             if (identifierToGrab == MonitorOutputIdentifier)
                 return "off";
             if (identifierToGrab == AudioDiagnosticsOverlayIdentifier)
                 return "on";
+			if (identifierToGrab == NOTE_BY_NOTE_CUSTOM_COLOURS_IDENTIFIER) return "off";
+            if (identifierToGrab == NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER) return "on";
+			if (identifierToGrab == NOTE_BY_NOTE_UI_SIZE_IDENTIFIER) return "100";
+			if (identifierToGrab == NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER) return "150";
+            if (identifierToGrab == NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER) return "FFFFFF";
+            if (identifierToGrab == NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER) return "55DD77";
+            if (identifierToGrab == NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER) return "FFAA44";
+            if (identifierToGrab == NOTE_BY_NOTE_REJECTED_COLOR_IDENTIFIER) return "FF5555";
             return string.Empty;
         }
+
+        // RSMods.ini values the audio bridge process owns and writes one line at a time (its
+        // WriteBridgeSetting). The main window's full-file save must not clobber them, so it re-reads
+        // exactly this list on activation (MainForm.SyncModernCableSettingFromDisk). A new bridge-owned
+        // setting is added HERE and nowhere else; the bridge asserts every write is on this list.
+        public static readonly string[] BridgeOwnedIdentifiers =
+        {
+            ModernCableInputIdentifier,
+            CableForPlayerTwoIdentifier,
+            AsioInputGainIdentifier,
+            NoiseGateThresholdIdentifier,
+            CompressorStrengthIdentifier,
+            AudioBridgeLimiterIdentifier,
+            AudioBridgeLimiterLevelIdentifier,
+            RecordingHotkeyIdentifier,
+			MonitorOutputIdentifier,
+			AudioDiagnosticsOverlayIdentifier,
+        };
 
         private static void VerifySettingsINI()
         {
@@ -430,6 +479,8 @@ namespace RSMods
                     return FillSettingVariable(DropPedalToggleKeyIdentifier, SettingType.VKEY, currentLine, out DropPedalToggleKey);
                 if (IdentifierIsFound(currentLine, DropPedalBaseTuningKeyIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalBaseTuningKeyIdentifier, SettingType.VKEY, currentLine, out DropPedalBaseTuningKey);
+				if (IdentifierIsFound(currentLine, RecordingHotkeyIdentifier, identifierToGrab))
+					return FillSettingVariable(RecordingHotkeyIdentifier, SettingType.VKEY, currentLine, out RecordingHotkey);
                 #endregion
                 #region Audio Keybindings
                 // Audio Keybindings
@@ -575,10 +626,28 @@ namespace RSMods
                     return FillSettingVariable(PreventMidSongPauseIdentifier, SettingType.ON_OFF, currentLine, out PreventMidSongPause);
                 if (IdentifierIsFound(currentLine, RemoveFingerprintsIdentifier, identifierToGrab))
                     return FillSettingVariable(RemoveFingerprintsIdentifier, SettingType.ON_OFF, currentLine, out RemoveFingerprints);
+				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_CUSTOM_COLOURS_IDENTIFIER, identifierToGrab))
+					return FillSettingVariable(NOTE_BY_NOTE_CUSTOM_COLOURS_IDENTIFIER, SettingType.ON_OFF, currentLine, out var noteByNoteCustomColours);
+                if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER, identifierToGrab))
+                    return FillSettingVariable(NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER, SettingType.ON_OFF, currentLine, out var noteByNoteDetectionOverlay);
+				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_UI_SIZE_IDENTIFIER, identifierToGrab))
+					return FillSettingVariable(NOTE_BY_NOTE_UI_SIZE_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteUiSize);
+				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER, identifierToGrab))
+					return FillSettingVariable(NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteTargetSize);
+                if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER, identifierToGrab))
+                    return FillSettingVariable(NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteNeutralColor);
+                if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER, identifierToGrab))
+                    return FillSettingVariable(NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteConfirmedColor);
+                if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER, identifierToGrab))
+                    return FillSettingVariable(NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNotePartialColor);
+                if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_REJECTED_COLOR_IDENTIFIER, identifierToGrab))
+                    return FillSettingVariable(NOTE_BY_NOTE_REJECTED_COLOR_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteRejectedColor);
                 if (IdentifierIsFound(currentLine, DropPedalEnabledIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalEnabledIdentifier, SettingType.ON_OFF, currentLine, out DropPedalEnabled);
-                if (IdentifierIsFound(currentLine, ModernCableInputIdentifier, identifierToGrab))
-                    return FillSettingVariable(ModernCableInputIdentifier, SettingType.ON_OFF, currentLine, out ModernCableInput);
+				if (IdentifierIsFound(currentLine, ModernCableInputIdentifier, identifierToGrab))
+					return FillSettingVariable(ModernCableInputIdentifier, SettingType.ON_OFF, currentLine, out ModernCableInput);
+				if (IdentifierIsFound(currentLine, CableForPlayerTwoIdentifier, identifierToGrab))
+					return FillSettingVariable(CableForPlayerTwoIdentifier, SettingType.ON_OFF, currentLine, out CableForPlayerTwo);
                 if (IdentifierIsFound(currentLine, MonitorOutputIdentifier, identifierToGrab))
                     return FillSettingVariable(MonitorOutputIdentifier, SettingType.ON_OFF, currentLine, out MonitorOutput);
                 if (IdentifierIsFound(currentLine, AudioDiagnosticsOverlayIdentifier, identifierToGrab))
@@ -677,6 +746,22 @@ namespace RSMods
                     return FillSettingVariable(SeparateNoteColorsModeIdentifier, SettingType.STRING, currentLine, out SeparateNoteColorsMode);
                 if (IdentifierIsFound(currentLine, OverrideInputVolumeIdentifier, identifierToGrab))
                     return FillSettingVariable(OverrideInputVolumeIdentifier, SettingType.STRING, currentLine, out OverrideInputVolume);
+                if (IdentifierIsFound(currentLine, AsioInputGainIdentifier, identifierToGrab))
+                    return FillSettingVariable(AsioInputGainIdentifier, SettingType.STRING, currentLine, out AsioInputGain);
+                if (IdentifierIsFound(currentLine, NoiseGateThresholdIdentifier, identifierToGrab))
+                    return FillSettingVariable(NoiseGateThresholdIdentifier, SettingType.STRING, currentLine, out NoiseGateThreshold);
+                if (IdentifierIsFound(currentLine, CompressorStrengthIdentifier, identifierToGrab))
+                    return FillSettingVariable(CompressorStrengthIdentifier, SettingType.STRING, currentLine, out CompressorStrength);
+                if (IdentifierIsFound(currentLine, HumFilterIdentifier, identifierToGrab))
+                    return FillSettingVariable(HumFilterIdentifier, SettingType.STRING, currentLine, out HumFilter);
+                if (IdentifierIsFound(currentLine, RocksmithGateOverrideIdentifier, identifierToGrab))
+                    return FillSettingVariable(RocksmithGateOverrideIdentifier, SettingType.STRING, currentLine, out RocksmithGateOverride);
+                if (IdentifierIsFound(currentLine, RocksmithGateThresholdIdentifier, identifierToGrab))
+                    return FillSettingVariable(RocksmithGateThresholdIdentifier, SettingType.STRING, currentLine, out RocksmithGateThreshold);
+                if (IdentifierIsFound(currentLine, AudioBridgeLimiterIdentifier, identifierToGrab))
+                    return FillSettingVariable(AudioBridgeLimiterIdentifier, SettingType.STRING, currentLine, out AudioBridgeLimiter);
+                if (IdentifierIsFound(currentLine, AudioBridgeLimiterLevelIdentifier, identifierToGrab))
+                    return FillSettingVariable(AudioBridgeLimiterLevelIdentifier, SettingType.STRING, currentLine, out AudioBridgeLimiterLevel);
                 if (IdentifierIsFound(currentLine, AlternativeOutputSampleRateIdentifier, identifierToGrab))
                     return FillSettingVariable(AlternativeOutputSampleRateIdentifier, SettingType.STRING, currentLine, out AlternativeOutputSampleRate);
                 if (IdentifierIsFound(currentLine, LoopingLeadUpIdentifier, identifierToGrab))

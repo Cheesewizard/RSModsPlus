@@ -1,5 +1,4 @@
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace RSMods.Audio
@@ -13,6 +12,7 @@ namespace RSMods.Audio
 		Info
 	}
 
+	/// <summary>Square status tag: a framed field with a colour bar on its left edge saying the tone.</summary>
 	internal sealed class StatusChip : Control
 	{
 		private ChipTone tone = ChipTone.Idle;
@@ -22,8 +22,7 @@ namespace RSMods.Audio
 			Font = StudioTheme.Small;
 			Height = 24;
 			Margin = new Padding(0, 3, 8, 3);
-			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
-			BackColor = Color.Transparent;
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 			Text = text;
 		}
 
@@ -47,26 +46,21 @@ namespace RSMods.Audio
 				if (base.Text == value)
 					return;
 				base.Text = value;
-				Width = TextRenderer.MeasureText(value ?? "", Font).Width + 34;
+				Width = TextRenderer.MeasureText(value ?? "", Font).Width + 26;
 				Invalidate();
 			}
 		}
 
 		protected override void OnPaint(PaintEventArgs e)
 		{
-			e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 			Color accent = ToneColor();
-			var bounds = new Rectangle(0, 0, Width - 1, Height - 1);
-			using (var path = StudioTheme.RoundedRectangle(bounds, Height / 2))
-			{
-				using (var brush = new SolidBrush(StudioTheme.Blend(StudioTheme.Surface, accent, 0.16)))
-					e.Graphics.FillPath(brush, path);
-				using (var pen = new Pen(StudioTheme.Blend(StudioTheme.Line, accent, 0.35)))
-					e.Graphics.DrawPath(pen, path);
-			}
-			using (var brush = new SolidBrush(accent))
-				e.Graphics.FillEllipse(brush, new Rectangle(10, Height / 2 - 3, 7, 7));
-			TextRenderer.DrawText(e.Graphics, Text, Font, new Rectangle(22, 0, Width - 28, Height),
+			using (var brush = new SolidBrush(StudioTheme.Blend(StudioTheme.Field, accent, tone == ChipTone.Idle ? 0.0 : 0.12)))
+				e.Graphics.FillRectangle(brush, 0, 0, Width, Height);
+			using (var pen = new Pen(StudioTheme.Blend(StudioTheme.Line, accent, tone == ChipTone.Idle ? 0.0 : 0.4)))
+				e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+			using (var brush = new SolidBrush(tone == ChipTone.Idle ? StudioTheme.Line : accent))
+				e.Graphics.FillRectangle(brush, 0, 0, 3, Height);
+			TextRenderer.DrawText(e.Graphics, Text, Font, new Rectangle(12, 0, Width - 16, Height),
 				tone == ChipTone.Idle ? StudioTheme.Muted : StudioTheme.Ink,
 				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 		}

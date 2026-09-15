@@ -17,6 +17,7 @@ namespace RSMods.Audio
 		{
 			View = View.Details;
 			OwnerDraw = true;
+			DoubleBuffered = true;
 			FullRowSelect = true;
 			MultiSelect = false;
 			HideSelection = false;
@@ -124,6 +125,17 @@ namespace RSMods.Audio
 		protected override void OnResize(EventArgs e)
 		{
 			base.OnResize(e);
+			ResizeColumns();
+		}
+
+		protected override void ScaleControl(SizeF factor, BoundsSpecified specified)
+		{
+			base.ScaleControl(factor, specified);
+			ResizeColumns();
+		}
+
+		private void ResizeColumns()
+		{
 			if (Columns.Count == 4)
 				Columns[0].Width = Math.Max(140, ClientSize.Width - Columns[1].Width - Columns[2].Width - Columns[3].Width - 4);
 		}
@@ -141,15 +153,16 @@ namespace RSMods.Audio
 
 		private void PaintRow(object sender, DrawListViewItemEventArgs args)
 		{
+			// Details cells paint their own backgrounds so a row repaint cannot erase other columns.
+		}
+
+		private void PaintCell(object sender, DrawListViewSubItemEventArgs args)
+		{
 			Color background = args.Item.Selected
 				? StudioTheme.Blend(StudioTheme.Field, StudioTheme.Accent, 0.38)
 				: args.ItemIndex % 2 == 0 ? StudioTheme.Field : StudioTheme.Shift(StudioTheme.Field, 5);
 			using (var brush = new SolidBrush(background))
 				args.Graphics.FillRectangle(brush, args.Bounds);
-		}
-
-		private void PaintCell(object sender, DrawListViewSubItemEventArgs args)
-		{
 			var text = new Rectangle(args.Bounds.X + 8, args.Bounds.Y, args.Bounds.Width - 16, args.Bounds.Height);
 			Color ink = args.ColumnIndex == 0 ? StudioTheme.Ink : StudioTheme.Muted;
 			TextRenderer.DrawText(args.Graphics, args.SubItem.Text, Font, text, args.Item.Selected ? Color.White : ink,

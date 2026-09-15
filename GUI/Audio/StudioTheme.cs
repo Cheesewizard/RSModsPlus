@@ -1,3 +1,4 @@
+using System;
 using System.Drawing;
 using System.Reflection;
 using System.Drawing.Drawing2D;
@@ -23,28 +24,41 @@ namespace RSMods.Audio
 		public static readonly Color Violet = Color.FromArgb(150, 132, 250);
 		public static readonly Color Teal = Color.FromArgb(70, 190, 205);
 		public static readonly Color Neutral = Color.FromArgb(45, 52, 66);
+		/// <summary>Header strip on framed panels (cards, list headers).</summary>
+		public static readonly Color Header = Color.FromArgb(32, 37, 47);
+
+		/// <summary>
+		/// Corner radius every studio shape is clamped to. 0 = square-cut frames everywhere: one switch, so
+		/// the whole window shares one edge language instead of each control choosing its own rounding.
+		/// </summary>
+		public const int CornerRadius = 0;
 
 		public static readonly Font Display = new Font("Segoe UI", 20F, FontStyle.Bold);
+		public static readonly Font Title = new Font("Segoe UI", 14F, FontStyle.Bold);
 		public static readonly Font Timecode = new Font("Consolas", 28F, FontStyle.Bold);
+		/// <summary>Monospace for live numbers (levels, percentages, dB) so digits line up and read as readouts.</summary>
+		public static readonly Font Mono = new Font("Consolas", 10.5F, FontStyle.Bold);
+		public static readonly Font MonoSmall = new Font("Consolas", 9F);
 		public static readonly Font Body = new Font("Segoe UI", 9.75F);
 		public static readonly Font Strong = new Font("Segoe UI", 9.75F, FontStyle.Bold);
 		public static readonly Font Small = new Font("Segoe UI", 8.25F);
 		public static readonly Font Readout = new Font("Segoe UI", 11F, FontStyle.Bold);
-		public static readonly Font SectionFont = new Font("Segoe UI", 8.25F, FontStyle.Bold);
+		public static readonly Font SectionFont = new Font("Segoe UI", 9F, FontStyle.Bold);
 
 		public static Label Text(string text)
 		{
 			return new Label { Text = text, AutoSize = true, UseMnemonic = false, Font = Body, ForeColor = Ink, Margin = new Padding(0, 4, 0, 4) };
 		}
 
+		/// <summary>Guidance under a control. Body size so it reads as copy rather than fine print; cards wrap it to their width.</summary>
 		public static Label Hint(string text)
 		{
-			return new Label { Text = text, AutoSize = true, UseMnemonic = false, Font = Small, ForeColor = Muted, MaximumSize = new Size(420, 0), Margin = new Padding(0, 2, 0, 6) };
+			return new Label { Text = text, AutoSize = true, UseMnemonic = false, Font = Body, ForeColor = Muted, Margin = new Padding(0, 4, 0, 6) };
 		}
 
 		public static Label Section(string text)
 		{
-			return new Label { Text = text.ToUpperInvariant(), AutoSize = true, UseMnemonic = false, Font = SectionFont, ForeColor = Faint, Margin = new Padding(0, 10, 0, 4) };
+			return new Label { Text = text.ToUpperInvariant(), AutoSize = true, UseMnemonic = false, Font = SectionFont, ForeColor = Muted, Margin = new Padding(0, 12, 0, 6) };
 		}
 
 		public static void StyleField(TextBox field)
@@ -56,6 +70,37 @@ namespace RSMods.Audio
 			field.Font = Body;
 			field.BorderStyle = BorderStyle.FixedSingle;
 			field.Margin = new Padding(0, 2, 0, 6);
+		}
+
+		/// <summary>Caption above a control inside a card row (the same small-caps voice as a section heading).</summary>
+		public static Label Caption(string text)
+		{
+			return new Label { Text = text.ToUpperInvariant(), AutoSize = true, UseMnemonic = false, Font = SectionFont, ForeColor = Faint, Margin = new Padding(0, 0, 0, 2) };
+		}
+
+		/// <summary>
+		/// Dark tooltips. The default ToolTip paints the light system bubble, which is the one place the
+		/// theme visibly broke on hover; owner-drawing it keeps the bubble in the studio colours.
+		/// </summary>
+		public static void StyleTips(ToolTip tips)
+		{
+			tips.OwnerDraw = true;
+			tips.BackColor = Elevated;
+			tips.ForeColor = Ink;
+			tips.Draw += (sender, args) =>
+			{
+				args.DrawBackground();
+				using (var pen = new Pen(Line))
+					args.Graphics.DrawRectangle(pen, 0, 0, args.Bounds.Width - 1, args.Bounds.Height - 1);
+				TextRenderer.DrawText(args.Graphics, args.ToolTipText, Body, args.Bounds, Ink,
+					TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+			};
+			tips.Popup += (sender, args) =>
+			{
+				var size = TextRenderer.MeasureText(tips.GetToolTip(args.AssociatedControl), Body, new Size(420, 0),
+					TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+				args.ToolTipSize = new Size(size.Width + 16, size.Height + 10);
+			};
 		}
 
 		public static void StyleSelector(ComboBox selector)
@@ -96,6 +141,7 @@ namespace RSMods.Audio
 
 		public static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)
 		{
+			radius = Math.Min(radius, CornerRadius);
 			int diameter = radius * 2;
 			var path = new GraphicsPath();
 			if (diameter <= 0 || bounds.Width <= diameter || bounds.Height <= diameter)

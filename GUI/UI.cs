@@ -176,12 +176,31 @@ namespace RSMods
 
         private void Startup_ReadIniOrCreateDefault() => WriteSettings.LoadSettingsFromINI();
 
-        private void Startup_InitWinForms()
+		private void Startup_InitWinForms()
+		{
+			InitializeComponent();
+			InitializeRsModsPlusPages();
+			AddProductVersionLabel();
+			Text = $"{Text}-{Assembly.GetExecutingAssembly().GetName().Version}"; // Show version number in the title of the application.
+		}
+
+        private void AddProductVersionLabel()
         {
-            InitializeComponent();
-            InitializeMlServiceControls();
-            AddAudioRoutingButton();
-            Text = $"{Text}-{Assembly.GetExecutingAssembly().GetName().Version}"; // Show version number in the title of the application.
+            var versionLabel = new Label
+            {
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+                AutoSize = false,
+                Font = new Font(Font, FontStyle.Bold),
+                Location = new Point(ClientSize.Width - 172, ClientSize.Height - 26),
+                Name = "label_ProductVersion",
+                Size = new Size(160, 18),
+                TabIndex = 100003,
+                Text = ProductInfo.DISPLAY_NAME,
+                TextAlign = ContentAlignment.MiddleRight
+            };
+
+            Controls.Add(versionLabel);
+            versionLabel.BringToFront();
         }
 
         private void Startup_FixLegacySonglistBug()
@@ -702,10 +721,8 @@ namespace RSMods
             }
 
             checkBox_DropPedal.Checked = ReadSettings.ProcessSettings(ReadSettings.DropPedalEnabledIdentifier) == "on";
-            checkBox_DropPedalCustomOverlayColors.Checked = ReadSettings.ProcessSettings(ReadSettings.DropPedalCustomOverlayColorsIdentifier) == "on";
-            DropPedalColors_Load();
+            LoadNoteByNoteControls();
 
-            checkBox_ModernCableInput.Checked = ReadSettings.ProcessSettings(ReadSettings.ModernCableInputIdentifier) == "on";
             checkBox_MonitorOutput.Checked = ReadSettings.ProcessSettings(ReadSettings.MonitorOutputIdentifier) == "on";
             checkBox_AudioDiagnosticsOverlay.Checked = ReadSettings.ProcessSettings(ReadSettings.AudioDiagnosticsOverlayIdentifier) != "off";
             RSModsPlus_RefreshAudioStatus(null, EventArgs.Empty);
@@ -726,7 +743,6 @@ namespace RSMods
             checkBox_RainbowNotes.Checked = ReadSettings.ProcessSettings(ReadSettings.RainbowNotesEnabledIdentifier) == "on";
             checkBox_WhammyFiveChordsMode.Checked = ReadSettings.ProcessSettings(ReadSettings.ChordsModeIdentifier) == "on";
             checkBox_ShowCurrentNote.Checked = ReadSettings.ProcessSettings(ReadSettings.ShowCurrentNoteOnScreenIdentifier) == "on";
-            checkBox_ModernCableInput.Checked = ReadSettings.ProcessSettings(ReadSettings.ModernCableInputIdentifier) != "off";
             checkBox_AudioDiagnosticsOverlay.Checked = ReadSettings.ProcessSettings(ReadSettings.AudioDiagnosticsOverlayIdentifier) == "on";
             RSModsPlus_RefreshAudioStatus(null, EventArgs.Empty);
             checkBox_CustomHighway.Checked = ReadSettings.ProcessSettings(ReadSettings.CustomHighwayColorsIdentifier) == "on";
@@ -917,6 +933,7 @@ namespace RSMods
 
             foreach (Control controlToChange in ControlList)
             {
+				if (controlToChange == tab_RSModsPlus || tab_RSModsPlus.Contains(controlToChange)) continue;
                 controlToChange.ForeColor = textColor;
 
                 if (controlToChange is Button)
@@ -1273,9 +1290,9 @@ namespace RSMods
             if (!AllowSaving)
                 return;
 
-
-            ASIO.WriteSettings.SaveChanges(identifierToChange, section, ChangedSettingValue, checkBox_ASIO_Output_Disabled.Checked, checkBox_ASIO_Input0_Disabled.Checked, checkBox_ASIO_Input1_Disabled.Checked, checkBox_ASIO_InputMic_Disabled.Checked);
-            SaveSettings_ShowLabel();
+			// RS_ASIO.ini is owned by RS_ASIO and by the user. RSMods only toggles the presence of
+			// RS_ASIO.dll and avrt.dll; all ASIO settings remain a manual configuration requirement.
+			return;
         }
 
         private void SaveSettings_Rocksmith_Middleware(string identifierToChange, string ChangedSettingValue)
@@ -2072,8 +2089,6 @@ namespace RSMods
 
         private void Save_DropPedalEnabled(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.DropPedalEnabledIdentifier, checkBox_DropPedal.Checked.ToString().ToLower());
 
-        private void Save_ModernCableInput(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.ModernCableInputIdentifier, checkBox_ModernCableInput.Checked ? "on" : "off");
-
         private void Save_MonitorOutput(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.MonitorOutputIdentifier, checkBox_MonitorOutput.Checked ? "on" : "off");
 
         private void Save_AudioDiagnosticsOverlay(object sender, EventArgs e) => SaveSettings_Save(ReadSettings.AudioDiagnosticsOverlayIdentifier, checkBox_AudioDiagnosticsOverlay.Checked ? "on" : "off");
@@ -2098,8 +2113,10 @@ namespace RSMods
 
                 bool running = System.Diagnostics.Process.GetProcessesByName("Rocksmith2014").Length > 0;
                 report.AppendLine("Rocksmith: " + (running ? "RUNNING" : "not running"));
-                report.AppendLine("RS_ASIO.dll: " + (File.Exists(Path.Combine(rsDir, "RS_ASIO.dll")) ? "present (RS_ASIO owns the input; modern cable input stands down)" : "absent (native cable path)"));
-                report.AppendLine("Modern cable input setting: " + (checkBox_ModernCableInput.Checked ? "on" : "off"));
+                report.AppendLine("RS_ASIO.dll: " + (File.Exists(Path.Combine(rsDir, "RS_ASIO.dll")) ? "present (input managed by RS_ASIO; standalone cable option unused)" : "absent (cable input; bridge ASIO output is independent)"));
+				SyncModernCableSettingFromDisk();
+				report.AppendLine("Standalone cable capture preference: " + (ReadSettings.ProcessSettings(ReadSettings.ModernCableInputIdentifier) == "off" ? "legacy shared" : "event-driven") + " (set in the audio bridge; used only without the bridge or RS_ASIO input).");
+				report.AppendLine("Audio bridge: uses its own cable capture, or RS_ASIO input when enabled. Output is selected separately in the bridge.");
 
                 string rocksmithIni = Path.Combine(rsDir, "Rocksmith.ini");
                 if (File.Exists(rocksmithIni))
@@ -2163,65 +2180,6 @@ namespace RSMods
             }
             int start = Math.Max(0, hits.Count - max);
             for (int i = start; i < hits.Count; i++) report.AppendLine("  " + hits[i]);
-        }
-
-        private void Save_DropPedalCustomOverlayColors(object sender, EventArgs e)
-        {
-            groupBox_DropPedalOverlayColors.Visible = checkBox_DropPedalCustomOverlayColors.Checked;
-            groupBox_DropPedal.Height = checkBox_DropPedalCustomOverlayColors.Checked ? 171 : 72;
-            SaveSettings_Save(ReadSettings.DropPedalCustomOverlayColorsIdentifier, checkBox_DropPedalCustomOverlayColors.Checked.ToString().ToLower());
-        }
-
-        private void DropPedalColors_Load()
-        {
-            DropPedalColors_LoadSwatch(textBox_DropPedalOverlayDownColor, ReadSettings.DropPedalOverlayDownColorIdentifier);
-            DropPedalColors_LoadSwatch(textBox_DropPedalOverlayUpColor, ReadSettings.DropPedalOverlayUpColorIdentifier);
-            DropPedalColors_LoadSwatch(textBox_DropPedalOverlayStatusColor, ReadSettings.DropPedalOverlayStatusColorIdentifier);
-        }
-
-        private void DropPedalColors_LoadSwatch(TextBox colorSwatch, string settingIdentifier)
-        {
-            colorSwatch.BackColor = ColorTranslator.FromHtml("#" + ReadSettings.ProcessSettings(settingIdentifier));
-        }
-
-        private void DropPedalColors_ChangeColor(object sender, EventArgs e)
-        {
-            TextBox colorSwatch;
-            string settingIdentifier;
-
-            if (sender == button_DropPedalOverlayDownColor)
-            {
-                colorSwatch = textBox_DropPedalOverlayDownColor;
-                settingIdentifier = ReadSettings.DropPedalOverlayDownColorIdentifier;
-            }
-            else if (sender == button_DropPedalOverlayUpColor)
-            {
-                colorSwatch = textBox_DropPedalOverlayUpColor;
-                settingIdentifier = ReadSettings.DropPedalOverlayUpColorIdentifier;
-            }
-            else if (sender == button_DropPedalOverlayStatusColor)
-            {
-                colorSwatch = textBox_DropPedalOverlayStatusColor;
-                settingIdentifier = ReadSettings.DropPedalOverlayStatusColorIdentifier;
-            }
-            else
-            {
-                throw new InvalidOperationException("Unknown Drop Pedal overlay colour control.");
-            }
-
-            using (ColorDialog colorDialog = new ColorDialog
-            {
-                AllowFullOpen = true,
-                ShowHelp = false,
-                Color = colorSwatch.BackColor
-            })
-            {
-                if (colorDialog.ShowDialog() != DialogResult.OK) return;
-
-                string colorHex = (colorDialog.Color.ToArgb() & 0x00ffffff).ToString("X6");
-                SaveSettings_Save(settingIdentifier, colorHex);
-                colorSwatch.BackColor = colorDialog.Color;
-            }
         }
 
         private void Save_ExtendedRange(object sender, EventArgs e)

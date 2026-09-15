@@ -5,22 +5,28 @@ using System.Windows.Forms;
 
 namespace RSMods.Audio
 {
+	/// <summary>
+	/// Horizontal output meter on the recording deck with a decibel readout. Runs its own 30 fps clock
+	/// so the bar keeps travelling between bridge polls; see <see cref="MeterMotion"/>.
+	/// </summary>
 	internal sealed class LevelMeter : Control
 	{
 		private const double FloorDecibels = -60.0;
 		private const int ReadoutWidth = 74;
 		private static readonly double[] Ticks = { -48, -36, -24, -12, -6 };
-		private double level;
-		private double hold;
-		private DateTime holdTaken = DateTime.MinValue;
+		private readonly MeterMotion motion = new MeterMotion();
+		private readonly Timer animation = new Timer { Interval = 33 };
 		private DateTime clipped = DateTime.MinValue;
+		private int paintedFill = -1;
+		private int paintedHold = -1;
+		private string paintedReadout;
 
 		public LevelMeter()
 		{
 			Height = 26;
 			Margin = new Padding(0, 6, 0, 6);
-			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
-			BackColor = Color.Transparent;
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+			animation.Tick += (sender, args) => Animate();
 		}
 
 		public bool IsClipping
@@ -30,24 +36,20 @@ namespace RSMods.Audio
 
 		public void SetLevel(int peak)
 		{
-			double target = Fraction(peak);
-			level = target > level ? target : level * 0.72 + target * 0.28;
+			motion.Feed(Fraction(peak));
 			if (peak >= 1000)
 				clipped = DateTime.UtcNow;
-			if (level >= hold || (DateTime.UtcNow - holdTaken).TotalSeconds > 1.2)
-			{
-				hold = level;
-				holdTaken = DateTime.UtcNow;
-			}
-			Invalidate();
+			if (!animation.Enabled)
+				animation.Start();
+			Animate();
 		}
 
 		public void Reset()
 		{
-			level = 0;
-			hold = 0;
+			animation.Stop();
+			motion.Reset();
 			clipped = DateTime.MinValue;
-			Invalidate();
+			InvalidateWhenMoved();
 		}
 
 		public static string Describe(int peak)
@@ -63,6 +65,29 @@ namespace RSMods.Audio
 				return 0;
 			double decibels = 20.0 * Math.Log10(Math.Min(1000, peak) / 1000.0);
 			return Math.Max(0, Math.Min(1, (decibels - FloorDecibels) / -FloorDecibels));
+		}
+
+		private void Animate()
+		{
+			motion.Advance();
+			if (!motion.IsMoving && !IsClipping)
+				animation.Stop();
+			InvalidateWhenMoved();
+		}
+
+		/// <summary>Repaints only when the fill, the peak line or the readout would look different.</summary>
+		private void InvalidateWhenMoved()
+		{
+			int width = Math.Max(0, Width - ReadoutWidth);
+			int fill = (int)Math.Round(motion.Level * width);
+			int hold = (int)Math.Round(motion.Hold * width);
+			string readout = IsClipping ? "CLIP" : Readout();
+			if (fill == paintedFill && hold == paintedHold && readout == paintedReadout)
+				return;
+			paintedFill = fill;
+			paintedHold = hold;
+			paintedReadout = readout;
+			Invalidate();
 		}
 
 		protected override void OnPaint(PaintEventArgs e)
@@ -83,20 +108,22 @@ namespace RSMods.Audio
 			}
 			var readout = new Rectangle(track.Right + 10, 0, ReadoutWidth - 10, Height);
 			bool clipping = IsClipping;
-			TextRenderer.DrawText(e.Graphics, clipping ? "CLIP" : Readout(), clipping ? StudioTheme.Strong : StudioTheme.Small, readout,
-				clipping ? StudioTheme.Record : level <= 0 ? StudioTheme.Faint : StudioTheme.Muted,
+			TextRenderer.DrawText(e.Graphics, clipping ? "CLIP" : Readout(), clipping ? StudioTheme.Mono : StudioTheme.MonoSmall, readout,
+				clipping ? StudioTheme.Record : motion.Level <= 0 ? StudioTheme.Faint : StudioTheme.Muted,
 				TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 		}
 
 		private string Readout()
 		{
-			if (level <= 0)
+			if (motion.Level <= 0)
 				return "silent";
-			return (FloorDecibels + level * -FloorDecibels).ToString("0.0") + " dB";
+			return (FloorDecibels + motion.Level * -FloorDecibels).ToString("0.0") + " dB";
 		}
 
 		private void DrawFill(Graphics graphics, Rectangle track)
 		{
+			double level = motion.Level;
+			double hold = motion.Hold;
 			if (level <= 0)
 				return;
 			var gradient = new Rectangle(track.X, track.Y, track.Width, track.Height);
@@ -127,6 +154,13 @@ namespace RSMods.Audio
 					graphics.DrawLine(pen, x, track.Y, x, track.Bottom);
 				}
 			}
+		}
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing)
+				animation.Dispose();
+			base.Dispose(disposing);
 		}
 	}
 }

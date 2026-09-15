@@ -13,8 +13,7 @@ namespace RSMods.Audio
 
 		public MuteButton()
 		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable | ControlStyles.SupportsTransparentBackColor, true);
-			BackColor = Color.Transparent;
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
 			Cursor = Cursors.Hand;
 			TabStop = true;
 			Size = new Size(52, 26);
@@ -110,7 +109,7 @@ namespace RSMods.Audio
 			Dock = DockStyle.Fill,
 			TextAlign = ContentAlignment.MiddleCenter,
 			ForeColor = StudioTheme.Ink,
-			Font = StudioTheme.Readout,
+			Font = StudioTheme.Mono,
 			UseMnemonic = false
 		};
 		private readonly Color tint;
@@ -124,7 +123,7 @@ namespace RSMods.Audio
 		{
 			Channel = channel;
 			tint = ChannelStyle.Tint(channel);
-			face = StudioTheme.Blend(StudioTheme.Elevated, tint, 0.07);
+			face = StudioTheme.Elevated;
 			glyph = ChannelStyle.Glyph(channel);
 			meter = withMeter ? new ChannelMeter { Dock = DockStyle.Fill, BackColor = face } : null;
 			Width = withMeter ? MasterWidth : NormalWidth;
@@ -276,8 +275,7 @@ namespace RSMods.Audio
 					canvas.DrawPath(pen, path);
 			}
 			using (var brush = new SolidBrush(StudioTheme.Blend(StudioTheme.Line, tint, available ? 0.85 : 0.0)))
-			using (var cap = StudioTheme.RoundedRectangle(new Rectangle(10, 0, Width - 21, 4), 2))
-				canvas.FillPath(brush, cap);
+				canvas.FillRectangle(brush, 0, 0, Width, 3);
 			base.OnPaint(args);
 		}
 	}

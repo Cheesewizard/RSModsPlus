@@ -59,14 +59,9 @@ namespace RSMods.Audio
 
 		public static Color Tint(MixerChannel channel)
 		{
-			switch (channel)
-			{
-				case MixerChannel.Master: return StudioTheme.Violet;
-				case MixerChannel.PlayerOne: return StudioTheme.Accent;
-				case MixerChannel.PlayerTwo: return StudioTheme.Positive;
-				case MixerChannel.Song: return StudioTheme.Warning;
-				default: return StudioTheme.Teal;
-			}
+			// One accent for every strip: the glyph and name identify the channel, the colour does not, so
+			// the mixer shares the palette of the other tabs instead of carrying its own rainbow.
+			return StudioTheme.Accent;
 		}
 
 		public static ChannelGlyph Glyph(MixerChannel channel)

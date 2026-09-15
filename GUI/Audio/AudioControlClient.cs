@@ -10,7 +10,12 @@ namespace RSMods.Audio
 	internal sealed class AudioControlStatus
 	{
 		public int MixerError { get; set; }
+		public bool IsDryInputReady { get; set; }
+		public bool IsDryRecording { get; set; }
 		public float[] Volumes { get; set; } = new float[7];
+		public float[] OutputPeak { get; set; } = new float[2];
+		public float[] OutputRms { get; set; } = new float[2];
+		public int ProxyInputMode { get; set; }
 
 		public int OutputError
 		{
@@ -68,7 +73,7 @@ namespace RSMods.Audio
 			{
 				await pipe.ConnectAsync(350);
 				var request = new byte[2056];
-				Buffer.BlockCopy(BitConverter.GetBytes(3u), 0, request, 0, 4);
+				Buffer.BlockCopy(BitConverter.GetBytes(6u), 0, request, 0, 4);
 				Buffer.BlockCopy(BitConverter.GetBytes(operation), 0, request, 4, 4);
 				Encoding.Unicode.GetBytes(value, 0, value.Length, request, 8);
 				var exchange = ExchangeAsync(pipe, request);
@@ -90,7 +95,7 @@ namespace RSMods.Audio
 		private static async Task<AudioControlStatus> ExchangeAsync(Stream pipe, byte[] request)
 		{
 			await pipe.WriteAsync(request, 0, request.Length);
-			var response = new byte[3144];
+			var response = new byte[3176];
 			int received = 0;
 			while (received < response.Length)
 			{
@@ -98,7 +103,7 @@ namespace RSMods.Audio
 				if (count == 0)
 					throw new IOException("The game closed the audio control connection.");
 				received += count;
-				if (received >= 4 && BitConverter.ToUInt32(response, 0) != 3)
+				if (received >= 4 && BitConverter.ToUInt32(response, 0) != 6)
 					throw new NotSupportedException("Audio bridge version mismatch. Use matching settings and game DLL builds, then restart Rocksmith.");
 			}
 			int result = BitConverter.ToInt32(response, 4);
@@ -111,11 +116,19 @@ namespace RSMods.Audio
 				IsRecording = BitConverter.ToUInt32(response, 16) != 0,
 				Peak = Math.Min(1000, (int)BitConverter.ToUInt32(response, 20)),
 				Frames = BitConverter.ToUInt64(response, 24),
-				FilePath = Encoding.Unicode.GetString(response, 32, 2048).TrimEnd('\0'),
-				EndpointId = Encoding.Unicode.GetString(response, 2080, 1024).TrimEnd('\0'),
+				// Cut C-strings at the first null. TrimEnd('\0') is not enough: a debug game build fills
+				// the unused tail of these fixed buffers with 0xFE (wcsncpy_s' secure fill), so bytes after
+				// the terminator are not zero and would otherwise leave garbage on the string.
+				FilePath = Encoding.Unicode.GetString(response, 32, 2048).Split('\0')[0],
+				EndpointId = Encoding.Unicode.GetString(response, 2080, 1024).Split('\0')[0],
 				RecordingStarted = BitConverter.ToUInt64(response, 3104),
 				MixerError = BitConverter.ToInt32(response, 3112),
-				Volumes = new[] { BitConverter.ToSingle(response, 3116), BitConverter.ToSingle(response, 3120), BitConverter.ToSingle(response, 3124), BitConverter.ToSingle(response, 3128), BitConverter.ToSingle(response, 3132), BitConverter.ToSingle(response, 3136), BitConverter.ToSingle(response, 3140) }
+				IsDryInputReady = BitConverter.ToUInt32(response, 3144) != 0,
+				IsDryRecording = BitConverter.ToUInt32(response, 3148) != 0,
+				Volumes = new[] { BitConverter.ToSingle(response, 3116), BitConverter.ToSingle(response, 3120), BitConverter.ToSingle(response, 3124), BitConverter.ToSingle(response, 3128), BitConverter.ToSingle(response, 3132), BitConverter.ToSingle(response, 3136), BitConverter.ToSingle(response, 3140) },
+				OutputPeak = new[] { BitConverter.ToSingle(response, 3152), BitConverter.ToSingle(response, 3156) },
+				OutputRms = new[] { BitConverter.ToSingle(response, 3160), BitConverter.ToSingle(response, 3164) },
+				ProxyInputMode = (int)BitConverter.ToUInt32(response, 3168)
 			};
 		}
 	}
