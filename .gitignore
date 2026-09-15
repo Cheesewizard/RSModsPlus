@@ -1,4 +1,9 @@
 # Project-specific files
+# Keep the persistent-input contract harness visible despite local scratch-test exclusions.
+!/Tests/PersistentInput/
+!/Tests/PersistentInput/persistent_tests.cpp
+!/Tests/PersistentInput/run.cmd
+!/Tests/PersistentInput/README.md
 xinput1_3.dll
 Tests/ShifterHarness/*.wav
 
@@ -317,3 +322,14 @@ docs/investigations/note-by-note-*.md
 # affects new/untracked docs going forward. Use `git add -f` to release one deliberately.
 docs/designs/
 docs/investigations/
+
+# MSYS/Cygwin crash dumps
+*.stackdump
+
+# Private research + local deployment backups (keep local, never commit)
+/private-debugging/
+/DeploymentBackups/
+
+# Local pre-release deploy staging folders and tool scratch output (never commit)
+/PreReleaseDeploy_*/
+/tmp/

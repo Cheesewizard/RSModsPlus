@@ -656,6 +656,9 @@
     <ClInclude Include="D3DOverlay.hpp">
       <Filter>D3D</Filter>
     </ClInclude>
+    <ClInclude Include="ProductVersion.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="Mods\Loft.hpp">
       <Filter>Mods\Headers</Filter>
     </ClInclude>

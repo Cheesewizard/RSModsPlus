@@ -14,6 +14,7 @@ foreach ($file in [IO.File]::ReadAllLines($References)) {
 $onnx=Join-Path $env:USERPROFILE '.nuget/packages/microsoft.ml.onnxruntime/1.24.4'
 Get-ChildItem (Join-Path $onnx 'runtimes/win-x64/native') -Filter '*.dll' | ForEach-Object { $files[$_.Name]=$_.FullName }
 $files['soxr.dll']=Join-Path $repo 'RSModsPlus/Native/bin/soxr.dll'
+$files['rswindowcapture.dll']=Join-Path $ProjectDirectory 'Native/bin/rswindowcapture.dll'
 $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 $installation=& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $version=Get-ChildItem (Join-Path $installation 'VC/Redist/MSVC') -Directory | Where-Object Name -Match '^\d' | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1

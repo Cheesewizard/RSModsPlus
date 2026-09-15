@@ -62,7 +62,7 @@ namespace RSMods
 			assemblies["RSModsPlus"] = libraryPath;
 			var library = Assembly.LoadFrom(libraryPath);
 			if (!string.Equals(library.Location, libraryPath, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("rsmodsplus.dll was loaded from an unexpected location.");
-			foreach (var name in new[] { "soxr.dll", "onnxruntime.dll" })
+			foreach (var name in new[] { "soxr.dll", "onnxruntime.dll", "rswindowcapture.dll" })
 			{
 				if (LoadLibraryEx(Path.Combine(DirectoryPath, name), IntPtr.Zero, 0x1100) == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot load bundled " + name);
 			}

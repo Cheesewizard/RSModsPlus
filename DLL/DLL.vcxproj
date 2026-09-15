@@ -34,6 +34,7 @@
     <ClCompile Include="Audio\MlStringFretReader.cpp" />
     <ClCompile Include="Audio\RawPitchVerifier.cpp" />
     <ClCompile Include="Audio\SharedOutput.cpp" />
+    <ClCompile Include="Audio\OutputTap.cpp" />
     <ClCompile Include="Audio\GameAudioRecorder.cpp" />
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp" />
     <ClCompile Include="Audio\SongShift\WwiseMusicHook.cpp">
@@ -215,6 +216,11 @@
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
+    <ClCompile Include="Mods\RocksmithGate.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
     <ClCompile Include="Mods\VolumeControl.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
@@ -315,6 +321,7 @@
       <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClInclude Include="Audio\AsioHook.hpp" />
+    <ClInclude Include="Audio\AsioBufferState.hpp" />
     <ClInclude Include="Audio\CaptureProcessingGate.hpp" />
     <ClInclude Include="Audio\CableInput.hpp" />
     <ClInclude Include="Audio\MlAudioExporter.hpp" />
@@ -324,7 +331,9 @@
     <ClInclude Include="Audio\MlFretDisplay.hpp" />
     <ClInclude Include="Audio\RawPitchVerifier.hpp" />
     <ClInclude Include="Audio\SharedOutput.hpp" />
+    <ClInclude Include="Audio\OutputTap.hpp" />
     <ClInclude Include="Audio\GameAudioRecorder.hpp" />
+    <ClInclude Include="Audio\DrySignalRecording.hpp" />
     <ClInclude Include="Audio\AudioPacketQueue.hpp" />
     <ClInclude Include="Audio\AudioControl.hpp" />
     <ClInclude Include="Audio\CaptureFormat.h" />
@@ -392,7 +401,10 @@
     <ClInclude Include="CC\Effects\HighwayScrollSpeedEffect.hpp" />
     <ClInclude Include="D3DInfo.h" />
     <ClInclude Include="D3DOverlay.hpp" />
+    <ClInclude Include="ProductVersion.hpp" />
     <ClInclude Include="Mods\DetectionFeedback.hpp" />
+    <ClInclude Include="Mods\ChordAttackGate.hpp" />
+    <ClInclude Include="Mods\ChordAttackConfirmation.hpp" />
     <ClInclude Include="OverlayToggles.hpp" />
     <ClInclude Include="PitchNames.hpp" />
     <ClInclude Include="D3D\GdiplusManager.hpp" />
@@ -416,6 +428,7 @@
     <ClInclude Include="Mods\RiffRepeater.hpp" />
     <ClInclude Include="Mods\TrueTuning.hpp" />
     <ClInclude Include="Mods\VoiceOverControl.hpp" />
+    <ClInclude Include="Mods\RocksmithGate.hpp" />
     <ClInclude Include="Mods\VolumeControl.hpp" />
     <ClInclude Include="Mods\DropPedal\DropPedal.hpp" />
     <ClInclude Include="Mods\DropPedal\DropPedalHooks.hpp" />
@@ -919,7 +932,10 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(SolutionDir)Installer\Resources\xinput1_3.dll" />
     <Copy SourceFiles="$(OutDir)$(TargetName).pdb" DestinationFiles="$(SolutionDir)Installer\Resources\xinput1_3.pdb" Condition="Exists('$(OutDir)$(TargetName).pdb')" />
   </Target>
-  <Target Name="DeployToRocksmith" AfterTargets="Build" Condition="Exists('$(RocksmithInstallDir)') And '$(Configuration)' != 'Release Public'">
+  <!-- What this project ships into the game folder. The shared DeployToGame.targets (repo root) copies
+       these after EVERY build, parking a locked live file as .previous first, so the host, the proxy
+       driver and the GUI can never drift apart. Skip with -p:DeployToGame=false. -->
+  <Target Name="CollectGameDeployFiles" BeforeTargets="DeployToGame">
     <PropertyGroup>
       <!-- Anchored to this project file, NOT $(SolutionDir): building DLL.vcxproj directly
            (msbuild on the project, no solution) leaves SolutionDir unset and the old path
@@ -932,11 +948,13 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
       <NoteByNoteProbeOutput>$(MSBuildThisFileDirectory)..\Installer\Resources\RSModsResearch\$(Configuration)\NoteByNoteProbe.dll</NoteByNoteProbeOutput>
     </PropertyGroup>
     <Error Condition="!Exists('$(NoteByNoteProbeOutput)')" Text="Cannot deploy the RSMods build because the Note by Note probe output is missing: $(NoteByNoteProbeOutput)" />
-    <MakeDir Directories="$(RocksmithInstallDir)\RSModsResearch" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(RocksmithInstallDir)\xinput1_3.dll" />
-    <Copy SourceFiles="$(NoteByNoteProbeOutput)" DestinationFiles="$(RocksmithInstallDir)\RSModsResearch\NoteByNoteProbe.dll" />
+    <ItemGroup>
+      <GameDeployFile Include="$(TargetPath)" Destination="$(RocksmithInstallDir)\xinput1_3.dll" />
+      <GameDeployFile Include="$(NoteByNoteProbeOutput)" Destination="$(RocksmithInstallDir)\RSModsResearch\NoteByNoteProbe.dll" />
+    </ItemGroup>
   </Target>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(MSBuildThisFileDirectory)..\DeployToGame.targets" />
   <ImportGroup Label="ExtensionTargets">
     <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
   </ImportGroup>
@@ -954,5 +972,14 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     <ClCompile><PreprocessorDefinitions>RSMODS_AUDIO_LIFECYCLE_TRACE;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup><ClInclude Include="Audio\AudioLifecycleTrace.hpp" /></ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Audio\PersistentCapture.cpp" />
+    <ClCompile Include="Audio\PersistentDevice.cpp" />
+    <ClInclude Include="Audio\PersistentInput.hpp" />
+    <ClInclude Include="Audio\PersistentCapture.hpp" />
+    <ClInclude Include="Audio\PersistentVolume.hpp" />
+    <ClInclude Include="Audio\OutputBackend.hpp" />
+    <ClInclude Include="Audio\OutputRateMatcher.hpp" />
+  </ItemGroup>
 </Project>
 

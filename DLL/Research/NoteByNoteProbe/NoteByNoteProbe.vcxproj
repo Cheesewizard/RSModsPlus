@@ -81,6 +81,7 @@
     <ClCompile Include="..\..\Mods\NoteByNoteNativeScoring.cpp" />
     <ClCompile Include="..\..\Mods\ResearchProbeRuntime.cpp" />
     <ClCompile Include="NoteByNoteResearchProbe.cpp" />
+    <ClCompile Include="RawPitchVerifierProbeStub.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\Mods\NoteByNoteNativeScoring.hpp" />
