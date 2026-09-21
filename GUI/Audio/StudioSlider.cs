@@ -30,7 +30,7 @@ namespace RSMods.Audio
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
 			TabStop = true;
-			Height = 30;
+			Height = 36;
 			Width = 300;
 			Cursor = Cursors.Hand;
 			AccessibleRole = AccessibleRole.Slider;

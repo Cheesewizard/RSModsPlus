@@ -51,6 +51,7 @@
   </PropertyGroup>
   <PropertyGroup>
     <ApplicationIcon>Assets\LogoX256.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <PropertyGroup />
   <PropertyGroup>
@@ -141,6 +142,7 @@
     <Compile Include="Twitch\TwitchSettings.cs" />
     <Compile Include="Twitch\Auth\WebServer.cs" />
     <Compile Include="Audio\AudioRoutingPanel.cs" />
+    <Compile Include="Audio\ResponsiveColumns.cs" />
     <Compile Include="Audio\MixerStrip.cs" />
     <Compile Include="Audio\MixerGroup.cs" />
     <Compile Include="Audio\MixerChannels.cs" />
@@ -156,6 +158,7 @@
     <Compile Include="Audio\SegmentedControl.cs" />
 	<Compile Include="Audio\RockerToggle.cs" />
     <Compile Include="Audio\StudioCard.cs" />
+    <Compile Include="Audio\StudioExpander.cs" />
     <Compile Include="Audio\LevelMeter.cs" />
     <Compile Include="Audio\TakeList.cs" />
     <Compile Include="Audio\StudioFormat.cs" />
@@ -170,6 +173,7 @@
     <Compile Include="Audio\StudioCheck.cs" />
     <Compile Include="Audio\StudioNumber.cs" />
     <Compile Include="UI.AudioRouting.cs" />
+    <Compile Include="UI.AudioBridgeSetup.cs" />
     <Compile Include="UI.NoteByNote.cs" />
     <Compile Include="UI.RSModsPlus.cs" />
     <Compile Include="Controls\ColourWheel.cs" />
@@ -251,6 +255,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
+    <None Include="app.manifest" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Assets\LogoX256.ico" />

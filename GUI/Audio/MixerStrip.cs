@@ -89,8 +89,8 @@ namespace RSMods.Audio
 	/// <summary>One console channel: icon, name, fader, level readout and mute. The master strip also carries an output meter.</summary>
 	internal sealed class MixerStrip : UserControl
 	{
-		public const int NormalWidth = 88;
-		public const int MasterWidth = 122;
+		public const int NormalWidth = 108;
+		public const int MasterWidth = 132;
 
 		public MixerChannel Channel { get; }
 
@@ -109,7 +109,7 @@ namespace RSMods.Audio
 			Dock = DockStyle.Fill,
 			TextAlign = ContentAlignment.MiddleCenter,
 			ForeColor = StudioTheme.Ink,
-			Font = StudioTheme.Mono,
+			Font = StudioTheme.Readout,
 			UseMnemonic = false
 		};
 		private readonly Color tint;
@@ -143,7 +143,7 @@ namespace RSMods.Audio
 
 			var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Margin = new Padding(0), BackColor = face };
 			layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-			layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+			layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
 			layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 			layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
 			layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
@@ -256,10 +256,16 @@ namespace RSMods.Audio
 			var canvas = args.Graphics;
 			canvas.SmoothingMode = SmoothingMode.AntiAlias;
 			Color live = available ? tint : StudioTheme.Faint;
-			ChannelStyle.Draw(canvas, glyph, new PointF(host.Width / 2f - 11, 0), 0.92f, live);
-			TextRenderer.DrawText(canvas, ChannelStyle.Name(Channel), StudioTheme.Small,
-				new Rectangle(0, 26, host.Width, 18), available ? StudioTheme.Ink : StudioTheme.Faint,
-				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+			ChannelStyle.Draw(canvas, glyph, new PointF(host.Width / 2f - 11, 1), 0.92f, live);
+			TextRenderer.DrawText(canvas, ChannelStyle.Name(Channel), StudioTheme.Body,
+				new Rectangle(2, 29, host.Width - 4, 23), available ? StudioTheme.Ink : StudioTheme.Faint,
+				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+		}
+
+		protected override void OnPaintBackground(PaintEventArgs args)
+		{
+			using (var brush = new SolidBrush(Parent?.BackColor ?? StudioTheme.Background))
+				args.Graphics.FillRectangle(brush, ClientRectangle);
 		}
 
 		protected override void OnPaint(PaintEventArgs args)

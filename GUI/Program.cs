@@ -146,16 +146,22 @@ namespace RSMods
 					return;
 				}
 
-				if ((arguments.Length != 2 && arguments.Length != 4)
+				if ((arguments.Length != 2 && arguments.Length != 4 && arguments.Length != 5)
 					|| !System.IO.Path.IsPathRooted(arguments[1]) || !System.IO.Directory.Exists(arguments[1]))
 					throw new ArgumentException("Audio bridge requires an existing absolute game directory.");
 
 				var rocksmithProcessId = 0;
-				if (arguments.Length == 4
+				if (arguments.Length >= 4
 					&& (arguments[2] != "--rocksmith-pid" || !int.TryParse(arguments[3], out rocksmithProcessId) || rocksmithProcessId <= 0))
 					throw new ArgumentException("Background Audio Bridge requires a valid Rocksmith process ID.");
+				var showWindow = arguments.Length == 5 && arguments[4] == "--show";
+				if (arguments.Length == 5 && !showWindow)
+					throw new ArgumentException("Unknown Audio Bridge launch option.");
 
-				Application.Run(new Audio.AudioRoutingWindow(System.IO.Path.GetFullPath(arguments[1]), rocksmithProcessId));
+				Application.Run(new Audio.AudioRoutingWindow(
+					System.IO.Path.GetFullPath(arguments[1]),
+					rocksmithProcessId,
+					showWindow));
 			}
 		}
 

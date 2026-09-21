@@ -13,11 +13,11 @@ namespace RSMods.Audio
 				throw new ArgumentException("A group title is required.", nameof(title));
 			if (strips == null || strips.Length == 0)
 				throw new ArgumentException("A group needs at least one strip.", nameof(strips));
-			BackColor = StudioTheme.Surface;
+			BackColor = StudioTheme.Background;
 			Margin = new Padding(0);
 			Dock = DockStyle.Fill;
 
-			var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = strips.Length, RowCount = 1, Margin = new Padding(0), BackColor = StudioTheme.Surface };
+			var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = strips.Length, RowCount = 1, Margin = new Padding(0, 8, 0, 0), BackColor = StudioTheme.Background };
 			int width = 0;
 			foreach (var strip in strips)
 			{
@@ -33,14 +33,15 @@ namespace RSMods.Audio
 
 			var heading = new Label
 			{
-				Text = title.ToUpperInvariant(),
+				Text = title,
 				Dock = DockStyle.Top,
-				Height = 22,
+				Height = 28,
 				Font = StudioTheme.SectionFont,
 				ForeColor = StudioTheme.Faint,
-				TextAlign = ContentAlignment.MiddleCenter,
+				TextAlign = ContentAlignment.MiddleLeft,
+				Padding = new Padding(8, 0, 0, 0),
 				UseMnemonic = false,
-				BackColor = StudioTheme.Surface
+				BackColor = StudioTheme.Background
 			};
 
 			Controls.Add(layout);

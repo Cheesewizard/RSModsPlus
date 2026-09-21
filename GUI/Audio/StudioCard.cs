@@ -10,7 +10,7 @@ namespace RSMods.Audio
 	/// </summary>
 	internal sealed class StudioCard : Panel
 	{
-		public const int HeaderHeight = 30;
+		public const int HeaderHeight = 38;
 		private readonly TableLayoutPanel body;
 		private readonly List<Label> wrapLabels = new List<Label>();
 		private readonly string title;
@@ -19,9 +19,9 @@ namespace RSMods.Audio
 		{
 			this.title = title;
 			BackColor = StudioTheme.Surface;
-			int top = string.IsNullOrEmpty(title) ? 14 : HeaderHeight + 12;
-			Padding = new Padding(17, top, 17, 14);
-			Margin = new Padding(0, 0, 0, 12);
+			int top = string.IsNullOrEmpty(title) ? 16 : HeaderHeight + 14;
+			Padding = new Padding(18, top, 18, 16);
+			Margin = new Padding(0, 0, 0, 16);
 			AutoSize = !stretch;
 			AutoSizeMode = AutoSizeMode.GrowAndShrink;
 			SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
@@ -72,22 +72,32 @@ namespace RSMods.Audio
 			ApplyWrapWidth();
 		}
 
+		protected override void OnPaintBackground(PaintEventArgs e)
+		{
+			using (var brush = new SolidBrush(Parent?.BackColor ?? StudioTheme.Background))
+				e.Graphics.FillRectangle(brush, ClientRectangle);
+		}
+
 		protected override void OnPaint(PaintEventArgs e)
 		{
-			base.OnPaint(e);
 			var canvas = e.Graphics;
+			canvas.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+			using (var path = StudioTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), StudioTheme.CornerRadius))
+			{
+				using (var brush = new SolidBrush(StudioTheme.Surface))
+					canvas.FillPath(brush, path);
+				using (var pen = new Pen(StudioTheme.Line))
+					canvas.DrawPath(pen, path);
+			}
 			if (!string.IsNullOrEmpty(title))
 			{
-				using (var brush = new SolidBrush(StudioTheme.Header))
-					canvas.FillRectangle(brush, 1, 1, Width - 2, HeaderHeight);
 				using (var pen = new Pen(StudioTheme.Line))
-					canvas.DrawLine(pen, 1, HeaderHeight, Width - 2, HeaderHeight);
-				TextRenderer.DrawText(canvas, title.ToUpperInvariant(), StudioTheme.SectionFont,
-					new Rectangle(16, 1, Width - 32, HeaderHeight), StudioTheme.Ink,
+					canvas.DrawLine(pen, 18, HeaderHeight, Width - 19, HeaderHeight);
+				TextRenderer.DrawText(canvas, title, StudioTheme.Strong,
+					new Rectangle(18, 1, Width - 36, HeaderHeight - 1), StudioTheme.Ink,
 					TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
 			}
-			using (var pen = new Pen(StudioTheme.Line))
-				canvas.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+			base.OnPaint(e);
 		}
 	}
 }

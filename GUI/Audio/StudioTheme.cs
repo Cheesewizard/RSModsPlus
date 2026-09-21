@@ -8,42 +8,54 @@ namespace RSMods.Audio
 {
 	internal static class StudioTheme
 	{
-		public static readonly Color Background = Color.FromArgb(18, 20, 26);
-		public static readonly Color Surface = Color.FromArgb(27, 31, 39);
-		public static readonly Color Elevated = Color.FromArgb(35, 40, 50);
-		public static readonly Color Well = Color.FromArgb(13, 15, 20);
-		public static readonly Color Field = Color.FromArgb(36, 41, 52);
-		public static readonly Color Line = Color.FromArgb(48, 55, 68);
+		public static readonly Color Background = Color.FromArgb(12, 18, 28);
+		public static readonly Color Surface = Color.FromArgb(20, 29, 42);
+		public static readonly Color Elevated = Color.FromArgb(29, 40, 56);
+		public static readonly Color Well = Color.FromArgb(8, 13, 21);
+		public static readonly Color Field = Color.FromArgb(31, 45, 63);
+		public static readonly Color Line = Color.FromArgb(57, 73, 94);
 		public static readonly Color Ink = Color.FromArgb(233, 237, 243);
-		public static readonly Color Muted = Color.FromArgb(156, 166, 180);
-		public static readonly Color Faint = Color.FromArgb(110, 120, 134);
+		public static readonly Color Muted = Color.FromArgb(174, 187, 203);
+		public static readonly Color Faint = Color.FromArgb(126, 143, 163);
 		public static readonly Color Record = Color.FromArgb(233, 76, 82);
 		public static readonly Color Positive = Color.FromArgb(60, 205, 140);
 		public static readonly Color Warning = Color.FromArgb(240, 172, 52);
-		public static readonly Color Accent = Color.FromArgb(82, 145, 250);
+		public static readonly Color Accent = Color.FromArgb(88, 168, 255);
 		public static readonly Color Violet = Color.FromArgb(150, 132, 250);
 		public static readonly Color Teal = Color.FromArgb(70, 190, 205);
-		public static readonly Color Neutral = Color.FromArgb(45, 52, 66);
+		public static readonly Color Neutral = Color.FromArgb(48, 64, 84);
 		/// <summary>Header strip on framed panels (cards, list headers).</summary>
-		public static readonly Color Header = Color.FromArgb(32, 37, 47);
+		public static readonly Color Header = Color.FromArgb(24, 35, 50);
 
 		/// <summary>
 		/// Corner radius every studio shape is clamped to. 0 = square-cut frames everywhere: one switch, so
 		/// the whole window shares one edge language instead of each control choosing its own rounding.
 		/// </summary>
-		public const int CornerRadius = 0;
+		public const int CornerRadius = 10;
 
-		public static readonly Font Display = new Font("Segoe UI", 20F, FontStyle.Bold);
-		public static readonly Font Title = new Font("Segoe UI", 14F, FontStyle.Bold);
-		public static readonly Font Timecode = new Font("Consolas", 28F, FontStyle.Bold);
-		/// <summary>Monospace for live numbers (levels, percentages, dB) so digits line up and read as readouts.</summary>
-		public static readonly Font Mono = new Font("Consolas", 10.5F, FontStyle.Bold);
-		public static readonly Font MonoSmall = new Font("Consolas", 9F);
-		public static readonly Font Body = new Font("Segoe UI", 9.75F);
-		public static readonly Font Strong = new Font("Segoe UI", 9.75F, FontStyle.Bold);
-		public static readonly Font Small = new Font("Segoe UI", 8.25F);
-		public static readonly Font Readout = new Font("Segoe UI", 11F, FontStyle.Bold);
-		public static readonly Font SectionFont = new Font("Segoe UI", 9F, FontStyle.Bold);
+		private static readonly string UiFont = ResolveUiFont();
+		public static readonly Font PageTitle = new Font(UiFont, 20F, FontStyle.Bold);
+		public static readonly Font Display = new Font(UiFont, 20F, FontStyle.Regular);
+		public static readonly Font Title = new Font(UiFont, 14F, FontStyle.Bold);
+		public static readonly Font Timecode = new Font(UiFont, 28F, FontStyle.Regular);
+		public static readonly Font Mono = new Font(UiFont, 10.5F, FontStyle.Regular);
+		public static readonly Font MonoSmall = new Font(UiFont, 9F, FontStyle.Regular);
+		public static readonly Font Body = new Font(UiFont, 9.75F, FontStyle.Regular);
+		public static readonly Font Strong = new Font(UiFont, 9.75F, FontStyle.Bold);
+		public static readonly Font Small = new Font(UiFont, 8.75F, FontStyle.Regular);
+		public static readonly Font Readout = new Font(UiFont, 11F, FontStyle.Bold);
+		public static readonly Font SectionFont = new Font(UiFont, 9F, FontStyle.Bold);
+
+		private static string ResolveUiFont()
+		{
+			using (var fonts = new System.Drawing.Text.InstalledFontCollection())
+			{
+				foreach (var family in fonts.Families)
+					if (string.Equals(family.Name, "Segoe UI Variable", StringComparison.OrdinalIgnoreCase))
+						return family.Name;
+			}
+			return "Segoe UI";
+		}
 
 		public static Label Text(string text)
 		{
@@ -58,7 +70,7 @@ namespace RSMods.Audio
 
 		public static Label Section(string text)
 		{
-			return new Label { Text = text.ToUpperInvariant(), AutoSize = true, UseMnemonic = false, Font = SectionFont, ForeColor = Muted, Margin = new Padding(0, 12, 0, 6) };
+			return new Label { Text = text, AutoSize = true, UseMnemonic = false, Font = SectionFont, ForeColor = Muted, Margin = new Padding(0, 12, 0, 6) };
 		}
 
 		public static void StyleField(TextBox field)
@@ -75,7 +87,7 @@ namespace RSMods.Audio
 		/// <summary>Caption above a control inside a card row (the same small-caps voice as a section heading).</summary>
 		public static Label Caption(string text)
 		{
-			return new Label { Text = text.ToUpperInvariant(), AutoSize = true, UseMnemonic = false, Font = SectionFont, ForeColor = Faint, Margin = new Padding(0, 0, 0, 2) };
+			return new Label { Text = text, AutoSize = true, UseMnemonic = false, Font = SectionFont, ForeColor = Faint, Margin = new Padding(0, 0, 0, 2) };
 		}
 
 		/// <summary>

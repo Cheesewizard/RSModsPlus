@@ -383,7 +383,8 @@ namespace RSMods
             RecordingHotkeyIdentifier,
 			MonitorOutputIdentifier,
 			AudioDiagnosticsOverlayIdentifier,
-        };
+			NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER,
+		};
 
         private static void VerifySettingsINI()
         {

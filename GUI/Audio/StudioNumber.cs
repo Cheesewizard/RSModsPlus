@@ -30,6 +30,7 @@ namespace RSMods.Audio
 			TextAlign = HorizontalAlignment.Center;
 			BorderStyle = BorderStyle.FixedSingle;
 			Width = 84;
+			Height = 36;
 			Margin = new Padding(10, 2, 0, 2);
 			Render();
 		}

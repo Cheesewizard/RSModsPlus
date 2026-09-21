@@ -29,8 +29,18 @@ namespace RSMods.Audio
 			TabStop = true;
 			AccessibleRole = AccessibleRole.CheckButton;
 			Margin = new Padding(0, 6, 0, 4);
-			Height = 26;
+			// AutoSize + GetPreferredSize so the box and text measure at the live DPI. Previously Height and the
+			// text Width were fixed at 96 px and only the outer bounds were DPI-scaled, so the 18 px check box
+			// stayed tiny beside 1.5x text and long labels ("Rocksmith gate") clipped.
+			AutoSize = true;
 			Text = text;
+		}
+
+		public override Size GetPreferredSize(Size proposedSize)
+		{
+			int boxRight = LogicalToDeviceUnits(1) + LogicalToDeviceUnits(BoxSize) - 1;
+			int textWidth = TextRenderer.MeasureText(Text ?? "", Font).Width;
+			return new Size(boxRight + LogicalToDeviceUnits(Gap) + textWidth + LogicalToDeviceUnits(6), LogicalToDeviceUnits(26));
 		}
 
 		public bool Checked
@@ -51,7 +61,8 @@ namespace RSMods.Audio
 			set
 			{
 				base.Text = value;
-				Width = BoxSize + Gap + TextRenderer.MeasureText(value ?? "", Font).Width + 6;
+				// AutoSize does not re-query preferred size on a Text change for a custom Control; nudge the layout.
+				Parent?.PerformLayout(this, "Text");
 				Invalidate();
 			}
 		}
@@ -59,7 +70,8 @@ namespace RSMods.Audio
 		protected override void OnFontChanged(EventArgs e)
 		{
 			base.OnFontChanged(e);
-			Text = Text;
+			Parent?.PerformLayout(this, "Font");
+			Invalidate();
 		}
 
 		protected override void OnClick(EventArgs e)
@@ -94,11 +106,13 @@ namespace RSMods.Audio
 		{
 			var canvas = e.Graphics;
 			canvas.SmoothingMode = SmoothingMode.AntiAlias;
-			var box = new Rectangle(1, Height / 2 - BoxSize / 2, BoxSize - 1, BoxSize - 1);
+			int boxSize = LogicalToDeviceUnits(BoxSize);
+			int gap = LogicalToDeviceUnits(Gap);
+			var box = new Rectangle(LogicalToDeviceUnits(1), Height / 2 - boxSize / 2, boxSize - 1, boxSize - 1);
 			Color fill = isChecked && Enabled ? StudioTheme.Accent : StudioTheme.Field;
 			if (hovered && Enabled) fill = StudioTheme.Shift(fill, 14);
 			if (!Enabled) fill = StudioTheme.Blend(fill, StudioTheme.Surface, 0.5);
-			using (var path = StudioTheme.RoundedRectangle(box, 4))
+			using (var path = StudioTheme.RoundedRectangle(box, LogicalToDeviceUnits(4)))
 			{
 				using (var brush = new SolidBrush(fill))
 					canvas.FillPath(brush, path);
@@ -108,15 +122,16 @@ namespace RSMods.Audio
 			}
 			if (isChecked)
 			{
-				using (var pen = new Pen(Enabled ? Color.White : StudioTheme.Faint, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+				float stroke = Math.Max(2f, LogicalToDeviceUnits(2));
+				using (var pen = new Pen(Enabled ? Color.White : StudioTheme.Faint, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
 					canvas.DrawLines(pen, new[]
 					{
-						new PointF(box.X + 4.5f, box.Y + box.Height / 2f + 0.5f),
-						new PointF(box.X + box.Width / 2f - 0.5f, box.Bottom - 4.5f),
-						new PointF(box.Right - 4f, box.Y + 4.5f)
+						new PointF(box.X + box.Width * 0.25f, box.Y + box.Height / 2f + 0.5f),
+						new PointF(box.X + box.Width / 2f - 0.5f, box.Bottom - box.Height * 0.25f),
+						new PointF(box.Right - box.Width * 0.22f, box.Y + box.Height * 0.25f)
 					});
 			}
-			var text = new Rectangle(box.Right + Gap, 0, Width - box.Right - Gap, Height);
+			var text = new Rectangle(box.Right + gap, 0, Width - box.Right - gap, Height);
 			TextRenderer.DrawText(canvas, Text, Font, text, Enabled ? ForeColor : StudioTheme.Faint,
 				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
 		}

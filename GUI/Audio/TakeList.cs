@@ -147,7 +147,7 @@ namespace RSMods.Audio
 			using (var pen = new Pen(StudioTheme.Line))
 				args.Graphics.DrawLine(pen, args.Bounds.Left, args.Bounds.Bottom - 1, args.Bounds.Right, args.Bounds.Bottom - 1);
 			var text = new Rectangle(args.Bounds.X + 8, args.Bounds.Y, args.Bounds.Width - 16, args.Bounds.Height);
-			TextRenderer.DrawText(args.Graphics, args.Header.Text.ToUpperInvariant(), StudioTheme.SectionFont, text, StudioTheme.Faint,
+			TextRenderer.DrawText(args.Graphics, args.Header.Text, StudioTheme.SectionFont, text, StudioTheme.Faint,
 				Justify(args.Header.TextAlign) | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 		}
 

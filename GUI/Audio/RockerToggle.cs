@@ -124,10 +124,10 @@ namespace RSMods.Audio
 			var offBounds = new Rectangle(4, 4, halfWidth, Height - 9);
 			var onBounds = new Rectangle(4 + halfWidth, 4, halfWidth, Height - 9);
 			Color inactiveText = Enabled ? StudioTheme.Muted : StudioTheme.Faint;
-			TextRenderer.DrawText(e.Graphics, "OFF", IsOn ? StudioTheme.Body : StudioTheme.Strong, offBounds,
+			TextRenderer.DrawText(e.Graphics, "Off", IsOn ? StudioTheme.Body : StudioTheme.Strong, offBounds,
 				!IsOn && Enabled ? Color.White : inactiveText,
 				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
-			TextRenderer.DrawText(e.Graphics, "ON", IsOn ? StudioTheme.Strong : StudioTheme.Body, onBounds,
+			TextRenderer.DrawText(e.Graphics, "On", IsOn ? StudioTheme.Strong : StudioTheme.Body, onBounds,
 				IsOn ? StudioTheme.Positive : inactiveText,
 				TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 		}

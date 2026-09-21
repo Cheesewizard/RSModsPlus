@@ -30,9 +30,13 @@ namespace RSMods.Audio
 				return;
 			using (var canvas = message.Msg == WM_PAINT ? Graphics.FromHwnd(Handle) : Graphics.FromHdc(message.WParam))
 			{
+				canvas.SmoothingMode = SmoothingMode.AntiAlias;
 				Color field = Enabled ? StudioTheme.Field : StudioTheme.Blend(StudioTheme.Field, StudioTheme.Surface, 0.5);
-				using (var brush = new SolidBrush(field))
+				using (var brush = new SolidBrush(Parent?.BackColor ?? StudioTheme.Surface))
 					canvas.FillRectangle(brush, 0, 0, Width, Height);
+				using (var path = StudioTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), LogicalToDeviceUnits(8)))
+				using (var brush = new SolidBrush(field))
+					canvas.FillPath(brush, path);
 				string text = SelectedItem?.ToString() ?? Text ?? "";
 				TextRenderer.DrawText(canvas, text, Font, new Rectangle(8, 0, Width - ARROW_WIDTH - 12, Height),
 					Enabled ? StudioTheme.Ink : StudioTheme.Faint,
@@ -50,8 +54,9 @@ namespace RSMods.Audio
 				canvas.SmoothingMode = SmoothingMode.None;
 				using (var pen = new Pen(StudioTheme.Line))
 					canvas.DrawLine(pen, Width - ARROW_WIDTH, 1, Width - ARROW_WIDTH, Height - 2);
-				using (var pen = new Pen(Focused ? StudioTheme.Accent : StudioTheme.Line))
-					canvas.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+				using (var pen = new Pen(Focused ? StudioTheme.Accent : StudioTheme.Line, Focused ? 1.5f : 1f))
+				using (var path = StudioTheme.RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), LogicalToDeviceUnits(8)))
+					canvas.DrawPath(pen, path);
 			}
 		}
 	}

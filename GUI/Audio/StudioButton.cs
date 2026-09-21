@@ -126,18 +126,20 @@ namespace RSMods.Audio
 				fill = StudioTheme.Shift(fill, -16);
 			else if (hovered)
 				fill = StudioTheme.Shift(fill, 18);
-			e.Graphics.SmoothingMode = SmoothingMode.None;
+			using (var path = StudioTheme.RoundedRectangle(bounds, LogicalToDeviceUnits(9)))
 			using (var brush = new SolidBrush(fill))
-				e.Graphics.FillRectangle(brush, 0, 0, Width, Height);
+				e.Graphics.FillPath(brush, path);
 			Color edge = Focused && Enabled ? StudioTheme.Ink
 				: kind == StudioButtonKind.Ghost ? StudioTheme.Line : StudioTheme.Shift(fill, -30);
-			using (var pen = new Pen(Enabled ? edge : StudioTheme.Blend(StudioTheme.Line, StudioTheme.Surface, 0.5)))
-				e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+			using (var path = StudioTheme.RoundedRectangle(bounds, LogicalToDeviceUnits(9)))
+			using (var pen = new Pen(Enabled ? edge : StudioTheme.Blend(StudioTheme.Line, StudioTheme.Surface, 0.5), Focused && Enabled ? 1.5f : 1f))
+				e.Graphics.DrawPath(pen, path);
 			e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 			var text = ClientRectangle;
 			if (showDot)
 			{
-				var dot = new Rectangle(15, Height / 2 - 5, 10, 10);
+				int dotSize = LogicalToDeviceUnits(8);
+				var dot = new Rectangle(LogicalToDeviceUnits(14), Height / 2 - dotSize / 2, dotSize, dotSize);
 				using (var brush = new SolidBrush(ink))
 					e.Graphics.FillEllipse(brush, dot);
 				text = new Rectangle(dot.Right + 4, 0, Width - dot.Right - 12, Height);

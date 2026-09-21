@@ -36,7 +36,7 @@ namespace RSMods.Audio
 		private const int SearchingPollMilliseconds = 500;
 		/// <summary>How often the slower housekeeping (buffer status, takes folder) rides along with a poll.</summary>
 		private const int HousekeepingMilliseconds = 2000;
-		private const string LIMITER_HINT = "Limits game output to the configured ceiling. The active audio bridge uses a look-ahead brickwall limiter to stop transients above the ceiling before they reach the output. Adds a few milliseconds of output latency and prevents clipping. Does not control the interface volume knob.";
+		private const string LIMITER_HINT = "Sets a maximum on the game's output level. A look-ahead limiter watches for anything louder than the ceiling and eases the level down before it arrives, so a sudden loud tone or spike never reaches full volume. It caps the digital signal, not your interface's volume knob, so set that knob to a comfortable level first. Adds a few milliseconds of latency. Optional and off by default.";
 		private static readonly Keys[] recordingHotkeys = (Keys[])KeyConversion.KeyDownDictionary.Clone();
 
 		internal Keys RecordingHotkey => (Keys)recordingHotkeySelector.SelectedItem;
@@ -56,8 +56,11 @@ namespace RSMods.Audio
 		private readonly RockerToggle masterPower = new RockerToggle();
 		private readonly Panel masterPowerHost = new Panel { Margin = new Padding(0) };
 		private readonly StatusChip diskChip = new StatusChip("Disk");
-		// Fixed size so a tick of the clock never re-lays out the deck; wide enough for h:mm:ss.f.
-		private readonly Label elapsedLabel = new Label { AutoSize = false, Width = 196, Height = 44, Text = "00:00.0", Font = StudioTheme.Timecode, ForeColor = StudioTheme.Ink, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, 0, 12, 0), UseMnemonic = false };
+		// AutoSize so the 28pt timecode is never clipped: the old fixed 44px height was exactly the font's line
+		// height and cut the digits top and bottom once the font scaled with DPI. Consolas is monospaced, so the
+		// width only changes when the string gains a digit (crossing into hours), not on every tick. MinimumSize
+		// reserves the common m:ss.f width so the deck does not jump as the first digits appear.
+		private readonly Label elapsedLabel = new Label { AutoSize = true, MinimumSize = new Size(150, 0), Text = "00:00.0", Font = StudioTheme.Timecode, ForeColor = StudioTheme.Ink, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, 0, 12, 0), UseMnemonic = false };
 		private readonly Label deckHint = StudioTheme.Hint("");
 		private readonly Label recordingHotkeyStatus = StudioTheme.Hint("");
 		private readonly Label statusLabel = new Label { AutoEllipsis = true, UseMnemonic = false, Font = StudioTheme.Body, ForeColor = StudioTheme.Muted, TextAlign = ContentAlignment.MiddleLeft };
@@ -90,25 +93,25 @@ namespace RSMods.Audio
 		private bool syncingInputGain;
 		private int? pendingInputGainTenths;
 		private int persistedInputGainTenths;
-		// The game DLL applies the saved make-up gain and noise gate once at its own launch, but the bridge
+		// The game DLL applies the saved make-up gain and adaptive suppressor once at its own launch, but the bridge
 		// process may have come up at a different value (e.g. the ini was changed while it kept running). On a
 		// fresh connection, push the persisted values once so the sliders match what is actually live, rather
 		// than showing a setting that only takes effect when the user nudges the control.
 		private bool pushInputSettingsOnConnect;
-		// Guitar input noise gate (soft downward expander in the DLL). The slider counts whole-dB
+		// Guitar input adaptive suppressor (transient-resistant downward expander in the DLL). The slider counts whole-dB
 		// threshold steps; the rightmost notch (-40) means Off. RSMods.ini and the DLL store tenths of a
 		// dB (0 = off, else a negative threshold).
-		// Noise gate: an on/off, a fine (0.1 dB) slider and a typeable box that share one threshold in tenths of a
+		// Adaptive suppressor: an on/off, a fine (0.1 dB) slider and a typeable box that share one threshold in tenths of a
 		// dBFS. Off collapses to just the checkbox. The slider works in tenths so each step is 0.1 dB (1 dB was far
 		// too coarse to sit on a noise floor); the numeric box lets you type an exact value and clamps silly input.
-		private readonly StudioCheck gateEnableCheck = new StudioCheck("Noise gate");
-		private readonly StudioSlider noiseGateSlider = new StudioSlider { Minimum = -800, Maximum = -200, SmallChange = 1, LargeChange = 10, AccessibleName = "Guitar input noise gate threshold, tenths of a decibel" };
+		private readonly StudioCheck gateEnableCheck = new StudioCheck("Adaptive noise suppression");
+		private readonly StudioSlider noiseGateSlider = new StudioSlider { Minimum = -800, Maximum = -200, SmallChange = 1, LargeChange = 10, AccessibleName = "Adaptive noise suppression threshold for guitar input, tenths of a decibel" };
 		private readonly StudioNumber gateThresholdInput = new StudioNumber { DecimalPlaces = 1, Increment = 0.1M, Minimum = -80.0M, Maximum = -20.0M, Value = -50.0M };
 		private bool syncingNoiseGate;
 		private int? pendingNoiseGateTenths;
 		private int persistedNoiseGateTenths;
 		// Rocksmith gate (DLL forces the game's own P1_NoiseFloor RTPC). Its own on/off + threshold, kept
-		// separate from the pre-signal noise gate above; the two combine to give native / pre / both.
+		// separate from the pre-signal suppressor above; the two combine to give native / pre / both.
 		private readonly StudioCheck rgEnableCheck = new StudioCheck("Rocksmith gate");
 		private readonly StudioSlider rgGateSlider = new StudioSlider { Minimum = -1000, Maximum = 100, SmallChange = 1, LargeChange = 10, AccessibleName = "Rocksmith gate threshold (P1_NoiseFloor), tenths of a decibel" };
 		private readonly StudioNumber rgGateInput = new StudioNumber { DecimalPlaces = 1, Increment = 0.1M, Minimum = -100.0M, Maximum = 10.0M, Value = -59.3M };
@@ -137,15 +140,21 @@ namespace RSMods.Audio
 		private int persistedCompressor;
 		// Output limiter (proxy driver). Command "<limiterOn>,<ceiling>,<agcOn>,<target>" over op 16 (agcOn stays 0:
 		// the AGC stage is retired from the UI, so only the look-ahead brickwall limiter that holds the ceiling runs).
-		private readonly StudioCheck limiterCheck = new StudioCheck("Output limiter");
+		private readonly StudioCheck limiterCheck = new StudioCheck("Cap the maximum volume");
 		// Ceiling. Slider and box both work in 0.1 dB from -24 dBFS to 0; RSMods.ini and the DLL store tenths of
 		// a dBFS, and the proxy takes it as a linear ceiling (0 dBFS = full scale).
-		private readonly StudioSlider limiterLevelSlider = new StudioSlider { Minimum = -240, Maximum = 0, SmallChange = 1, LargeChange = 10, AccessibleName = "Output limiter ceiling, tenths of a decibel" };
+		private readonly StudioSlider limiterLevelSlider = new StudioSlider { Minimum = -240, Maximum = 0, SmallChange = 1, LargeChange = 10, AccessibleName = "Maximum volume ceiling, tenths of a decibel" };
 		// Typeable dB box paired with the ceiling slider (both 0.1 dB): type an exact value or nudge by 0.1. Clamped.
 		private readonly StudioNumber ceilingInput = new StudioNumber { DecimalPlaces = 1, Increment = 0.1M, Minimum = -24.0M, Maximum = 0.0M, Value = -6.0M };
 		private string pendingLimiter;
 		private bool syncingLimiter;
 		private readonly StudioSelector outputSelector = new StudioSelector { Dock = DockStyle.Fill };
+		// The Setup tab is an accordion: each of these four sections is a collapsible expander whose collapsed
+		// header shows the current value (or an on/off pill) so the page reads as a clean list until you open one.
+		private StudioExpander outputExpander;
+		private StudioExpander inputExpander;
+		private StudioExpander protectionExpander;
+		private StudioExpander bufferExpander;
 		// One hint under the output selector: which transport the chosen device resolves to (high-performance
 		// ASIO when the device has a driver, else the WASAPI bridge) and whether game-mix recording is ready.
 		private readonly Label asioProxyLabel = StudioTheme.Hint("");
@@ -188,8 +197,10 @@ namespace RSMods.Audio
 		private readonly StudioButton measureLatencyButton = new StudioButton("Measure round-trip latency", StudioButtonKind.Primary);
 		private readonly Label latencyReadout = StudioTheme.Text("Round-trip latency: not measured.");
 		private readonly StudioCheck diagnosticsOverlayCheck = new StudioCheck("Show the audio diagnostics overlay in game");
+		private readonly StudioCheck detectionOverlayCheck = new StudioCheck("Show the Note-by-Note detection overlay in game");
 		private readonly StudioCheck monitorOutputCheck = new StudioCheck("Log the game's output stream for diagnosis");
 		private readonly StudioButton refreshDiagnosticsButton = new StudioButton("Refresh status");
+		private readonly StudioButton forceEnumerationButton = new StudioButton("Force update song list");
 		private readonly TextBox diagnosticsStatus = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, WordWrap = false, Dock = DockStyle.Fill };
 		// Environment facts that cost real time to read (process list, RS_ASIO.ini, the registry, free disk
 		// space). They used to be read on every 100 ms status poll, on the UI thread, which is most of why the
@@ -246,9 +257,12 @@ namespace RSMods.Audio
 			BackColor = StudioTheme.Background;
 			ForeColor = StudioTheme.Ink;
 			Font = StudioTheme.Body;
-			Padding = new Padding(20);
+			Padding = new Padding(18, 16, 18, 12);
 			AutoScroll = true;
 			StudioTheme.StyleField(recordingDirectory);
+			StudioTheme.StyleField(diagnosticsStatus);
+			diagnosticsStatus.BorderStyle = BorderStyle.None;
+			diagnosticsStatus.AccessibleName = "Audio bridge diagnostic report";
 			StudioTheme.StyleTips(tips);
 			// Collapse the many intermediate layout passes the nested table/flow panels would
 			// otherwise trigger as each child is added into a single pass.
@@ -259,13 +273,13 @@ namespace RSMods.Audio
 			masterEnabled = ReadSetting("MasterEnabled", "1") == "1";
 			masterPower.IsOn = masterEnabled;
 			syncingMasterPower = false;
-			if (!masterEnabled)
-				ReconcileDisabledBridge();
-			else
-				ReconcileEnabledBridge();   // ini-only repair; RS_ASIO reads it at the next launch, so a running game is fine
+			// The bridge power state is the GUI's own (AudioRouting.ini); it never touches RS_ASIO.ini. The user
+			// owns that file, so opening this window must not silently rewrite the ASIO driver either way.
 			StudioTheme.EnableDoubleBuffering(this);
 			recordingDirectory.Text = ReadSetting("RecordingDirectory", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "RSModsPlus"));
 			recordingSource.SelectedIndex = ReadSetting("RecordingSource", "Tone") == "Dry" ? 1 : 0;
+			// Default new setups to Video (MP4). Audio-only stays a one-click choice and is remembered.
+			captureMode.SelectedIndex = ReadSetting("CaptureMode", "Video") == "Audio" ? 0 : 1;
 			foreach (Keys key in recordingHotkeys)
 				recordingHotkeySelector.Items.Add(key);
 			Keys savedRecordingHotkey;
@@ -289,7 +303,7 @@ namespace RSMods.Audio
 			inputGainEnableCheck.Checked = persistedInputGainTenths > 0;
 			SetInputGain(persistedInputGainTenths);
 			syncingInputGain = false;
-			// The noise gate threshold also lives in RSMods.ini (shared with the game DLL). 0 = off, else negative
+			// The suppressor threshold also lives in RSMods.ini (shared with the game DLL). 0 = off, else negative
 			// tenths of a dBFS; when off, seed the controls at -50 dB so enabling it starts somewhere sensible.
 			syncingNoiseGate = true;
 			persistedNoiseGateTenths = ReadGateThresholdTenths();
@@ -435,10 +449,14 @@ namespace RSMods.Audio
 			body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 			nav = new StudioNav("Mixer", "Guitar", "Recording", "Setup", "Diagnostics") { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 14, 0) };
 			var host = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
-			pages[0] = BuildPage(BuildMixerCard());
-			pages[1] = BuildPage(BuildInputGainCard());
+			pages[0] = BuildPage(
+				BuildPageIntro("Playback mixer", "Balance Rocksmith's playback channels without changing note detection or the guitar signal."),
+				BuildMixerCard());
+			pages[1] = BuildPage(
+				BuildPageIntro("Guitar processing", "Shape the input before Rocksmith hears it. Every control applies live and is saved automatically."),
+				BuildInputGainCard());
 			pages[2] = BuildRecordingPage();
-			pages[3] = BuildPage(Columns(BuildRoutingCard(), BuildInputCard()), Columns(BuildProtectionCard(), BuildBufferCard()));
+			pages[3] = BuildSetupPage();
 			pages[4] = BuildDiagnosticsPage();
 			// Every page is added visible and stacked, so all of them are laid out at the real window size on
 			// the first pass (a page laid out while hidden measures its wrapping hints at a stub width and
@@ -457,40 +475,92 @@ namespace RSMods.Audio
 
 		private Control BuildDiagnosticsPage()
 		{
-			var settings = new StudioCard("In-game diagnostics");
-			settings.Add(StudioTheme.Hint("These controls belong to the running Audio bridge. The signal overlay updates live while Rocksmith is connected; no restart is needed."));
+			var settings = new StudioCard("In-game overlays");
+			settings.Add(StudioTheme.Hint("Inspect signal health while you play. Overlay changes apply immediately while Rocksmith is connected."));
 			settings.Add(diagnosticsOverlayCheck);
 			settings.Add(StudioTheme.Hint("Shows latency, input level and stream health in Rocksmith."));
+			settings.Add(detectionOverlayCheck);
+			settings.Add(StudioTheme.Hint("Shows the live Note-by-Note detection result while playing."));
 			settings.Add(monitorOutputCheck);
-			settings.Add(StudioTheme.Hint("Experimental startup diagnostic. It is read when an output stream is opened and may hang Rocksmith on some systems; restart Rocksmith after changing it."));
+			settings.Add(StudioTheme.Hint("Experimental startup diagnostic, read when an output stream opens. It may hang Rocksmith on some systems; restart the game after changing it."));
+
+			var debug = new StudioCard("Debug");
+			debug.Add(Row(forceEnumerationButton));
+			debug.Add(StudioTheme.Hint("Re-scans the dlc folder so Rocksmith picks up songs you just added, without restarting. Use it from the song list after dropping in a new psarc."));
 
 			var status = new StudioCard("Audio status");
 			status.Add(Row(refreshDiagnosticsButton));
-			diagnosticsStatus.MinimumSize = new Size(0, 300);
-			status.Add(diagnosticsStatus, true);
+			diagnosticsStatus.Dock = DockStyle.Top;
+				diagnosticsStatus.MinimumSize = new Size(0, 64);
+				diagnosticsStatus.Height = 64;
+			status.Add(diagnosticsStatus);
 			WireDiagnosticsEvents();
-			return BuildPage(settings, status);
+			return BuildPage(
+				BuildPageIntro("Diagnostics", "Inspect the live bridge, troubleshoot input and refresh Rocksmith's song library."),
+				settings,
+				debug,
+				status);
 		}
 
 		private void WireDiagnosticsEvents()
 		{
 			diagnosticsOverlayCheck.Checked = ReadBridgeSetting(RSMods.ReadSettings.AudioDiagnosticsOverlayIdentifier, "on") != "off";
+			detectionOverlayCheck.Checked = ReadBridgeSetting(RSMods.ReadSettings.NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER, "on") != "off";
 			monitorOutputCheck.Checked = ReadBridgeSetting(RSMods.ReadSettings.MonitorOutputIdentifier, "off") == "on";
 			diagnosticsOverlayCheck.CheckedChanged += (sender, args) =>
 			{
 				SetDiagnosticsOverlay(diagnosticsOverlayCheck.Checked);
+			};
+			detectionOverlayCheck.CheckedChanged += (sender, args) =>
+			{
+				SetDetectionOverlay(detectionOverlayCheck.Checked);
 			};
 			monitorOutputCheck.CheckedChanged += (sender, args) =>
 			{
 				SaveDiagnosticsSetting(RSMods.ReadSettings.MonitorOutputIdentifier, monitorOutputCheck.Checked ? "on" : "off", false);
 			};
 			refreshDiagnosticsButton.Click += (sender, args) => RefreshDiagnosticsStatus();
+			forceEnumerationButton.Click += ForceEnumeration;
 			RefreshDiagnosticsStatus();
+		}
+
+		private async void ForceEnumeration(object sender, EventArgs args)
+		{
+			if (!forceEnumerationButton.Enabled)
+				return;
+			var activeClient = client;
+			if (activeClient == null)
+			{
+				SetStatus("Start Rocksmith and connect the audio bridge before updating the song list.", ChipTone.Warn);
+				return;
+			}
+			isCommandRunning = true;
+			UpdateState();
+			try
+			{
+				await activeClient.SendAsync(28);
+				SetStatus("Song list re-scan requested. Rocksmith will pick up newly added songs shortly.", ChipTone.Good);
+			}
+			catch (Exception error)
+			{
+				SetStatus("Could not update the song list: " + error.Message
+					+ " Open the song list in Rocksmith once, then try again.", ChipTone.Bad);
+			}
+			finally
+			{
+				isCommandRunning = false;
+				UpdateState();
+			}
 		}
 
 		private void SetDiagnosticsOverlay(bool enabled)
 		{
 			SaveDiagnosticsSetting(RSMods.ReadSettings.AudioDiagnosticsOverlayIdentifier, enabled ? "on" : "off", true);
+		}
+
+		private void SetDetectionOverlay(bool enabled)
+		{
+			SaveDiagnosticsSetting(RSMods.ReadSettings.NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER, enabled ? "on" : "off", true);
 		}
 
 		private async void SaveDiagnosticsSetting(string identifier, string value, bool applyLive)
@@ -499,9 +569,12 @@ namespace RSMods.Audio
 			{
 				WriteModSetting(identifier, value);
 				if (applyLive && client != null)
-					await client.SendAsync(27, value == "on" ? "1" : "0");
-				SetStatus(identifier == RSMods.ReadSettings.AudioDiagnosticsOverlayIdentifier
-					? (value == "on" ? "Audio diagnostics overlay enabled live." : "Audio diagnostics overlay disabled live.")
+					await client.SendAsync(identifier == RSMods.ReadSettings.AudioDiagnosticsOverlayIdentifier ? 27u : 29u, value == "on" ? "1" : "0");
+				string description = identifier == RSMods.ReadSettings.AudioDiagnosticsOverlayIdentifier
+					? "Audio diagnostics overlay" : identifier == RSMods.ReadSettings.NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER
+						? "Note-by-Note detection overlay" : "Output stream logging";
+				SetStatus(applyLive
+					? description + (value == "on" ? " enabled live." : " disabled live.")
 					: "Output stream logging saved. Restart Rocksmith before testing it.", ChipTone.Good);
 			}
 			catch (Exception error)
@@ -527,9 +600,10 @@ namespace RSMods.Audio
 					diagnosticsStatus.Text = "Rocksmith folder not found.";
 					return;
 				}
-				report.AppendLine("Rocksmith: " + (Process.GetProcessesByName("Rocksmith2014").Length > 0 ? "RUNNING" : "not running"));
+				report.AppendLine("Rocksmith: " + (Process.GetProcessesByName("Rocksmith2014").Length > 0 ? "Running" : "Not running"));
 				report.AppendLine("RS_ASIO.dll: " + (File.Exists(Path.Combine(rsDir, "RS_ASIO.dll")) ? "present" : "absent"));
-				report.AppendLine("Audio diagnostics overlay: " + (ReadBridgeSetting(RSMods.ReadSettings.AudioDiagnosticsOverlayIdentifier, "on") == "off" ? "off" : "on") + " (live while connected)");
+					report.AppendLine("Audio diagnostics overlay: " + (ReadBridgeSetting(RSMods.ReadSettings.AudioDiagnosticsOverlayIdentifier, "on") == "off" ? "off" : "on") + " (live while connected)");
+				report.AppendLine("Note-by-Note detection overlay: " + (ReadBridgeSetting(RSMods.ReadSettings.NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER, "on") == "off" ? "off" : "on") + " (live while connected)");
 				report.AppendLine("Output stream logging: " + (ReadBridgeSetting(RSMods.ReadSettings.MonitorOutputIdentifier, "off") == "on" ? "on; restart required" : "off"));
 				report.AppendLine();
 				report.AppendLine("RSMods_debug.txt:");
@@ -550,14 +624,19 @@ namespace RSMods.Audio
 				return;
 			}
 			var matches = new List<string>();
-			foreach (string line in File.ReadLines(path))
+			using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+			using (var reader = new StreamReader(stream))
 			{
-				foreach (string needle in needles)
+				string line;
+				while ((line = reader.ReadLine()) != null)
 				{
-					if (!line.IndexOf(needle, StringComparison.OrdinalIgnoreCase).Equals(-1))
+					foreach (string needle in needles)
 					{
-						matches.Add(line.Trim());
-						break;
+						if (!line.IndexOf(needle, StringComparison.OrdinalIgnoreCase).Equals(-1))
+						{
+							matches.Add(line.Trim());
+							break;
+						}
 					}
 				}
 			}
@@ -583,7 +662,9 @@ namespace RSMods.Audio
 			{
 				section.Dock = DockStyle.Fill;
 				bool fills = stretches && !section.AutoSize;
-				if (fills && section.MinimumSize.Height == 0) section.MinimumSize = new Size(0, 200);
+				if (fills && section.MinimumSize.Height == 0) section.MinimumSize = new Size(0, 160);
+				if (section.Margin.Bottom > 10)
+					section.Margin = new Padding(section.Margin.Left, section.Margin.Top, section.Margin.Right, 10);
 				body.RowStyles.Add(fills ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.AutoSize));
 				body.Controls.Add(section);
 			}
@@ -591,19 +672,57 @@ namespace RSMods.Audio
 			return page;
 		}
 
+		private static Control BuildPageIntro(string title, string description)
+		{
+			var intro = new TableLayoutPanel
+			{
+				Dock = DockStyle.Top,
+				AutoSize = true,
+				AutoSizeMode = AutoSizeMode.GrowAndShrink,
+				ColumnCount = 1,
+				Margin = new Padding(2, 0, 2, 10)
+			};
+			intro.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+			var heading = new Label
+			{
+				Text = title,
+				AutoSize = true,
+				UseMnemonic = false,
+				Font = StudioTheme.PageTitle,
+				ForeColor = StudioTheme.Ink,
+				Margin = new Padding(0)
+			};
+			var summary = new Label
+			{
+				Text = description,
+				AutoSize = true,
+				UseMnemonic = false,
+				Font = StudioTheme.Body,
+				ForeColor = StudioTheme.Muted,
+				Margin = new Padding(0, 3, 0, 0),
+				MaximumSize = new Size(760, 0)
+			};
+			intro.Controls.Add(heading, 0, 0);
+			intro.Controls.Add(summary, 0, 1);
+			return intro;
+		}
+
 		// Recording page: Transport and Take options side by side, Recent takes filling the rest. Docked, so
 		// the page never scrolls and never leaves an empty band.
 		private Control BuildRecordingPage()
 		{
 			var page = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
-			var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = new Padding(0) };
+			var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Margin = new Padding(0) };
 			body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 			body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+			body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 			body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-			body.Controls.Add(Columns(BuildDeck(), BuildOptionsCard()), 0, 0);
+			body.Controls.Add(BuildPageIntro("Recording", "Capture a polished game mix or a clean guitar take, then review recent recordings in one place."), 0, 0);
+			body.Controls.Add(Columns(BuildDeck(), BuildOptionsCard()), 0, 1);
 			var takes = BuildTakesCard();
 			takes.Margin = new Padding(0);
-			body.Controls.Add(takes, 0, 1);
+			body.Controls.Add(takes, 0, 2);
 			page.Controls.Add(body);
 			return page;
 		}
@@ -613,7 +732,7 @@ namespace RSMods.Audio
 		// asks the parent to repaint underneath it.
 		private Control BuildHeader()
 		{
-			var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 0, 0, 14) };
+			var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 0, 0, 12) };
 			header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 			header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 			var titles = new TableLayoutPanel { ColumnCount = 2, RowCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0) };
@@ -629,8 +748,9 @@ namespace RSMods.Audio
 			tips.SetToolTip(masterPowerHost, "Turns the audio bridge on or off while Rocksmith is closed. Note by Note is unaffected.");
 			titles.Controls.Add(masterPowerHost, 0, 0);
 			titles.SetRowSpan(masterPowerHost, 2);
-			titles.Controls.Add(new Label { Text = "Audio bridge", Font = StudioTheme.Title, ForeColor = StudioTheme.Ink, AutoSize = true, UseMnemonic = false, Margin = new Padding(14, 0, 0, 0) }, 1, 0);
-			titles.Controls.Add(new Label { Text = "Playback mixer, guitar input processing, recording and output routing for Rocksmith.", Font = StudioTheme.Body, ForeColor = StudioTheme.Muted, AutoSize = true, UseMnemonic = false, Margin = new Padding(14, 0, 0, 0) }, 1, 1);
+			titles.Controls.Add(new Label { Text = "Audio bridge", Font = StudioTheme.Title, ForeColor = StudioTheme.Ink, AutoSize = true, UseMnemonic = false, Margin = new Padding(16, 0, 0, 0) }, 1, 0);
+			var subtitle = new Label { Text = "Route, shape and record Rocksmith audio.", Font = StudioTheme.Body, ForeColor = StudioTheme.Muted, AutoSize = true, UseMnemonic = false, Margin = new Padding(16, 1, 0, 0) };
+			titles.Controls.Add(subtitle, 1, 1);
 			header.Controls.Add(titles, 0, 0);
 			// Right side: the performance bolt (lit only when fast ASIO output is live) sits just left of the
 			// connection chip. Right-anchored, so the chip stays put and the bolt appears to its left when it lights.
@@ -643,6 +763,15 @@ namespace RSMods.Audio
 			tips.SetToolTip(bridgeChip, "Green while the bridge is routing the game's audio to your chosen output; grey while the game plays out of its own output untouched.");
 			right.Controls.Add(bridgeChip);
 			header.Controls.Add(right, 1, 0);
+			// Wrap the subtitle to the width the header actually has rather than letting it run off the right edge
+			// (it clipped to "...output routing" once the text scaled with DPI). Cap it just short of the space to
+			// the left of the chips so it drops to a second line instead of being cut.
+			header.SizeChanged += (sender, args) =>
+			{
+				int available = header.ClientSize.Width - right.Width - masterPowerHost.Width - LogicalToDeviceUnits(42);
+				if (available > LogicalToDeviceUnits(120))
+					subtitle.MaximumSize = new Size(available, 0);
+			};
 			return header;
 		}
 
@@ -662,14 +791,21 @@ namespace RSMods.Audio
 			transport.Controls.Add(recordButton);
 			transport.Controls.Add(stopButton);
 			deck.Add(transport);
-			var chips = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
+			var chips = new FlowLayoutPanel
+			{
+				Dock = DockStyle.Top,
+				AutoSize = true,
+				AutoSizeMode = AutoSizeMode.GrowAndShrink,
+				WrapContents = true,
+				Margin = new Padding(0, 6, 0, 0)
+			};
 			chips.Controls.Add(inputChip);
 			chips.Controls.Add(captureChip);
 			chips.Controls.Add(diskChip);
 			deck.Add(chips);
-			deckHint.Margin = new Padding(0, 10, 0, 2);
+			deckHint.Margin = new Padding(0, 6, 0, 2);
 			deck.Add(deckHint);
-			recordingHotkeyStatus.Margin = new Padding(0, 2, 0, 0);
+			recordingHotkeyStatus.Margin = new Padding(0, 1, 0, 0);
 			deck.Add(recordingHotkeyStatus);
 			return deck;
 		}
@@ -679,13 +815,16 @@ namespace RSMods.Audio
 		{
 			var card = new StudioCard("Take options") { Dock = DockStyle.Fill };
 			var options = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0) };
-			options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
+			// AutoSize, not a fixed width: the captions (FORMAT / SOURCE / HOTKEY / FOLDER) are uppercase and set
+			// in a bold point font, so a hardcoded 76px column wrapped them to two lines once the font scaled with
+			// DPI. Sizing to the widest caption keeps them on one line at every display scale.
+			options.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 			options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 			AddOptionRow(options, 0, "Format", captureMode);
 			AddOptionRow(options, 1, "Source", recordingSource);
-			recordingHotkeySelector.Margin = new Padding(0, 4, 0, 4);
+			recordingHotkeySelector.Margin = new Padding(0, 2, 0, 2);
 			AddOptionRow(options, 2, "Hotkey", recordingHotkeySelector);
-			recordingDirectory.Margin = new Padding(0, 4, 0, 4);
+			recordingDirectory.Margin = new Padding(0, 2, 0, 2);
 			AddOptionRow(options, 3, "Folder", recordingDirectory);
 			recordingDirectory.Anchor = AnchorStyles.Left | AnchorStyles.Right;
 			card.Add(options);
@@ -693,7 +832,7 @@ namespace RSMods.Audio
 			buttons.Controls.Add(browseButton);
 			buttons.Controls.Add(openButton);
 			card.Add(buttons);
-			spaceLabel.Margin = new Padding(0, 8, 0, 2);
+			spaceLabel.Margin = new Padding(0, 4, 0, 2);
 			card.Add(spaceLabel);
 			return card;
 		}
@@ -711,8 +850,8 @@ namespace RSMods.Audio
 
 		private Control BuildMixerCard()
 		{
-			var card = new StudioCard("Playback mixer", true) { Dock = DockStyle.Fill };
-			card.Add(StudioTheme.Hint("Balances the game's audio buses. Levels follow Rocksmith while it is connected. Click a speaker to mute; double-click a fader for 100%."));
+			var card = new StudioCard("Mixer console", true) { Dock = DockStyle.Fill };
+			card.Add(StudioTheme.Hint("Levels mirror Rocksmith while connected. Select a speaker to mute; double-click a fader to return it to 100%."));
 			card.Add(BuildConsole(), true);
 			card.Add(mixerHint);
 			return card;
@@ -746,67 +885,107 @@ namespace RSMods.Audio
 			return mixerFaders[(int)channel];
 		}
 
-		private Control BuildRoutingCard()
+		// Setup tab: one full-width accordion. Output device and Guitar input open by default (you almost always
+		// want them); Output protection and Audio buffers start collapsed as a single clean row each, their long
+		// descriptions tucked inside. The page scrolls if the open sections outgrow it.
+		private Control BuildSetupPage()
 		{
-			var card = new StudioCard("Output device");
-			card.Add(StudioTheme.Hint("Where Rocksmith plays. A device with an ASIO driver plays through ASIO; anything else is bridged over Windows audio with a little added latency."));
-			card.Add(outputSelector);
+			outputExpander = BuildOutputExpander();
+			inputExpander = BuildInputExpander();
+			protectionExpander = BuildProtectionExpander();
+			bufferExpander = BuildBufferExpander();
+			outputExpander.Expanded = true;
+			inputExpander.Expanded = true;
+			UpdateSetupHeaders();
+			return BuildPage(
+				BuildPageIntro("Audio setup", "Choose how Rocksmith hears your guitar and where the game plays. Advanced controls stay out of the way until needed."),
+				outputExpander,
+				inputExpander,
+				protectionExpander,
+				bufferExpander);
+		}
+
+		private StudioExpander BuildOutputExpander()
+		{
+			var ex = new StudioExpander("Output device");
+			ex.SetSummary("Where Rocksmith plays back.");
+			ex.Add(StudioTheme.Hint("Where Rocksmith plays. A device with an ASIO driver plays through ASIO; anything else is bridged over Windows audio with a little added latency."));
+			outputSelector.Margin = new Padding(0, 2, 0, 6);
+			ex.Add(outputSelector);
 			var buttons = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 4, 0, 0) };
 			buttons.Controls.Add(applyButton);
 			buttons.Controls.Add(removeProxyButton);
-			card.Add(buttons);
+			ex.Add(buttons);
 			asioProxyLabel.Margin = new Padding(0, 8, 0, 2);
-			card.Add(asioProxyLabel);
-			card.Add(StudioTheme.Hint("Windows outputs can be switched while the game runs. Changing the ASIO output needs Rocksmith closed."));
-			return card;
+			ex.Add(asioProxyLabel);
+			ex.Add(StudioTheme.Hint("Windows outputs can be switched while the game runs. Changing the ASIO output needs Rocksmith closed."));
+			return ex;
 		}
 
-		// Output protection: the proxy driver's look-ahead limiter. Its own card, so the routing card stays
-		// about routing and the limiter reads as the safety feature it is.
-		private Control BuildProtectionCard()
+		private StudioExpander BuildInputExpander()
 		{
-			var card = new StudioCard("Output protection");
-			card.Add(StudioTheme.Hint("Holds the game's output under a ceiling so a loud transient never reaches your ears at full scale. Adds a few milliseconds of output latency. Does not change the interface's volume knob."));
+			var ex = new StudioExpander("Guitar input");
+			ex.SetSummary("How Rocksmith hears the guitar.");
+			ex.Add(StudioTheme.Hint("How Rocksmith hears the guitar. ASIO uses RS_ASIO and your interface for the lowest latency; the cable uses the Windows audio path."));
+			inputSelector.Margin = new Padding(0, 2, 0, 4);
+			ex.Add(inputSelector);
+			inputModeLabel.Margin = new Padding(0, 8, 0, 2);
+			ex.Add(inputModeLabel);
+			ex.Add(eventDrivenCaptureCheck);
+			eventDrivenCaptureHint.Margin = new Padding(0, 0, 0, 2);
+			ex.Add(eventDrivenCaptureHint);
+			ex.Add(cableForPlayerTwoCheck);
+			cableForPlayerTwoHint.Margin = new Padding(0, 0, 0, 2);
+			ex.Add(cableForPlayerTwoHint);
+			return ex;
+		}
+
+		// Output protection: the proxy driver's look-ahead limiter. Its own section, so it reads as the safety
+		// feature it is, and its collapsed header carries an ON/OFF pill.
+		private StudioExpander BuildProtectionExpander()
+		{
+			var ex = new StudioExpander("Output protection");
+			ex.SetSummary("Caps sudden loud output. Optional.");
+			ex.Add(StudioTheme.Hint("Stops sudden loud sounds, a hot custom tone or a spike, from jumping to full volume. It smoothly pulls the game's output down so nothing rises above the ceiling you set below. This caps the digital level, not the loudness at your ears, so set your interface or headphone volume to a comfortable level first. Adds a few milliseconds of latency. Optional and off by default."));
 			var grid = FeatureGrid();
 			AddFeature(grid, limiterCheck, limiterLevelSlider, ceilingInput, "dB", null);
-			card.Add(grid);
+			ex.Add(grid);
 			tips.SetToolTip(limiterCheck, LIMITER_HINT);
-			return card;
+			return ex;
 		}
 
-		private Control BuildBufferCard()
+		private StudioExpander BuildBufferExpander()
 		{
-			var card = new StudioCard("Audio buffers");
-			card.Add(StudioTheme.Hint("Buffer sizes are not the whole guitar latency. The ASIO input buffer is set in your interface's own control panel and read when Rocksmith starts."));
+			var ex = new StudioExpander("Audio buffers");
+			ex.SetSummary("Playback and ASIO buffer sizes. Advanced.");
+			ex.Add(StudioTheme.Hint("Buffer sizes are not the whole guitar latency. The ASIO input buffer is set in your interface's own control panel and read when Rocksmith starts."));
 			asioBufferLabel.Margin = new Padding(0, 8, 0, 2);
-			card.Add(asioBufferLabel);
-			card.Add(currentBufferLabel);
+			ex.Add(asioBufferLabel);
+			ex.Add(currentBufferLabel);
 			customBufferCheck.Margin = new Padding(0, 10, 0, 2);
-			card.Add(customBufferCheck);
-			card.Add(Row(customBuffer, applyBufferButton));
+			ex.Add(customBufferCheck);
+			ex.Add(Row(customBuffer, applyBufferButton));
 			tips.SetToolTip(customBufferCheck, "Windows playback only. Automatic uses the playback device's default period.");
 			tips.SetToolTip(applyBufferButton, "Apply the buffer to the live Windows playback stream and save it for the next launch.");
+			// Round-trip latency measurement is hidden for the pre-release. The controls, event
+			// wiring and MeasureLatency handler are left intact but not added to the layout, so the
+			// feature can be re-enabled later by re-adding these two rows.
 			measureLatencyButton.Margin = new Padding(0, 14, 8, 4);
-			card.Add(Row(measureLatencyButton));
 			latencyReadout.Margin = new Padding(0, 2, 0, 4);
-			card.Add(latencyReadout);
-			return card;
+			return ex;
 		}
 
-		private Control BuildInputCard()
+		// Keep each collapsed header's right-side value (or on/off pill) in step with the live control state, so the
+		// accordion tells you the current output, input mode and whether protection and a custom buffer are on
+		// without having to open anything.
+		private void UpdateSetupHeaders()
 		{
-			var card = new StudioCard("Guitar input");
-			card.Add(StudioTheme.Hint("How Rocksmith hears the guitar. ASIO uses RS_ASIO and your interface for the lowest latency; the cable uses the Windows audio path."));
-			card.Add(inputSelector);
-			inputModeLabel.Margin = new Padding(0, 8, 0, 2);
-			card.Add(inputModeLabel);
-			card.Add(eventDrivenCaptureCheck);
-			eventDrivenCaptureHint.Margin = new Padding(0, 0, 0, 2);
-			card.Add(eventDrivenCaptureHint);
-			card.Add(cableForPlayerTwoCheck);
-			cableForPlayerTwoHint.Margin = new Padding(0, 0, 0, 2);
-			card.Add(cableForPlayerTwoHint);
-			return card;
+			outputExpander?.SetValue((outputSelector.SelectedItem as AudioDeviceChoice)?.Name ?? "Not selected");
+			inputExpander?.SetValue(inputSelector.SelectedIndex == 1 ? "ASIO interface" : "Real Tone Cable");
+			protectionExpander?.SetPill(limiterCheck.Checked ? "ON" : "OFF",
+				limiterCheck.Checked ? StudioTheme.Positive : StudioTheme.Faint);
+			bufferExpander?.SetPill(customBufferCheck.Checked ? "CUSTOM" : "AUTO",
+				customBufferCheck.Checked ? StudioTheme.Accent : StudioTheme.Faint);
 		}
 
 		// Guitar input processing lives on the Mixer tab (the controls are live levels, like the faders), as
@@ -814,13 +993,13 @@ namespace RSMods.Audio
 		// disabled, so the card never jumps as things are switched on and off.
 		private Control BuildInputGainCard()
 		{
-			var card = new StudioCard("Guitar input processing");
-			card.Add(StudioTheme.Hint("Shapes the guitar signal before Rocksmith hears it. Changes apply live and are saved."));
+			var card = new StudioCard("Signal chain") { MinimumSize = new Size(0, 560) };
+			card.Add(StudioTheme.Hint("Enable only the processing your input needs. Disabled stages remain visible so the signal path stays predictable."));
 			var grid = FeatureGrid();
 			AddFeature(grid, inputGainEnableCheck, inputGainSlider, gainInput, "dB",
 				"Lifts a quiet interface input towards Real Tone Cable level, so the game's note gate stops cutting sustains short.");
 			AddFeature(grid, gateEnableCheck, noiseGateSlider, gateThresholdInput, "dB",
-				"Silences the input below this level between notes, so the gain above does not amplify hiss. Set it just above your noise floor.");
+				"Rejects idle noise and false signal bursts while preserving sustained notes. This level controls when an opened note closes.");
 			AddFeature(grid, compressorEnableCheck, compressorSlider, compInput, "%",
 				"Evens out level swings during sustained notes, the way a hot cable's signal already is.");
 			AddFeature(grid, humFilterCheck, humFilterSlider, humFilterInput, "Hz",
@@ -835,7 +1014,7 @@ namespace RSMods.Audio
 		private static TableLayoutPanel FeatureGrid()
 		{
 			var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 4, Margin = new Padding(0, 6, 0, 0) };
-			grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 168));
+			grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 340));
 			grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 			grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 			grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -919,11 +1098,11 @@ namespace RSMods.Audio
 					: "This device has an ASIO driver (" + driver + "). Press Apply output to use it and enable game-mix recording.";
 			else
 				asioProxyLabel.Text = "Windows output with a little added latency. Game-mix recording uses window capture.";
+			UpdateSetupHeaders();
 		}
 
-		/// <summary>Back out completely: restore RS_ASIO to the real driver, then unregister the proxy (elevated).
-		/// Unlink happens first and needs no admin, so even if the user declines the elevation the game is already
-		/// back on its direct ASIO output.</summary>
+		/// <summary>Back out completely: unregister the proxy (elevated). RS_ASIO.ini is the user's to edit, so
+		/// this no longer rewrites it; the user points RS_ASIO's Driver back at their real ASIO device by hand.</summary>
 		private void RemoveProxy(object sender, EventArgs args)
 		{
 			if (isCommandRunning) return;
@@ -936,37 +1115,30 @@ namespace RSMods.Audio
 			UpdateState();
 			try
 			{
-				AsioProxySetup.Unlink(gameDirectory);   // restore RS_ASIO.ini to the real driver (no admin)
 				try
 				{
 					AsioProxySetup.Unregister(Path.Combine(gameDirectory, "RocksmithAudioBridge.dll"));
 					RefreshEnvironment();
 					UpdateOutputHint();
-					SetStatus("Audio bridge driver removed. Output is back on your real ASIO device. Relaunch Rocksmith to apply.", ChipTone.Good);
+					SetStatus("Audio bridge driver removed. Point RS_ASIO.ini back at your real ASIO device, then relaunch Rocksmith.", ChipTone.Good);
 				}
 				catch (OperationCanceledException)
 				{
-					// Routing is already restored; the driver is still registered because the prompt was declined.
+					// The driver is still registered because the elevation prompt was declined.
 					RefreshEnvironment();
 					UpdateOutputHint();
-					SetStatus("Output restored to your real ASIO device. The bridge driver is still installed (removal needs admin approval).", ChipTone.Warn);
+					SetStatus("The bridge driver is still installed (removal needs admin approval). RS_ASIO.ini is unchanged.", ChipTone.Warn);
 				}
 			}
 			catch (Exception error) { SetStatus("Could not remove the audio bridge driver: " + error.Message, ChipTone.Bad); }
 			finally { isCommandRunning = false; UpdateState(); }
 		}
+		// Side by side when the window is wide enough, stacked when it is not (see ResponsiveColumns). This is the
+		// bridge's one responsive primitive: every two-up pairing goes through it, so nothing clips on a narrow
+		// window or at 150% DPI where the same controls are half again as wide.
 		private static Control Columns(Control left, Control right)
 		{
-			var pair = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, RowCount = 1, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0) };
-			pair.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-			pair.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-			left.Margin = new Padding(0, 0, 7, 14);
-			right.Margin = new Padding(7, 0, 0, 14);
-			left.Dock = DockStyle.Fill;
-			right.Dock = DockStyle.Fill;
-			pair.Controls.Add(left, 0, 0);
-			pair.Controls.Add(right, 1, 0);
-			return pair;
+			return new ResponsiveColumns(left, right);
 		}
 
 		private static Control Row(params Control[] controls)
@@ -994,20 +1166,20 @@ namespace RSMods.Audio
 
 		private Control BuildTakesCard()
 		{
-			var card = new StudioCard("Recent takes", true) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 220) };
+			var card = new StudioCard("Recent takes", true) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 140) };
 			card.Add(takes, true);
-			var buttons = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 10, 0, 0) };
+			var buttons = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
 			buttons.Controls.Add(playButton);
 			buttons.Controls.Add(revealButton);
 			card.Add(buttons);
-			libraryLabel.Margin = new Padding(0, 8, 0, 2);
+			libraryLabel.Margin = new Padding(0, 4, 0, 2);
 			card.Add(libraryLabel);
 			return card;
 		}
 
 		private Control BuildStatusBar()
 		{
-			var bar = new Panel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(2, 10, 2, 0) };
+			var bar = new Panel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(4, 11, 4, 0) };
 			bar.Paint += (sender, args) =>
 			{
 				using (var pen = new Pen(StudioTheme.Line))
@@ -1044,7 +1216,8 @@ namespace RSMods.Audio
 			limiterCheck.CheckedChanged += (sender, args) =>
 			{
 				if (syncingLimiter) return;
-				pendingLimiter = LimiterCommand();                                // applied live on the next mixer tick
+				pendingLimiter = LimiterCommand();                                // pushed to the bridge immediately below
+				FlushMixerNow();                                                  // toggle takes effect now, not on the next tick
 				ApplyOutputControlVisibility();                                   // reveal the ceiling immediately
 				UpdateState();                                                    // enable/disable the ceiling slider
 				try { WriteLimiterSetting(limiterCheck.Checked); }                // persisted so it arms at next launch
@@ -1056,6 +1229,7 @@ namespace RSMods.Audio
 				UpdateLimiterReadout();
 				pendingLimiter = LimiterCommand();
 				lastMixerEdit = DateTime.UtcNow;
+				FlushMixerNow();                                                  // ceiling change is live as the slider moves
 			};
 			limiterLevelSlider.MouseUp += (sender, args) => PersistLimiterLevel();
 			limiterLevelSlider.KeyUp += (sender, args) => PersistLimiterLevel();
@@ -1142,9 +1316,9 @@ namespace RSMods.Audio
 			tips.SetToolTip(inputGainEnableCheck, "Adds gain to the guitar signal before Rocksmith hears it. 0 dB leaves the input unchanged. Applies live.");
 			tips.SetToolTip(inputGainSlider, "Input gain from 0 to +20 dB. Type an exact value in the box or nudge by 0.1 dB.");
 			tips.SetToolTip(gainInput, "Input gain from 0 to +20 dB. Type an exact value or nudge by 0.1 dB.");
-			tips.SetToolTip(gateEnableCheck, "Mutes the input below the threshold between notes, before the input gain amplifies it. Too high cuts note tails; too low lets hiss through. Applies live.");
-			tips.SetToolTip(noiseGateSlider, "Noise gate threshold from -80 to -20 dBFS. Type an exact value in the box or nudge by 0.1 dB.");
-			tips.SetToolTip(gateThresholdInput, "Noise gate threshold from -80 to -20 dBFS. Type an exact value or nudge by 0.1 dB.");
+			tips.SetToolTip(gateEnableCheck, "Rejects idle noise and false signal bursts before input gain while preserving sustained notes. A note needs a clear attack to open; this threshold controls when its tail closes. Applies live.");
+			tips.SetToolTip(noiseGateSlider, "Sustain threshold from -80 to -20 dBFS. A clear attack opens the suppressor; the note remains open down to this level. Type an exact value or nudge by 0.1 dB.");
+			tips.SetToolTip(gateThresholdInput, "Sustain threshold from -80 to -20 dBFS. A clear attack opens the suppressor; the note remains open down to this level. Type an exact value or nudge by 0.1 dB.");
 			tips.SetToolTip(compressorEnableCheck, "Compresses the guitar input to even out level swings during sustained notes. Applies live.");
 			tips.SetToolTip(compressorSlider, "Compressor strength from 0 to 100%. Type an exact value in the box.");
 			tips.SetToolTip(compInput, "Compressor strength from 0 to 100%. Type an exact value or nudge by 1.");
@@ -1154,12 +1328,26 @@ namespace RSMods.Audio
 			tips.SetToolTip(rgEnableCheck, "Takes over Rocksmith's own amp noise gate so the game stops cutting a note as it decays. Applies live.");
 			tips.SetToolTip(rgGateSlider, "Rocksmith gate threshold from -100 to +10 dB. Lower values keep the gate open for longer sustain.");
 			tips.SetToolTip(rgGateInput, "Rocksmith gate threshold from -100 to +10 dB. Lower values keep the gate open for longer sustain.");
-			tips.SetToolTip(limiterLevelSlider, "Limiter ceiling from -24 to 0 dBFS. Nothing leaves the bridge louder than this.");
-			tips.SetToolTip(ceilingInput, "Limiter ceiling from -24 to 0 dBFS. Type an exact value or nudge by 0.1 dB.");
+			tips.SetToolTip(limiterLevelSlider, "The volume ceiling, from -24 to 0 dBFS. Nothing in the game's output rises above this. Lower is quieter and safer; 0 is full scale. Your interface volume still sets how loud that actually is.");
+			tips.SetToolTip(ceilingInput, "The volume ceiling, from -24 to 0 dBFS. Type an exact value or nudge by 0.1 dB. Lower is quieter and safer.");
 		}
 
 		internal void ToggleRecordingFromHotkey()
 		{
+			ToggleRecordingFromHotkey(IntPtr.Zero);
+		}
+
+		// The in-game overlay posts this with a flags word: bit 0x100 marks an override, bit 1 = dry guitar
+		// (else game mix), bit 2 = video (else audio). When present, apply the overlay's chosen source and
+		// format before starting the take; the plain hotkey (flags 0) keeps whatever is selected here.
+		internal void ToggleRecordingFromHotkey(IntPtr flags)
+		{
+			long value = flags.ToInt64();
+			if ((value & 0x100) != 0)
+			{
+				recordingSource.SelectedIndex = (value & 1) != 0 ? 1 : 0;
+				captureMode.SelectedIndex = (value & 2) != 0 ? 1 : 0;
+			}
 			if (recordButton.Enabled)
 				Record(this, EventArgs.Empty);
 			else if (stopButton.Enabled)
@@ -1355,6 +1543,7 @@ namespace RSMods.Audio
 				{
 					pushInputSettingsOnConnect = false;
 					await client.SendAsync(27, ReadBridgeSetting(RSMods.ReadSettings.AudioDiagnosticsOverlayIdentifier, "on") == "off" ? "0" : "1");
+					await client.SendAsync(29, ReadBridgeSetting(RSMods.ReadSettings.NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER, "on") == "off" ? "0" : "1");
 					// Reconcile the live bridge with the saved sliders. Only fill a value the user is not
 					// mid-edit on, so a fresh change is never clobbered by the persisted setting.
 					if (!pendingInputGainTenths.HasValue) pendingInputGainTenths = persistedInputGainTenths;
@@ -1479,6 +1668,14 @@ namespace RSMods.Audio
 				statusTimer.Interval = milliseconds;
 		}
 
+		// Push pending live-control edits to the bridge immediately instead of waiting up to one mixerTimer
+		// interval (100 ms) and possibly longer behind a status poll on the shared pipe. ApplyMixer is guarded
+		// against overlap (isCommandRunning is set synchronously before the first await) and against poll
+		// contention (isPolling), so calling this on every slider tick is safe: a send in flight makes the call
+		// a no-op, which self-throttles the drag to the pipe round-trip rate and never floods the pipe. The
+		// mixerTimer stays as the backstop that flushes the final value if a drag ends during an in-flight send.
+		private void FlushMixerNow() => ApplyMixer(this, EventArgs.Empty);
+
 		private async void ApplyMixer(object sender, EventArgs args)
 		{
 			if (!masterEnabled) return;
@@ -1521,7 +1718,7 @@ namespace RSMods.Audio
 				// Operation 15 = guitar input make-up gain, sent as tenths of a dB (matches RSMods.ini).
 				if (requestedGain.HasValue)
 					latestStatus = await client.SendAsync(15, requestedGain.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
-				// Operation 19 = guitar input noise gate threshold, signed tenths of a dB (0 = off).
+				// Operation 19 = guitar input suppressor threshold, signed tenths of a dB (0 = off).
 				if (requestedGate.HasValue)
 					latestStatus = await client.SendAsync(19, requestedGate.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
 				// Operation 20 = guitar input compressor strength, integer 0-100 (0 = off).
@@ -1802,7 +1999,7 @@ namespace RSMods.Audio
 					}
 					else if (live == OutputApplyAction.RouteToDevice)
 					{
-						// Op 21 = route to a WASAPI device (op 19 is the input noise gate; 20 reserved).
+						// Op 21 = route to a WASAPI device (op 19 is the input suppressor; 20 reserved).
 						latestStatus = await client.SendAsync(21, output.Id);
 						AsioProxySetup.SetPreferRealOutput(false);
 						WriteSetting("OutputDevice", output.Id);
@@ -1842,17 +2039,22 @@ namespace RSMods.Audio
 					}
 					if (!AsioProxySetup.IsProxyRegistered())
 						AsioProxySetup.Register(Path.Combine(gameDirectory, "RocksmithAudioBridge.dll"));
-					// Point RS_ASIO at the proxy for output and for every input on the same interface. The shared
-					// host is what lets an interface that is absent at launch be adopted for input later: the
-					// proxy boots virtually, RS_ASIO keeps its capture device, and the game binds the real input
-					// when it arrives. Output-only linking leaves RS_ASIO's raw input lookup failing for the session.
-					AsioProxySetup.Link(gameDirectory, asioDriver);
+					// Record which real device the proxy forwards to (HKCU Target). We do NOT touch RS_ASIO.ini:
+					// the user points RS_ASIO's Output and Input Driver at "Rocksmith Audio Bridge" themselves.
+					// The shared bridge host is what lets an interface that is absent at launch be adopted later
+					// (the proxy boots virtually, RS_ASIO keeps its device), but that only holds while the ini
+					// names the bridge, so leaving it to the user means we can never silently revert it.
+					AsioProxySetup.SelectTarget(asioDriver);
+					AsioProxySetup.SetPreferRealOutput(true);
 					WriteSetting("OutputDevice", output.Id);
 					RefreshEnvironment();
 					UpdateOutputHint();
 					// The ASIO output is bound when Rocksmith starts (RS_ASIO reads its ini at launch), so this
-					// one-time setup needs the game to (re)start. After that, recording and the mixer are runtime.
-					SetStatus(output.Name + " set as your ASIO output (one-time setup). Start Rocksmith and the bridge is live; after this, recording, the mixer and output moves never need a restart.", ChipTone.Good);
+					// setup needs the game to (re)start. After that, recording and the mixer are runtime.
+					string iniHint = AsioProxySetup.IsLinked(gameDirectory)
+						? ""
+						: " Set RS_ASIO.ini [Asio.Output] Driver and [Asio.Input.0] Driver to \"" + AsioProxySetup.ProxyName + "\" so the bridge is in the chain.";
+					SetStatus(asioDriver + " recorded as the bridge's ASIO device." + iniHint + " Start Rocksmith and the bridge is live; after this, recording, the mixer and output moves never need a restart.", ChipTone.Good);
 				}
 				catch (Exception error) { SetStatus("Could not set up the audio bridge driver: " + error.Message, ChipTone.Bad); }
 				finally { isCommandRunning = false; UpdateState(); }
@@ -1990,6 +2192,8 @@ namespace RSMods.Audio
 			bool canMeasureLatency = client != null && latestStatus != null && latestStatus.OutputError >= 0
 				&& !isCommandRunning && !recording && video == null;
 			measureLatencyButton.Enabled = canMeasureLatency;
+			// Force enumeration only needs the game connected; it is independent of routing/recording.
+			forceEnumerationButton.Enabled = client != null && !isCommandRunning;
 			currentBufferLabel.Text = bufferSnapshot == null ? DescribeUnavailableBufferState()
 				: "Windows playback buffer: " + bufferSnapshot.Period + " frames · " + (bufferSnapshot.Period / 48.0).ToString("0.##") + " ms at 48 kHz · " + DescribeBufferMode() + "\n"
 				+ (bufferSnapshot.Minimum == bufferSnapshot.Maximum ? "The device supports only this period for the current format."
@@ -2024,6 +2228,7 @@ namespace RSMods.Audio
 			UpdateTakeButtons();
 			libraryLabel.Text = takes.Summary;
 			SetTip(recordingDirectory, recordingDirectory.Text);
+			UpdateSetupHeaders();
 		}
 
 		private string DescribeUnavailableBufferState()
@@ -2090,8 +2295,8 @@ namespace RSMods.Audio
 			}
 			diskChip.Set(StudioFormat.Bytes(free) + " free", free < LowDiskBytes ? ChipTone.Warn : ChipTone.Idle);
 			var audioTime = TimeSpan.FromSeconds(free / (double)StudioFormat.AudioBytesPerSecond);
-			spaceLabel.Text = StudioFormat.Bytes(free) + " free · about " + StudioFormat.Length(audioTime) + " of 48 kHz 16-bit stereo audio"
-				+ (captureMode.SelectedIndex == 1 ? " · video adds roughly 1 GB every 10 minutes" : "");
+			spaceLabel.Text = StudioFormat.Bytes(free) + " free · about " + StudioFormat.Length(audioTime) + " of 48 kHz stereo audio."
+				+ (captureMode.SelectedIndex == 1 ? Environment.NewLine + "Video uses about 1 GB every 10 minutes." : "");
 		}
 
 		private void UpdateInputMode()
@@ -2207,7 +2412,9 @@ namespace RSMods.Audio
 			// next full save silently reverts it. Keep ReadSettings.BridgeOwnedIdentifiers in step.
 			System.Diagnostics.Debug.Assert(Array.IndexOf(RSMods.ReadSettings.BridgeOwnedIdentifiers, identifier) >= 0,
 				"Bridge wrote a setting that is not in ReadSettings.BridgeOwnedIdentifiers: " + identifier);
-			WriteRsModsSetting(identifier, value, "[Mod Settings]");
+			string section = identifier == RSMods.ReadSettings.NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER
+				? "[Note by Note]" : "[Mod Settings]";
+			WriteRsModsSetting(identifier, value, section);
 		}
 
 		private static void WriteRsModsSetting(string identifier, string value, string section)
@@ -2350,11 +2557,11 @@ namespace RSMods.Audio
 				WriteNoiseGate(tenths);
 				persistedNoiseGateTenths = tenths;
 				string where = tenths >= 0 ? "off" : (tenths / 10.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " dB";
-				SetStatus("Noise gate " + where + " saved and applied. If you don't hear a change, restart Rocksmith (the input stage arms at launch).", ChipTone.Good);
+				SetStatus("Adaptive noise suppression " + where + " saved and applied. If you don't hear a change, restart Rocksmith (the input stage arms at launch).", ChipTone.Good);
 			}
 			catch (Exception error)
 			{
-				SetStatus("Could not save the noise gate: " + error.Message, ChipTone.Bad);
+				SetStatus("Could not save adaptive noise suppression: " + error.Message, ChipTone.Bad);
 			}
 		}
 
@@ -2663,6 +2870,7 @@ namespace RSMods.Audio
 			syncingLimiter = false;
 			pendingLimiter = LimiterCommand();
 			lastMixerEdit = DateTime.UtcNow;
+			FlushMixerNow();                                                      // typed/spun ceiling applies immediately
 			PersistLimiterLevel();
 		}
 
@@ -2882,6 +3090,7 @@ namespace RSMods.Audio
 		{
 			WriteSetting("RecordingDirectory", Path.GetFullPath(recordingDirectory.Text));
 			WriteSetting("RecordingSource", recordingSource.SelectedIndex == 1 ? "Dry" : "Tone");
+			WriteSetting("CaptureMode", captureMode.SelectedIndex == 1 ? "Video" : "Audio");
 		}
 
 		private void EnableBridge(string outputId)
@@ -2934,11 +3143,10 @@ namespace RSMods.Audio
 				}
 				else
 				{
-					AsioProxySetup.Unlink(gameDirectory);
 					WriteSetting("Enabled", "0");
 					WriteSetting("MasterEnabled", "0");
 					masterEnabled = false;
-					SetStatus("Audio bridge off. The audio setup will not be touched; Note by Note still works.", ChipTone.Idle);
+					SetStatus("Audio bridge off. RS_ASIO.ini is left exactly as you set it; Note by Note still works.", ChipTone.Idle);
 				}
 			}
 			catch (Exception error)
@@ -2953,39 +3161,6 @@ namespace RSMods.Audio
 			syncingMasterPower = false;
 			RefreshEnvironment();
 			UpdateState();
-		}
-
-		private void ReconcileDisabledBridge()
-		{
-			if (inputMode.IsGameRunning())
-			{
-				masterOffRequiresClose = true;
-				return;
-			}
-			try
-			{
-				AsioProxySetup.Unlink(gameDirectory);
-				WriteSetting("Enabled", "0");
-				WriteSetting("MasterEnabled", "0");
-				masterOffRequiresClose = false;
-			}
-			catch (Exception error)
-			{
-				masterOffRequiresClose = true;
-				SetStatus("The audio bridge is off, but restoring the saved audio setup needs attention: " + error.Message, ChipTone.Warn);
-			}
-		}
-
-		private void ReconcileEnabledBridge()
-		{
-			try
-			{
-				AsioProxySetup.SynchronizeLinkedInputs(gameDirectory);
-			}
-			catch (Exception error)
-			{
-				SetStatus("The audio bridge is on, but its shared ASIO setup needs attention: " + error.Message, ChipTone.Warn);
-			}
 		}
 
 		private string ReadSetting(string key, string defaultValue)

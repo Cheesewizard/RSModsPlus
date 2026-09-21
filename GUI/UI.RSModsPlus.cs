@@ -8,7 +8,7 @@ namespace RSMods
 	public partial class MainForm
 	{
 		private ListBox featureNavigation;
-		private readonly FlowLayoutPanel[] featurePages = new FlowLayoutPanel[2];
+		private readonly FlowLayoutPanel[] featurePages = new FlowLayoutPanel[3];
 
 		private void InitializeRsModsPlusPages()
 		{
@@ -53,6 +53,7 @@ namespace RSMods
 			InitializeNoteByNoteControls(featurePages[0]);
 			InitializeMlServiceControls(featurePages[0]);
 			InitializeDropPedalControls(featurePages[1]);
+			InitializeAudioBridgeSetup(featurePages[2]);
 			StyleFeatureControls(tab_RSModsPlus);
 			StudioTheme.EnableDoubleBuffering(tab_RSModsPlus);
 			featureNavigation.SelectedIndex = 0;
@@ -66,12 +67,6 @@ namespace RSMods
 
 		private void SelectFeaturePage(object sender, EventArgs args)
 		{
-			if (featureNavigation.SelectedIndex == 2)
-			{
-				OpenAudioRouting(null, EventArgs.Empty);
-				featureNavigation.SelectedIndex = 0;
-				return;
-			}
 			for (var index = 0; index < featurePages.Length; index++)
 			{
 				featurePages[index].Visible = index == featureNavigation.SelectedIndex;
@@ -94,7 +89,7 @@ namespace RSMods
 			var title = new Rectangle(bounds.X + 14, bounds.Y + 5, bounds.Width - 20, 22);
 			TextRenderer.DrawText(args.Graphics, featureNavigation.Items[args.Index].ToString(), StudioTheme.Strong, title, StudioTheme.Ink,
 				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
-			var descriptions = new[] { "Practice & detection", "Pitch & display", "Opens the live audio bridge" };
+			var descriptions = new[] { "Practice & detection", "Pitch & display", "Input mode & power" };
 			TextRenderer.DrawText(args.Graphics, descriptions[args.Index], StudioTheme.Small,
 				new Rectangle(title.X, bounds.Y + 27, title.Width, 18), StudioTheme.Muted, TextFormatFlags.Left | TextFormatFlags.NoPrefix);
 			args.DrawFocusRectangle();

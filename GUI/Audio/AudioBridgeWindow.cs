@@ -29,16 +29,11 @@ namespace RSMods.Audio
 		[DllImport("user32.dll", SetLastError = true)]
 		private static extern bool SetForegroundWindow(IntPtr hWnd);
 
-		[DllImport("user32.dll", SetLastError = true)]
-		private static extern IntPtr GetForegroundWindow();
-
 		[DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 		private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
-		// Restore (if minimised) and focus the existing bridge window. The result says whether the
-		// caller should treat the bridge as handled, or tell the user it exists but could not be shown.
-		// ShowWindow's return value is the previous visibility, not success, so only SetForegroundWindow
-		// and the foreground check decide the outcome.
+		// Restore (if minimised) and activate the existing bridge window. It remains a normal desktop
+		// window rather than permanently occupying the topmost band.
 		public static Presence TryBringToFront(bool forceRestore = false)
 		{
 			IntPtr handle = FindWindow(null, Title);
@@ -47,8 +42,8 @@ namespace RSMods.Audio
 			if (forceRestore || IsIconic(handle))
 				ShowWindow(handle, SW_RESTORE);
 
-			bool shown = SetForegroundWindow(handle) && GetForegroundWindow() == handle;
-			return shown ? Presence.Shown : Presence.FoundButNotShown;
+			bool shown = SetForegroundWindow(handle);
+			return shown && !IsIconic(handle) ? Presence.Shown : Presence.FoundButNotShown;
 		}
 	}
 }

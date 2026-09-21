@@ -11,7 +11,7 @@ namespace RSMods.Audio
 	/// </summary>
 	internal sealed class StudioNav : Control
 	{
-		private const int RowHeight = 40;
+		private const int RowHeight = 42;
 		private readonly string[] items;
 		private int selectedIndex;
 		private int hoveredIndex = -1;
@@ -25,7 +25,7 @@ namespace RSMods.Audio
 			this.items = items;
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
 			Font = StudioTheme.Strong;
-			Width = 164;
+			Width = 196;
 			Cursor = Cursors.Hand;
 			TabStop = true;
 			AccessibleRole = AccessibleRole.List;
@@ -72,13 +72,15 @@ namespace RSMods.Audio
 
 		protected override bool IsInputKey(Keys keyData)
 		{
-			return keyData == Keys.Up || keyData == Keys.Down || base.IsInputKey(keyData);
+			return keyData == Keys.Up || keyData == Keys.Down || keyData == Keys.Home || keyData == Keys.End || base.IsInputKey(keyData);
 		}
 
 		protected override void OnKeyDown(KeyEventArgs e)
 		{
 			if (Enabled && e.KeyCode == Keys.Up) { SelectedIndex = selectedIndex - 1; e.Handled = true; }
 			else if (Enabled && e.KeyCode == Keys.Down) { SelectedIndex = selectedIndex + 1; e.Handled = true; }
+			else if (Enabled && e.KeyCode == Keys.Home) { SelectedIndex = 0; e.Handled = true; }
+			else if (Enabled && e.KeyCode == Keys.End) { SelectedIndex = items.Length - 1; e.Handled = true; }
 			base.OnKeyDown(e);
 		}
 
@@ -91,34 +93,35 @@ namespace RSMods.Audio
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			var canvas = e.Graphics;
+			canvas.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 			for (int index = 0; index < items.Length; index++)
 			{
-				var row = new Rectangle(0, index * RowHeight, Width - 1, RowHeight);
+				var row = new Rectangle(8, index * RowHeight + 2, Width - 17, RowHeight - 4);
 				bool selected = index == selectedIndex;
 				if (selected)
 				{
-					using (var brush = new SolidBrush(StudioTheme.Surface))
-						canvas.FillRectangle(brush, row);
-					using (var pen = new Pen(StudioTheme.Line))
-						canvas.DrawRectangle(pen, row.X, row.Y, row.Width, row.Height);
+					using (var path = StudioTheme.RoundedRectangle(row, 9))
+					using (var brush = new SolidBrush(Enabled ? StudioTheme.Blend(StudioTheme.Accent, StudioTheme.Surface, 0.72) : StudioTheme.Elevated))
+						canvas.FillPath(brush, path);
 					using (var brush = new SolidBrush(Enabled ? StudioTheme.Accent : StudioTheme.Faint))
-						canvas.FillRectangle(brush, 0, row.Y, 4, row.Height + 1);
+						canvas.FillEllipse(brush, row.X + 12, row.Y + 15, 7, 7);
 				}
 				else if (index == hoveredIndex && Enabled)
 				{
+					using (var path = StudioTheme.RoundedRectangle(row, 9))
 					using (var brush = new SolidBrush(StudioTheme.Shift(StudioTheme.Background, 8)))
-						canvas.FillRectangle(brush, row);
+						canvas.FillPath(brush, path);
 				}
 				Color ink = !Enabled ? StudioTheme.Faint : selected || index == hoveredIndex ? StudioTheme.Ink : StudioTheme.Muted;
 				TextRenderer.DrawText(canvas, items[index], selected ? StudioTheme.Strong : StudioTheme.Body,
-					new Rectangle(18, row.Y, row.Width - 22, row.Height), ink,
+					new Rectangle(row.X + 30, row.Y, row.Width - 38, row.Height), ink,
 					TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
 			}
 			using (var pen = new Pen(StudioTheme.Line))
 				canvas.DrawLine(pen, Width - 1, 0, Width - 1, Height);
 			if (Focused && Enabled)
 				using (var pen = new Pen(StudioTheme.Blend(StudioTheme.Line, StudioTheme.Accent, 0.6)))
-					canvas.DrawRectangle(pen, 1, selectedIndex * RowHeight + 1, Width - 4, RowHeight - 2);
+					canvas.DrawRectangle(pen, 7, selectedIndex * RowHeight + 1, Width - 16, RowHeight);
 		}
 	}
 }
