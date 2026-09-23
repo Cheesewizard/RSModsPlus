@@ -62,6 +62,7 @@
     <OutDir>$(SharedProbeDir)$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)..\..\..\build\$(ProjectName)\$(Configuration)\</IntDir>
     <RocksmithInstallDir Condition="'$(RocksmithInstallDir)'==''">C:\Program Files (x86)\Steam\steamapps\common\Rocksmith2014</RocksmithInstallDir>
+	<DeployToGame Condition="'$(DeployToGame)'==''">true</DeployToGame>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -94,7 +95,8 @@
     <Copy SourceFiles="$(OutDir)$(TargetName).pdb" DestinationFiles="$(SharedProbeDir)NoteByNoteProbe.pdb" Condition="Exists('$(OutDir)$(TargetName).pdb')" />
     <WriteLinesToFile File="$(SharedProbeDir)NoteByNoteProbe.configuration.txt" Lines="$(Configuration)" Overwrite="true" />
   </Target>
-  <Target Name="DeployToRocksmith" AfterTargets="PublishSharedProbe" Condition="Exists('$(RocksmithInstallDir)')">
+  <Target Name="DeployToRocksmith" AfterTargets="PublishSharedProbe"
+		  Condition="'$(DeployToGame)'=='true' And Exists('$(RocksmithInstallDir)')">
     <MakeDir Directories="$(RocksmithInstallDir)\RSModsResearch" />
     <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(RocksmithInstallDir)\RSModsResearch\NoteByNoteProbe.dll" />
   </Target>

@@ -940,7 +940,12 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
   <!-- What this project ships into the game folder. The shared DeployToGame.targets (repo root) copies
        these after EVERY build, parking a locked live file as .previous first, so the host, the proxy
        driver and the GUI can never drift apart. Skip with -p:DeployToGame=false. -->
-  <Target Name="CollectGameDeployFiles" BeforeTargets="DeployToGame">
+  <!-- Must carry the same condition as DeployToGame itself: MSBuild still runs a target's
+       BeforeTargets when the target's own Condition is false, so without it a Release Public build
+       (the installer payload, never deployed) errors on an RSModsResearch\Release Public probe that
+       nothing produces - the probe project has no Release Public configuration. -->
+  <Target Name="CollectGameDeployFiles" BeforeTargets="DeployToGame"
+          Condition="'$(DeployToGame)'=='true' And Exists('$(RocksmithInstallDir)') And '$(Configuration)'!='Release Public'">
     <PropertyGroup>
       <!-- Anchored to this project file, NOT $(SolutionDir): building DLL.vcxproj directly
            (msbuild on the project, no solution) leaves SolutionDir unset and the old path
@@ -987,4 +992,3 @@ if exist "$(OutDir)$(TargetName).map" copy /Y "$(OutDir)$(TargetName).map" "$(Bu
     <ClInclude Include="Audio\OutputRateMatcher.hpp" />
   </ItemGroup>
 </Project>
-
