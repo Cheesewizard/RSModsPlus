@@ -12,9 +12,9 @@ namespace NoteByNote
 			return (noteMask & 0x00000008u) != 0;
 		}
 
-		bool TryConsumeForNote(uint32_t noteMask, bool pitchesMatch, uint64_t now, uint32_t sampleRate)
+		bool TryConsumeForNote(bool pitchesMatch, uint64_t now, uint32_t sampleRate)
 		{
-			return TryConsume(IsFretHandMuted(noteMask) || pitchesMatch, now, sampleRate);
+			return TryConsume(pitchesMatch, now, sampleRate);
 		}
 
 		void Clear()

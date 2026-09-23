@@ -202,7 +202,17 @@ bool ResearchBridge::TryGetNoteByNoteState(ResearchProtocol::NoteByNoteState& st
 	std::lock_guard<std::recursive_mutex> lock(probeMutex);
 	if (!loadedProbe.isInitialized) return false;
 	state = {};
-	return loadedProbe.api.GetState(&state) != 0;
+	if (loadedProbe.api.GetState(&state) != 0) return true;
+
+	static std::atomic<bool> hasLoggedStateFailure{ false };
+	if (!hasLoggedStateFailure.exchange(true))
+	{
+		LOG_ERROR("(NBN CONTROLLER) State retrieval failed for a "
+			<< sizeof(ResearchProtocol::NoteByNoteState)
+			<< "-byte host state. Presentation and detector HUD data are unavailable."
+			<< std::endl);
+	}
+	return false;
 }
 
 

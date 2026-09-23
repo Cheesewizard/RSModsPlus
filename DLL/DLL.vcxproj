@@ -405,6 +405,9 @@
     <ClInclude Include="Mods\DetectionFeedback.hpp" />
     <ClInclude Include="Mods\ChordAttackGate.hpp" />
     <ClInclude Include="Mods\ChordAttackConfirmation.hpp" />
+    <ClInclude Include="Mods\ChordPitchDecision.hpp" />
+    <ClInclude Include="Mods\MlChordConfirmation.hpp" />
+    <ClInclude Include="Mods\PreHoldCommitGate.hpp" />
     <ClInclude Include="OverlayToggles.hpp" />
     <ClInclude Include="PitchNames.hpp" />
     <ClInclude Include="D3D\GdiplusManager.hpp" />

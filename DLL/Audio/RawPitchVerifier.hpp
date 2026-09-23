@@ -15,13 +15,8 @@
 // freeze makes it latency-tolerant.
 namespace RawPitchVerifier
 {
-	struct AudioSnapshot
-	{
-		uint64_t endSampleIndex = 0;
-		uint32_t sampleRate = 0;
-		uint32_t sampleCount = 0;
-		float samples[16384] = {};
-	};
+	// AudioSnapshot now lives in RawAttackEvidence.hpp (included above) so it can cross the
+	// host/probe boundary as a shared POD.
 
 	bool CaptureSnapshot(AudioSnapshot& out);
 	bool QueryAttacks(uint64_t afterSampleIndex, RawAttackBatch& out);

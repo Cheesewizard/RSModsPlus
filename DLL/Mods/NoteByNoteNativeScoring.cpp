@@ -1,11 +1,16 @@
 #include "ResearchProbeRuntime.hpp"
 #include "MlConfirmationState.hpp"
 #include "PickedAttackQueue.hpp"
+#include "PreHoldCommitGate.hpp"
+#include "OctaveCollisionGate.hpp"
+#include "NoteTechniqueClassification.hpp"
 #include "ChordAttackGate.hpp"
 #include "ChordAttackConfirmation.hpp"
+#include "ChordPitchDecision.hpp"
 #include "MutedAttackConfirmation.hpp"
 #include "ChordMatchWindow.hpp"
 #include "CloseChordConfirmation.hpp"
+#include "StrummedChordAttack.hpp"
 #include "UnisonChord.hpp"
 #include "../Audio/RawPitchVerifier.hpp"
 #include "HeldPitchConfirmation.hpp"
@@ -481,17 +486,17 @@ namespace
 	// low E logged mask 0x802004 (SINGLE | SUSTAIN | OPEN), and Rocksmith's own
 	// presentability predicate at 0x7A5CE0 tests 0x2000 and then reads record+0x3C as
 	// the sustain length, which only makes sense if 0x2000 is SUSTAIN.
-	constexpr uint32_t NOTE_MASK_HAMMERON = 0x00000200;
-	constexpr uint32_t NOTE_MASK_PULLOFF = 0x00000400;
+	constexpr uint32_t NOTE_MASK_HAMMERON = NoteByNote::NOTE_MASK_HAMMER_ON;
+	constexpr uint32_t NOTE_MASK_PULLOFF = NoteByNote::NOTE_MASK_PULL_OFF;
 	constexpr uint32_t NOTE_MASK_BEND = 0x00001000;
-	// A tapped note (right- or left-hand tap) is fretted without a pick, exactly like a
-	// hammer-on or pull-off, so it is treated as a no-pick legato target: confirmed by pitch
+	// A tapped note (right- or left-hand tap) is fretted without a pick, so it retains
+	// no-pick legato acceptance: confirmed by pitch
 	// rather than waiting for a pick onset that never arrives. Verified live on Through the Fire
 	// and the Flames: the tapped notes carry mask 0x904000 (SINGLE | RIGHTHAND | TAP), and
 	// without this handling they armed the freezer and then stuck (no pick onset ever came).
-	constexpr uint32_t NOTE_MASK_TAP = 0x00004000;
+	constexpr uint32_t NOTE_MASK_TAP = NoteByNote::NOTE_MASK_TAP;
 
-	// A hammer-on or pull-off is played without a pick attack, so the edge-detected
+	// A pull-off or tap is played without a pick attack, so the edge-detected
 	// onset query frequently reports nothing at all for it: the string is already
 	// sounding and only the fretted pitch changes. The current-pitch query does see
 	// it. Requiring a settled reading avoids accepting the momentary pitches crossed
@@ -656,6 +661,7 @@ namespace
 		bool isBend = false;
 		bool isBendChild = false;
 		bool isLegato = false;
+		bool isHammerOn = false;
 	};
 
 	struct BendDecisionObservation
@@ -744,10 +750,14 @@ namespace
 	// The pitch of the note that was just committed. A carried onset necessarily has
 	// this pitch, which is what makes it distinguishable from fresh playing.
 	int previousExpectedMidi = -1;
-	// The string of the note just committed. A hammer-on or pull-off can only be
+	// The string of the note just committed. A no-pick pull-off or tap can only be
 	// sounded by a string that is already ringing, so legato handling only applies
 	// when the successor is on this same string.
 	int previousSelectedString = -1;
+	// The raw-audio sample a chord commit consumed through. A single-note successor's
+	// "attack" at or before this is the chord's own strum re-flagged by the HFC detector,
+	// not a fresh pick (2026-09-22 893.23), so it is ignored.
+	uint64_t pickAttackFloorSample = 0;
 	// Whether the note just committed was a bend. A bend sweeps through a range of
 	// pitches, so a carried onset from it does not necessarily carry that note's
 	// nominal pitch and cannot be told apart by pitch alone.
@@ -774,7 +784,7 @@ namespace
 	// observed to make a bend accept itself the moment its parent was played, reproduced on a
 	// second fret. So the fix is to change what satisfies it, not whether it exists: the
 	// continuous pitch tracker can see the bend being held, and a bend produces no new pick
-	// attack anyway, which is the same constraint hammer-ons already live under.
+	// attack anyway, which is the same constraint as the retained no-pick techniques.
 	bool isBendChildTarget = false;
 	// Defined beside the acceptance test it feeds, but needed by hold establishment above.
 	void ResolveBendAcceptance(uintptr_t record);
@@ -798,9 +808,12 @@ namespace
 	int32_t visualGroupStrings[ResearchProtocol::NoteByNoteState::MaxVisualGroup] = {};
 	int32_t visualGroupFrets[ResearchProtocol::NoteByNoteState::MaxVisualGroup] = {};
 	uintptr_t lastVisualGroupRecord = 0;
-	// Set for hammer-on and pull-off records, which are accepted from the detector's
+	// Set for hammer-on, pull-off and tap records, which are accepted from the detector's
 	// current pitch because they produce no pick attack for the onset query to latch.
 	bool isLegatoTarget = false;
+	// A hammer-on is a legato target that ALSO stays eligible for the pick buffer, so a
+	// hammer-on that happens to be picked still commits (see IsPlainPickedTarget).
+	bool isHammerOnTarget = false;
 	uint32_t legatoConfirmTickCount = 0;
 	// True once the current-pitch query has reported something other than the target's
 	// pitch since this target became active. Legato acceptance requires it: the pitch
@@ -817,7 +830,7 @@ namespace
 	// exactly this, having never played the continuation while the feature accepted it.
 	//
 	// The run is now held as a unit. The first note needs its pick attack, and each
-	// continuation is then confirmed by pitch, because a hammer-on or pull-off produces no
+	// continuation is then confirmed by pitch, because a no-pick continuation produces no
 	// pick attack for the onset query to latch. Nothing is committed until the whole run
 	// has been played, so an incomplete or wrong run simply does not advance.
 	constexpr uint32_t MAX_LEGATO_RUN = 8;
@@ -1769,6 +1782,15 @@ namespace
 
 	BendVisualizationSnapshot bendVisualizationSnapshot;
 
+	// The bend visualizer's "reached" verdict (published as state.bendReachedTarget): set
+	// where the bend evaluation actually advances the gesture - the legato-run bend element
+	// surviving its vetoes - never from pitch alone, so the meter's green is the engine's own
+	// decision. The selected record and Riff Repeater epoch identify the exact gesture for
+	// which it was accepted, preventing a previous loop pass from leaking into the next one.
+	bool bendVisualReached = false;
+	uintptr_t bendVisualReachedRecord = 0;
+	uint64_t bendVisualReachedEpoch = 0;
+
 	// Input-present floor for gating the high-frequency trace logs (Philip, 2026-08-29).
 	// The console buffer holds only ~9000 rows, so per-frame/per-tick idle spam (BEND
 	// FEED, LAS DETECT) scrolls real events - a commit, a chord accept - out of it before
@@ -1853,6 +1875,25 @@ namespace
 				&& TryRead(previous + pitchField, sample.pitchPrevious)
 				&& TryRead(current + RING_FRAME_SEQUENCE, sample.ringSequence);
 		}
+		return true;
+	}
+
+	// The loudest-played-note query is a candidate selector and can report unrelated
+	// noisy values while the detector has no settled input. Release gating must use the
+	// detector ring's current pitch, with both adjacent frames settled and the native
+	// input gates passing, so silence is determined from the same evidence as scoring.
+	bool TryReadDetectorInputPresence(bool& isInputPresent)
+	{
+		DetectorGateSample sample;
+		if (!TryReadDetectorGates(sample) || !sample.hasRing)
+		{
+			return false;
+		}
+
+		isInputPresent = sample.passesLevel
+			&& sample.passesQuality
+			&& sample.pitchNow >= 0
+			&& sample.pitchNow == sample.pitchPrevious;
 		return true;
 	}
 
@@ -2043,7 +2084,7 @@ namespace
 	bool IsPlainPickedTarget()
 	{
 		return expectedMidi >= 0 && selectedChordId == -1 && !isBendTarget
-			&& !isBendChildTarget && !isLegatoTarget && !isConfirmingLegatoRun;
+			&& !isBendChildTarget && (!isLegatoTarget || isHammerOnTarget) && !isConfirmingLegatoRun;
 	}
 
 	void TickPickedAttackStream();
@@ -2131,6 +2172,43 @@ namespace
 			const float plusRise = std::sqrt(raw.attackPlusPower) - std::sqrt(attack->baselinePlusPower[slot]);
 			const float neighbourRise = minusRise > plusRise ? minusRise : plusRise;
 			if (neighbourRise > 1e-3f && neighbourRise > (targetRise > 0.0f ? targetRise : 0.0f)) continue;
+			// Ringer / boundary veto: raw evidence cannot tell a fresh pick from a ringing
+			// neighbour's decay or a chord strum's tail, so at these moments native (loudest note,
+			// or pitchNow if the loudest query lags behind a louder ring) must actually hear the
+			// note. Three triggers: (1) the just-committed chord rings a tone that masks this note
+			// (octave up, or an octave/fifth/2-octave BELOW landing on its fundamental band); (2)
+			// the just-committed single note masks it the same way; (3) Philip's rule - a plain
+			// single note right after a chord always needs its own attack. Legato successors
+			// (hammer/pull/tap) are exempt. See OctaveCollisionGate.hpp and [[prefer-native-detection]].
+			const bool chordRings = lastCommittedChordRecord != 0
+				&& researchChordTonesRecord == lastCommittedChordRecord
+				&& std::chrono::duration<double>(std::chrono::steady_clock::now()
+					- lastCommittedChordAt).count() < COMMITTED_CHORD_RESELECT_GUARD_SECONDS;
+			const bool noteRings = hasLastCommitWallClock && previousExpectedMidi >= 0
+				&& std::chrono::duration<double>(std::chrono::steady_clock::now()
+					- lastCommitWallClock).count() < COMMITTED_CHORD_RESELECT_GUARD_SECONDS;
+			const char* nativeRequired = nullptr;
+			if (chordRings && NoteByNote::RingingTonesMaskTarget(midi, researchChordTones, researchChordToneCount))
+				nativeRequired = "the just-committed chord rings a masking partial";
+			else if (noteRings && NoteByNote::RingingNoteMasksTarget(midi, previousExpectedMidi))
+				nativeRequired = "the just-committed note rings a masking partial";
+			else if (NoteByNote::ChordToSingleBoundaryRequiresNative(previousSelectedString, isLegatoTarget))
+				nativeRequired = "chord->single needs its own attack";
+			if (nativeRequired != nullptr)
+			{
+				DetectorGateSample gateSample;
+				const int pitchNow = TryReadDetectorGates(gateSample) ? gateSample.pitchNow : -1;
+				if (!NoteByNote::NativeCorroboratesPick(nativeMidi, midi)
+					&& !NoteByNote::NativeCorroboratesPick(pitchNow, midi))
+				{
+					static uint32_t withheldLogThrottle = 0;
+					if ((withheldLogThrottle++ % 30) == 0)
+						LOG_INFO("(NBN PICK BUFFER) Withheld attack=" << attack->time << " midi=" << midi
+							<< ": " << nativeRequired << "; native loudest=" << nativeMidi
+							<< " pitchNow=" << pitchNow << " targetRise=" << targetRise << std::endl);
+					continue;
+				}
+			}
 			const auto strategy = CurrentTechniqueStrategy();
 			NoteByNote::DetectionFeedback feedback;
 			feedback.nativeMidi = nativeMidi;
@@ -2166,7 +2244,7 @@ namespace
 			LOG_INFO("(NBN PICK BUFFER) Confirmed attack=" << attack->time << " midi=" << midi
 				<< " samples=" << attack->minimumSample << ".." << raw.endSampleIndex
 				<< " change=" << raw.attackChange << " targetRise=" << targetRise << " neighbourRise=" << neighbourRise
-				<< " queued=" << pickedAttacks.Count() << std::endl);
+				<< " native=" << nativeMidi << " queued=" << pickedAttacks.Count() << std::endl);
 			return;
 		}
 	}
@@ -2258,6 +2336,28 @@ namespace
 							? NoteByNote::ConfirmMutedAttack(frames, window, snapshot.sampleRate)
 							: NoteByNote::ConfirmChordAttack(frames, window, snapshot.sampleRate,
 								candidates, candidateCount);
+						// A plain strummed chord (no hammer/pull/tap authored) must not accept from a
+						// fret-hand slam onto still-ringing strings: the HFC test above cannot tell it
+						// from a strum, but its loudness envelope (damped run-up, weak re-excitation)
+						// can. See StrummedChordAttack.hpp; the envelope is logged either way so the
+						// thresholds can be retuned from a full session.
+						if (changed && !fretHandMuted
+							&& !NoteByNote::UsesNoPickLegatoAcceptance(attackNoteMask))
+						{
+							NoteByNote::ChordAttackEnvelope envelope;
+							const uint32_t offset = static_cast<uint32_t>(attackSample - start);
+							if (NoteByNote::MeasureChordAttackEnvelope(snapshot.samples, offset,
+								snapshot.sampleCount, snapshot.sampleRate, envelope))
+							{
+								const bool hammer = NoteByNote::LooksLikeFretHandHammer(envelope);
+								LOG_INFO("(NBN CHORD ATTACK) envelope sample=" << attackSample
+									<< " peakBefore=" << envelope.peakBeforeDb
+									<< " floorBefore=" << envelope.floorBeforeDb
+									<< " after=" << envelope.afterDb
+									<< (hammer ? " REJECTED fret-hand hammer" : "") << std::endl);
+								if (hammer) changed = false;
+							}
+						}
 					}
 				}
 			}
@@ -2284,6 +2384,13 @@ namespace
 					<< " consumedThrough=" << chordAttacks.GetConsumedThroughSample()
 					<< " detector=hfc fretHandMuted=" << fretHandMuted << " record=0x" << std::hex
 					<< selectedRecord << std::dec << std::endl);
+				continue;
+			}
+			if (attackSample <= pickAttackFloorSample)
+			{
+				LOG_INFO("(NBN PICK BUFFER) Ignored attack sample=" << attackSample
+					<< ": audio the chord commit already consumed (through=" << pickAttackFloorSample
+					<< ")." << std::endl);
 				continue;
 			}
 			NoteByNote::PickedAttack attack;
@@ -2785,6 +2892,14 @@ namespace
 			&& std::chrono::duration<double>(std::chrono::steady_clock::now() - lastBendCommitAt).count()
 				< BEND_RELEASE_GUARD_SECONDS;
 		if (expectedMidi == previousExpectedMidi || previousBendMayRing) return false;
+		// After a chord, a legato successor (a hammer-on on a chord-fretted string) must not
+		// be satisfied by a chord tone that is merely still ringing at the successor's pitch.
+		if (previousSelectedString == NoteByNote::CHORD_STRING_SENTINEL
+			&& lastCommittedChordRecord != 0 && researchChordTonesRecord == lastCommittedChordRecord)
+		{
+			for (int i = 0; i < researchChordToneCount; ++i)
+				if (researchChordTones[i] == expectedMidi) return false;
+		}
 
 		const bool mlConfirmed = MlMayRescueNow() && MlConfirmsHeldNote();
 		ResearchProtocol::RawNoteConfirmation raw;
@@ -3295,7 +3410,7 @@ namespace
 		// previousSelectedString is deliberately NOT cleared here.
 		//
 		// It records which string is still ringing, which is what decides whether a
-		// hammer-on or pull-off is physically playable and therefore whether it may be a
+		// no-pick pull-off or tap is physically playable and therefore whether it may be a
 		// target of its own. Clearing it when a selection ends erases that memory, so the
 		// next fresh selection sees -1, the skip test fails its >= 0 guard, and the
 		// continuation becomes a separate target. Philip saw this as a legato expression
@@ -3311,8 +3426,12 @@ namespace
 		isBendTarget = false;
 		bendAcceptMidi = -1;
 		bendVisualizationSnapshot = {};
+		bendVisualReached = false;
+		bendVisualReachedRecord = 0;
+		bendVisualReachedEpoch = 0;
 		isBendChildTarget = false;
 		isLegatoTarget = false;
+		isHammerOnTarget = false;
 		legatoConfirmTickCount = 0;
 		hasLegatoPitchDeparted = false;
 		legatoRunCount = 0;
@@ -3676,8 +3795,12 @@ namespace
 			});
 		static uint64_t loggedAttackSample = 0;
 		static uint64_t loggedScanSample = 0;
-		if (accepted || loggedAttackSample != attackSample || pickScanSample < loggedScanSample
-			|| pickScanSample - loggedScanSample >= pickSampleRate / 10)
+		// Only trace scans that actually examined frames. Since the chord matcher now runs on
+		// every hold tick, an empty scan (no attack window, framesMatched == 0) would otherwise
+		// spam the live console every 100 ms for the whole hold.
+		const bool periodicScan = loggedAttackSample != attackSample || pickScanSample < loggedScanSample
+			|| pickScanSample - loggedScanSample >= pickSampleRate / 10;
+		if (accepted || (periodicScan && framesMatched > 0))
 		{
 			loggedAttackSample = attackSample;
 			loggedScanSample = pickScanSample;
@@ -3717,9 +3840,11 @@ namespace
 
 	bool RawUnisonMatchesAttack(int midi, uint64_t attackSample)
 	{
-		RawPitchVerifier::NoteConfirmation evidence;
+		// Bridge, not RawPitchVerifier::QueryNoteConfirmation (stubbed in the probe): route through
+		// the host like ConfirmLatestPickedAttack does, so unison confirms in a loaded probe too.
+		ResearchProtocol::RawNoteConfirmation evidence;
 		const double frequency = 440.0 * std::pow(2.0, (midi - 69.0) / 12.0);
-		if (!RawPitchVerifier::QueryNoteConfirmation(frequency, evidence, attackSample)
+		if (!ResearchProbeRuntime::QueryRawNoteConfirmation(frequency, evidence, attackSample)
 			|| !evidence.confirmed) return false;
 		LOG_INFO("(NBN RAW UNISON) Confirmed pitch=" << midi << " samples=" << attackSample
 			<< ".." << evidence.endSampleIndex << " record=0x" << std::hex << selectedRecord
@@ -4212,6 +4337,9 @@ namespace
 		if (!(isBendTarget || isBendRunConfirmation) || expectedMidi < 0)
 		{
 			bendVisualizationSnapshot = snapshot;
+			bendVisualReached = false;
+			bendVisualReachedRecord = 0;
+			bendVisualReachedEpoch = 0;
 			return;
 		}
 
@@ -4996,7 +5124,7 @@ namespace
 	}
 
 	// legatoReferenceString is the string that is already ringing, which is what decides
-	// whether a hammer-on or pull-off is physically playable and therefore whether it may
+	// whether a no-pick pull-off or tap is physically playable and therefore whether it may
 	// be a target in its own right. It differs by caller and getting it wrong hangs the
 	// feature. A fresh selection compares against the last committed note, so it passes
 	// previousSelectedString. A successor search runs while a hold is still owned, so the
@@ -5084,9 +5212,9 @@ namespace
 	}
 
 #if defined(_DEBUG)
-	// #69 diagnostic: log each live note's mask and per-note scoring state once, so tapped
-	// notes (NOTE_MASK_TAP 0x4000) and the reason the selector drops them can be read straight
-	// from the console. Deduped by record so a tapping run logs each note once, not every scan.
+	// #69 diagnostic: log each live note's mask and per-note scoring state once, so authored
+	// technique and scoring flags can be correlated with selector behavior from the console.
+	// Deduped by record so a tapping run logs each note once, not every scan.
 	std::unordered_set<uintptr_t> g_scan69LoggedRecords;
 	void LogNoteScan69(const LiveNote& note)
 	{
@@ -5127,7 +5255,9 @@ namespace
 			{
 				return true;
 			}
-			if ((note.mask & NOTE_MASK_IGNORE) != 0) return true;
+			// Ignore excludes a record from Rocksmith's ordinary scoring/rating, but it is also
+			// authored onto visible playable notes in rapid passages. Note-by-Note practices
+			// those visible note identities, so Ignore alone must not make one ineligible.
 			// A note Rocksmith has already scored cannot be a target. Holding on one asks
 			// the player to articulate something the engine considers finished, and the
 			// hold ends the moment it starts: CommitBeforeRelease commits as soon as it
@@ -5145,9 +5275,9 @@ namespace
 			// timeline, revealed one at a time on the fretboard. The earlier run-as-one-
 			// gesture design (skip continuations as targets, confirm the run by pitch
 			// under one hold) is retired with it - it existed to serve the old
-			// presentation, which kept the whole group lit. Acceptance for a legato
-			// target needs no pick: the isLegatoTarget pitch fallback confirms it from
-			// the detector, and the hit-decision override forces the native commit. The
+			// presentation, which kept the whole group lit. Pull-offs retain detector-pitch
+			// acceptance because they have no pick edge. Hammer-ons deliberately use the
+			// normal picked-note path so wrong or carried pitches cannot advance them. The
 			// "played twice" failure that once justified skipping these predates that
 			// override. legatoReferenceString is retained by the callers but no longer
 			// consulted.
@@ -5174,7 +5304,10 @@ namespace
 			{
 				return true;
 			}
-			if (note.stateC0 != 0 || note.stateC1 != 0 || note.stateC2 != 0 || note.stateC3 != 0) return true;
+			// A partially progressed record is still the earliest unresolved target. The
+			// full C0/C1 guard above excludes records the engine has already scored; letting
+			// any individual state byte exclude a record here skipped live notes that were
+			// already present in the phrase but had only partially advanced.
 			if (consumedRecords.count(note.record) != 0) return true;
 			// Double-strum guard: the just-committed chord stays ineligible across the
 			// bootstrap reset its own release triggers at the section start. See
@@ -5260,7 +5393,8 @@ namespace
 		int32_t selectedPhraseIteration = -1;
 		TryRead(selectedRecord + RECORD_PHRASE_ITERATION, selectedPhraseIteration);
 		LOG_INFO("(NBN LAS SELECT) epoch=" << epochIndex
-			<< " record=0x" << std::hex << selectedRecord << std::dec
+			<< " record=0x" << std::hex << selectedRecord
+			<< " mask=0x" << earliest.mask << std::dec
 			<< " time=" << std::fixed << std::setprecision(6) << selectedRecordTime
 			<< " string=" << selectedString << " fret=" << selectedFret
 			<< " phraseIteration=" << selectedPhraseIteration
@@ -5351,6 +5485,7 @@ namespace
 			isBendChildTarget = false;
 			bendAcceptMidi = -1;
 			isLegatoTarget = false;
+			isHammerOnTarget = false;
 			legatoConfirmTickCount = 0;
 			hasLegatoPitchDeparted = false;
 			legatoRunCount = 0;
@@ -5422,8 +5557,13 @@ namespace
 			isBendTarget = (selected.mask & NOTE_MASK_BEND) != 0;
 			isBendChildTarget = isBendTarget && (selected.mask & NOTE_MASK_CHILD) != 0;
 			ResolveBendAcceptance(selectedRecord);
-			isLegatoTarget = (selected.mask & (NOTE_MASK_HAMMERON | NOTE_MASK_PULLOFF | NOTE_MASK_TAP)) != 0
-				&& previousSelectedString == selectedString;
+			// Hammer-ons, pull-offs and taps all accept on the no-pick legato path. After a
+			// chord the predecessor string is the sentinel, so a hammer-on on a chord-fretted
+			// string still qualifies (LegatoContinuesPreviousString). A picked hammer-on also
+			// commits through the pick buffer (isHammerOnTarget keeps IsPlainPickedTarget true).
+			isLegatoTarget = NoteByNote::UsesNoPickLegatoAcceptance(selected.mask)
+				&& NoteByNote::LegatoContinuesPreviousString(previousSelectedString, selectedString);
+			isHammerOnTarget = NoteByNote::IsHammerOn(selected.mask);
 			legatoConfirmTickCount = 0;
 			hasLegatoPitchDeparted = false;
 			BuildLegatoRun(owner, selectedRecordTime, selectedString);
@@ -5795,7 +5935,8 @@ namespace
 		denseSuccessor.isBend = (next.mask & NOTE_MASK_BEND) != 0;
 		denseSuccessor.isBendChild = denseSuccessor.isBend
 			&& (next.mask & NOTE_MASK_CHILD) != 0;
-		denseSuccessor.isLegato = (next.mask & (NOTE_MASK_HAMMERON | NOTE_MASK_PULLOFF | NOTE_MASK_TAP)) != 0;
+		denseSuccessor.isLegato = NoteByNote::UsesNoPickLegatoAcceptance(next.mask);
+		denseSuccessor.isHammerOn = NoteByNote::IsHammerOn(next.mask);
 
 		PerformOwnedReleaseAtEpoch(owner, nextHoldTime,
 			"the committed dense note is advancing through a coordinated PlayerSong/fretboard rebuild");
@@ -6056,7 +6197,8 @@ namespace
 		isBendTarget = denseSuccessor.isBend;
 		isBendChildTarget = denseSuccessor.isBendChild;
 		isLegatoTarget = denseSuccessor.isLegato
-			&& denseSuccessor.stringIndex == previousSelectedString;
+			&& NoteByNote::LegatoContinuesPreviousString(previousSelectedString, denseSuccessor.stringIndex);
+		isHammerOnTarget = denseSuccessor.isHammerOn;
 		legatoConfirmTickCount = 0;
 		hasLegatoPitchDeparted = false;
 		selectedRecord = denseSuccessor.record;
@@ -6498,6 +6640,22 @@ namespace
 				}
 				if (selected.stateC0 != 0 && selected.stateC1 != 0)
 				{
+					const bool requiresTargetOwnedFreshAttack =
+						NoteByNote::ShouldBlockPreHoldHitDecision(
+							isFlowUntilMissEnabled, isHoldSuppressed);
+					const bool hasTargetOwnedFreshAttack = requiresTargetOwnedFreshAttack
+						&& IsPlainPickedTarget() && TakeBufferedPick();
+					if (NoteByNote::ShouldRejectNaturalPreHoldCommit(
+						isFlowUntilMissEnabled, isHoldSuppressed, hasTargetOwnedFreshAttack))
+					{
+						LOG_ERROR("(NBN LAS COMMIT) The selected record committed while its pre-hold"
+							<< " hit decision was blocked: record=0x" << std::hex << selectedRecord
+							<< std::dec << " states=" << static_cast<int>(selected.stateC0)
+							<< static_cast<int>(selected.stateC1) << static_cast<int>(selected.stateC2)
+							<< static_cast<int>(selected.stateC3) << "." << std::endl);
+						FaultWithoutRelease("A selected record bypassed the pre-hold hit-decision gate");
+						return;
+					}
 					consumedRecords.insert(selectedRecord);
 					LOG_INFO("(NBN LAS COMMIT) Natural commit before any hold: record=0x" << std::hex
 						<< selectedRecord << std::dec << " states=" << static_cast<int>(selected.stateC0)
@@ -6909,8 +7067,23 @@ namespace
 					return;
 				}
 
-				int currentMidi = QueryNativeLoudestPlayedNote();
-				if (currentMidi != -1)
+				bool isInputPresent = false;
+				static bool hasReleaseReadFailureLogged = false;
+				if (!TryReadDetectorInputPresence(isInputPresent))
+				{
+					if (!hasReleaseReadFailureLogged)
+					{
+						hasReleaseReadFailureLogged = true;
+						LOG_ERROR("(NBN LAS INPUT) The detector ring is unreadable while waiting"
+							<< " for input release; preserving the wait until current input state"
+							<< " can be determined." << std::endl);
+					}
+					inputReleaseTickCount = 0;
+					return;
+				}
+				hasReleaseReadFailureLogged = false;
+
+				if (isInputPresent)
 				{
 					inputReleaseTickCount = 0;
 					return;
@@ -7076,7 +7249,7 @@ namespace
 						// Bend and legato targets. A bend needs the detected onset PITCH here so
 						// the bend-band entry below can see it (the gesture is proven by the
 						// continuous-tracker confirmation, not by an attack==pitch match). A
-						// legato note (hammer-on/pull-off) produces NO fresh attack, so the
+						// retained no-pick legato targets (pull-off/tap) produce no fresh attack, so the
 						// picked-note attack scan can never accept it; native routes legato
 						// through its own path (0x4E9670), not ported yet, so its sounding-based
 						// departure-then-lock rule stays until that lands.
@@ -7578,10 +7751,20 @@ namespace
 						// fretted legato note still needs the two polls, because its pitch is
 						// stable once fretted and a single poll is more prone to noise.
 						const uint32_t requiredPolls = isBendElement
-							? 1u
-							: LEGATO_CONFIRMATION_TICKS;
+								? 1u
+								: LEGATO_CONFIRMATION_TICKS;
 						if (hasReachedRunPitch)
 						{
+							// The engine's own bend verdict, post-veto: a bend element needs a
+							// single poll, so reaching here means the note progresses this
+							// tick. This - not the raw pitch - is what the bend meter's green
+							// publishes, so green can never show without progress.
+							if (isBendElement)
+							{
+								bendVisualReached = true;
+								bendVisualReachedRecord = selectedRecord;
+								bendVisualReachedEpoch = epochIndex;
+							}
 							++legatoConfirmTickCount;
 							if (legatoConfirmTickCount >= requiredPolls)
 							{
@@ -7645,6 +7828,7 @@ namespace
 									consumedRecords.insert(selectedRecord);
 									lastCommittedChordRecord = selectedRecord;
 									lastCommittedChordAt = std::chrono::steady_clock::now();
+									pickAttackFloorSample = chordAttacks.GetConsumedThroughSample();
 								}
 								else
 								{
@@ -7662,11 +7846,11 @@ namespace
 						return;
 					}
 
-					// Legato fallback. A hammer-on or pull-off is fretted onto a string
+					// Legato fallback. A pull-off or tap changes a string that is already
 					// that is already sounding, so it produces no pick attack and the
 					// edge-detected onset query often never reports it at all. The
 					// current-pitch query does observe it. This is only consulted for
-					// records the chart itself flags as hammer-on or pull-off, and only
+					// records classified for no-pick legato acceptance, and only
 					// when the successor's pitch differs from the note just played, so a
 					// still-ringing previous note cannot satisfy it.
 					//
@@ -7698,8 +7882,8 @@ namespace
 								LOG_INFO("(NBN LAS COMMIT) Legato pitch " << expectedMidi
 									<< " confirmed from the detector's current-pitch query across "
 									<< LEGATO_CONFIRMATION_TICKS
-									<< " polls, after first departing from it; a hammer-on or"
-									<< " pull-off produces no pick attack for the onset query to"
+									<< " polls, after first departing from it; this no-pick"
+									<< " technique produces no attack for the onset query to"
 									<< " latch." << std::endl);
 							}
 						}
@@ -8282,6 +8466,18 @@ namespace
 
 		if (record == selectedRecord)
 		{
+			// Stable freeze-per-note mode does not let Rocksmith commit a selected record in
+			// the open interval between selection and EstablishHold. A correct early pick is
+			// already captured by PickedAttackQueue and is consumed after the hold owns the
+			// target; a wrong pitch therefore cannot make the target disappear before that
+			// ownership boundary. Flow-until-miss deliberately uses natural Armed commits,
+			// and hold-suppressed records deliberately play through, so both remain native.
+			if (gatePhase == GatePhase::Armed
+				&& NoteByNote::ShouldBlockPreHoldHitDecision(
+					isFlowUntilMissEnabled, isHoldSuppressed))
+			{
+				return false;
+			}
 			if (gatePhase == GatePhase::WaitingForInputRelease
 				|| gatePhase == GatePhase::Holding
 				|| gatePhase == GatePhase::DenseRebuildPending
@@ -8322,6 +8518,7 @@ namespace
 					// -1 could not run (det unresolved or ND tones not set for this record).
 					int matcherTones[6] = { 0, 0, 0, 0, 0, 0 };
 					int playedTones[6] = { 0, 0, 0, 0, 0, 0 };
+					int playedMidiByString[6] = { -1, -1, -1, -1, -1, -1 };
 					int matcherToneCount = 0;
 					{
 						// Native matching uses the game's template. Raw capture validation uses
@@ -8346,6 +8543,7 @@ namespace
 										return false;
 									}
 									playedTones[matcherToneCount] = playedMidi;
+									playedMidiByString[i] = playedMidi;
 									matcherTones[matcherToneCount++] = matcherView.notes[i];
 								}
 							}
@@ -8413,25 +8611,66 @@ namespace
 					}
 					if (freshAttack && soundingTargetTones > chordSoundingPeak)
 						chordSoundingPeak = soundingTargetTones;
-					const int requiredSounding = matcherToneCount - (matcherToneCount >= 5 ? 1 : 0);
-					const bool chordSounded = chordSoundingPeak >= requiredSounding;
+					const int requiredSounding = NoteByNote::GetRequiredChordSoundingToneCount(matcherToneCount);
 					// The sounding table under-reports real strums: in the 21:40 session the game voted
 					// yes on 36 D/Dsus4/G/B strums whose peak sat at 2/4 or 3/4, and the player had to
 					// strum again (2-6 s stalls) until one read 4/4. So the full-chord bar alone is the
-					// unvoted path's bar. WITH the game's vote, half the chord in the table is enough:
-					// the vote is native evidence and the peak rules out the one- and two-string taps.
+					// unvoted path's bar. WITH the game's vote, half of a chord with at least three
+					// tones is enough: the vote is native evidence and the peak rules out a single-note
+					// tap. Dyads still require both tones; otherwise half is one and a single note passes.
 					// The tier-0 chord probe (every tone with energy at the strum) is the instrument
 					// that could tell a full strum from a three-string partial at the same peak; it is
 					// logged in shadow at every accept below so the next session says whether it can.
-					const int halfSounding = (matcherToneCount + 1) / 2;
-					const bool votedAndHalf = naturalResult && chordSoundingPeak >= halfSounding;
-					// Without the game's vote the strum must also be recent (the slide case).
-					const bool corroborated = (chordSounded && (naturalResult || attackAgeMs <= 100.0)) || votedAndHalf;
-					const bool pitchesMatch = !fretHandMuted && portRan && freshAttack && corroborated
-						&& (isUnison ? RawUnisonMatchesAttack(unisonPitch, chordAttackSample)
-							: (NativeChordMatchesAttack(matcherTones, matcherToneCount, chordAttackSample)
-							|| RawCloseChordMatchesAttack(playedTones, matcherToneCount, chordAttackSample)
-							|| (isChordTier0RescueEnabled && Tier0ConfirmsChord(playedTones, matcherToneCount))));
+					const bool corroborated = NoteByNote::IsChordSoundingCorroborated(
+						matcherToneCount, chordSoundingPeak, naturalResult, attackAgeMs);
+					const bool rawUnisonMatches = isUnison
+						&& RawUnisonMatchesAttack(unisonPitch, chordAttackSample);
+					const bool nativeMatcherMatches = !isUnison && !naturalResult
+						&& NativeChordMatchesAttack(matcherTones, matcherToneCount, chordAttackSample);
+					// Exact fresh-attack evidence must confirm a correctly played chord even when the
+					// game also votes yes but the sounding table under-reports it (the vote-yes + 1/2
+					// dyad the 2026-09-21 stuck-dyad trace showed). Both matchers still require every
+					// authored tone/string, so removing the native-vote guard cannot let a single note
+					// pass as a chord; it only stops a redundant vote from masking exact evidence.
+					const bool closeDyadMatches = !isUnison && !nativeMatcherMatches
+						&& RawCloseChordMatchesAttack(playedTones, matcherToneCount, chordAttackSample);
+					ResearchProtocol::MlChordEvidence mlChordEvidence;
+					const bool mlStringsMatch = !isUnison && !nativeMatcherMatches
+						&& !closeDyadMatches && freshAttack
+						&& ResearchProbeRuntime::QueryMlChordEvidence(
+							playedMidiByString, 0.5f, chordAttackSample, mlChordEvidence)
+						&& mlChordEvidence.sampleRate == pickSampleRate
+						&& mlChordEvidence.verdict == ResearchProtocol::MlNoteVerdict::Confirmed;
+					const bool tier0Matches = !isUnison && !naturalResult && !nativeMatcherMatches
+						&& !closeDyadMatches && !mlStringsMatch && isChordTier0RescueEnabled
+						&& Tier0ConfirmsChord(playedTones, matcherToneCount);
+					NoteByNote::ChordPitchDecisionInput chordDecision;
+					chordDecision.toneCount = matcherToneCount;
+					chordDecision.isFretHandMuted = fretHandMuted;
+					chordDecision.didBuildTarget = portRan;
+					chordDecision.hasFreshAttack = freshAttack;
+					chordDecision.isCorroborated = corroborated;
+					chordDecision.isUnison = isUnison;
+					chordDecision.rawUnisonMatches = rawUnisonMatches;
+					chordDecision.naturalMatches = naturalResult;
+					chordDecision.nativeMatcherMatches = nativeMatcherMatches;
+					chordDecision.closeDyadMatches = closeDyadMatches;
+					chordDecision.mlStringsMatch = mlStringsMatch;
+					chordDecision.isTier0Enabled = isChordTier0RescueEnabled;
+					chordDecision.tier0Matches = tier0Matches;
+					const auto pitchConfirmation = NoteByNote::EvaluateChordPitchDecision(chordDecision);
+					const bool pitchesMatch = pitchConfirmation != NoteByNote::ChordPitchConfirmation::None;
+					if (pitchConfirmation == NoteByNote::ChordPitchConfirmation::MlStrings)
+					{
+						LOG_INFO("(NBN CHORD ML STRINGS) Accepted fresh attack=" << chordAttackSample
+							<< " analyzed=" << mlChordEvidence.analyzedSampleIndex
+							<< " requiredMask=0x" << std::hex
+							<< static_cast<int>(mlChordEvidence.requiredStringMask)
+							<< " matchedMask=0x" << static_cast<int>(mlChordEvidence.matchedStringMask)
+							<< std::dec << " age=" << std::fixed << std::setprecision(3)
+							<< mlChordEvidence.ageSeconds << "s record=0x" << std::hex
+							<< selectedRecord << std::dec << std::endl);
+					}
 					if (!fretHandMuted && portRan && freshAttack && !corroborated)
 					{
 						static ULONGLONG lastUncorroboratedLogTick = 0;
@@ -8445,8 +8684,9 @@ namespace
 								<< " ms old." << std::endl);
 						}
 					}
+					const bool attackMatchesTarget = fretHandMuted ? sawSpikeDuringHold : pitchesMatch;
 					const bool nativeHit = freshAttack && chordAttacks.TryConsumeForNote(
-						chordNoteMask, pitchesMatch, pickScanSample, pickSampleRate);
+						attackMatchesTarget, pickScanSample, pickSampleRate);
 					if (nativeHit && fretHandMuted)
 						LOG_INFO("(NBN FRET MUTE) Fresh attack accepted without pitched-chord matching; sample="
 							<< chordAttackSample << " record=0x" << std::hex << record << std::dec << std::endl);
@@ -8484,6 +8724,7 @@ namespace
 						consumedRecords.insert(selectedRecord);
 						lastCommittedChordRecord = selectedRecord;
 						lastCommittedChordAt = std::chrono::steady_clock::now();
+						pickAttackFloorSample = chordAttacks.GetConsumedThroughSample();
 						char chordIdentity[64] = "?";
 						NoteByNoteNativeScoring::TryDescribeChordTarget(
 							reinterpret_cast<uintptr_t>(note), chordIdentity, sizeof(chordIdentity));
@@ -8602,6 +8843,14 @@ void NoteByNoteScoringCore::Initialize()
 		<< " The lesson-derived hold (Stop_TMusic latch + five-clock epoch) and coordinated"
 		<< " PlayerSong-packet release are armed but inert until Note by Note is enabled."
 		<< std::endl);
+	// Fail loud if the raw route snapshot bridge is not wired (a loaded probe on a host that
+	// predates the HostApi v9 CaptureRawSnapshot slot). Without it, ConfirmChordAttack, close-dyad,
+	// unison and fret-hand-mute all read as sustain and no chord ever confirms. Checking the bridge
+	// slot (not a live capture) avoids a false alarm before any audio has been captured. Latent
+	// from 2026-09-11 until the v9 bridge (2026-09-22).
+	if (!ResearchProbeRuntime::IsRawSnapshotBridgeAvailable())
+		LOG_ERROR("(NBN LAS LIFECYCLE) Raw snapshot bridge unavailable: chord, dyad, unison and"
+			<< " fret-hand-mute attacks cannot confirm in this controller." << std::endl);
 }
 
 bool NoteByNoteScoringCore::IsAvailable()
@@ -9130,6 +9379,11 @@ ResearchProtocol::NoteByNoteState NoteByNoteNativeScoring::GetResearchState()
 	state.bendTargetMidi = bendVisualizationSnapshot.targetMidi;
 	state.soundingMidi = bendVisualizationSnapshot.soundingMidi;
 	state.soundingQuality = bendVisualizationSnapshot.soundingQuality;
+	// The meter's green: the engine's reached verdict, valid only for the exact selected
+	// record and Riff Repeater epoch on which it advanced the bend gesture.
+	state.bendReachedTarget = bendVisualReached
+		&& selectedRecord == bendVisualReachedRecord
+		&& epochIndex == bendVisualReachedEpoch ? 1 : 0;
 
 	// Detection-strategy authority + live native-vs-ML agreement, for the corner HUD strip.
 	// HUD flag: ML participates in the decision (rescue/veto) whenever the technique is not

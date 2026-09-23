@@ -11,15 +11,18 @@
 
 namespace ResearchProtocol
 {
-	// v12: generic observation hooks. The probe names addresses it wants observed; the host
+	// v13: NoteByNoteState is a lockstep ABI. The hold-veto readout and bend verdict changed
+	// its size, so a controller built against the previous layout must be rejected at startup.
+	//
+	// v12 introduced generic observation hooks. The probe names addresses it wants observed; the host
 	// installs pass-through detours and calls back with the saved register file. From here on,
 	// appending optional ProbeApi entries no longer bumps the version: the bridge accepts any
 	// probe at or above PROBE_API_MIN_VERSION whose struct covers the required prefix, so a new
 	// entry point costs a probe rebuild and reload, never a game restart.
-	constexpr uint32_t PROBE_API_VERSION = 12;
+	constexpr uint32_t PROBE_API_VERSION = 13;
 	// The oldest probe the resident bridge still accepts. Raise this only when the required
 	// prefix (through CompleteNoteDrawList) changes shape; appending optional entries does not.
-	constexpr uint32_t PROBE_API_MIN_VERSION = 12;
+	constexpr uint32_t PROBE_API_MIN_VERSION = 13;
 
 	// OR-ed into the site argument of ObserveNeckPlacementStep when the forward happens at
 	// the native step's entry rather than after its return. Only site 2 forwards pre-call;

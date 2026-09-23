@@ -223,6 +223,14 @@ namespace ResearchProtocol
 		// hidden onset/confidence gate). holdPhase: DescribeGatePhase of the mod's transport state.
 		char holdRefusal[24] = {};
 		char holdPhase[32] = {};
+
+		// Bend visualizer "reached" verdict (appended after the veto readout; structSize-gated
+		// like every appended field): 1 when the probe's own bend evaluation has counted the
+		// sounding pitch at the bend target this gesture - the same verdict that advances the
+		// note - so the meter colors green from the engine's decision instead of re-deriving
+		// "on target" from pitch alone. Green-and-no-progress then cannot happen by
+		// construction (the meter's needle position still comes from the pitch feed).
+		uint8_t bendReachedTarget = 0;
 	};
 
 	using ScoringUpdate = void(__stdcall*)(void* owner, float updateTime);
@@ -270,6 +278,16 @@ namespace ResearchProtocol
 		float targetConfidence = -1.0f;
 	};
 
+	struct MlChordEvidence
+	{
+		uint64_t analyzedSampleIndex = 0;
+		uint32_t sampleRate = 0;
+		MlNoteVerdict verdict = MlNoteVerdict::Unavailable;
+		uint8_t requiredStringMask = 0;
+		uint8_t matchedStringMask = 0;
+		double ageSeconds = 0.0;
+	};
+
 	struct RawToneComb
 	{
 		uint64_t endSampleIndex = 0;
@@ -293,7 +311,11 @@ namespace ResearchProtocol
 		uint32_t confirmed = 0;
 	};
 
-	constexpr uint32_t HOST_API_VERSION = 6;
+	// v8: HostApi gained string-aware chord evidence. v7 added the hold-veto readout and bend
+	// verdict. These structures cross the host/controller boundary, so this is a lockstep ABI
+	// change rather than an optional tail extension. A stale host or controller must fail
+	// initialization instead of silently losing scoring or presentation state.
+	constexpr uint32_t HOST_API_VERSION = 9;
 
 	// The services the host provides to the scoring engine (pitch-shift frame, tier-0 raw tone
 	// evidence, the ML companion, logging). The scoring engine reaches these through
@@ -330,8 +352,15 @@ namespace ResearchProtocol
 		uint64_t(__cdecl* GetMlAudioSampleIndex)() = nullptr;
 		uint8_t(__cdecl* QueryMlNoteEvidence)(int expectedMidi, float minConfidence,
 			uint64_t minimumSampleIndex, MlNoteEvidence* evidence) = nullptr;
+		uint8_t(__cdecl* QueryMlChordEvidence)(const int32_t* expectedMidiByString,
+			float minConfidence, uint64_t minimumSampleIndex, MlChordEvidence* evidence) = nullptr;
 		uint8_t(__cdecl* QueryRawToneComb)(double frequencyHz, RawToneComb* out) = nullptr;
 		uint8_t(__cdecl* QueryRawNoteConfirmation)(double frequencyHz, uint64_t minimumSampleIndex, uint64_t maximumSampleIndex, RawNoteConfirmation* out) = nullptr;
 		uint8_t(__cdecl* QueryRawAttacks)(uint64_t afterSampleIndex, RawPitchVerifier::RawAttackBatch* out) = nullptr;
+		// v9: the raw route snapshot behind chord, dyad, unison and fret-hand-mute attack
+		// confirmation. The reloadable probe has no audio tap of its own; its
+		// RawPitchVerifier::CaptureSnapshot stub must reach the host ring through here, or every
+		// chord/dyad/mute attack in a loaded probe reads as sustain and never confirms.
+		uint8_t(__cdecl* CaptureRawSnapshot)(RawPitchVerifier::AudioSnapshot* out) = nullptr;
 	};
 }

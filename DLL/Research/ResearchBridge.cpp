@@ -1856,6 +1856,24 @@ bool ResearchBridge::IsProbeLoaded()
 	return loadedProbe.module != nullptr;
 }
 
+bool ResearchBridge::ReloadDeployedProbe(std::string& error)
+{
+	// Mirrors the reload_probe pipe command's state dance so the debug overlay can reload with
+	// no research pipe or N key: the reload gate needs NBN off, so capture the player's intent,
+	// disable for the swap, reload the currently deployed probe, then restore.
+	const bool wasAutomaticEnabled = NoteByNoteProbe::IsAutomaticEnabled();
+	if (wasAutomaticEnabled) NoteByNoteProbe::SetAutomaticEnabled(false);
+	const bool reloaded = ReloadProbe(GetDefaultProbePath(), error);
+	if (wasAutomaticEnabled) NoteByNoteProbe::ForceRestoreAutomatic();
+	return reloaded;
+}
+
+bool ResearchBridge::IsProbeReloadAvailable()
+{
+	std::error_code ec;
+	return std::filesystem::exists(GetDefaultProbePath(), ec);
+}
+
 void ResearchBridge::DispatchGenericHook(
 	uint32_t slotId,
 	const ResearchProtocol::HookContext* context)
@@ -2048,7 +2066,17 @@ bool ResearchBridge::TryGetNoteByNoteState(ResearchProtocol::NoteByNoteState& st
 	std::lock_guard<std::recursive_mutex> lock(probeMutex);
 	if (loadedProbe.module == nullptr) return false;
 	state = {};
-	return loadedProbe.api.GetState(&state) != 0;
+	if (loadedProbe.api.GetState(&state) != 0) return true;
+
+	static std::atomic<bool> hasLoggedStateFailure{ false };
+	if (!hasLoggedStateFailure.exchange(true))
+	{
+		LOG_ERROR("(RESEARCH BRIDGE) Note by Note state retrieval failed for a "
+			<< sizeof(ResearchProtocol::NoteByNoteState)
+			<< "-byte host state. Rebuild and deploy the host and controller together."
+			<< std::endl);
+	}
+	return false;
 }
 
 void ResearchBridge::SetFakeGuitarAutoPlay(bool enabled)

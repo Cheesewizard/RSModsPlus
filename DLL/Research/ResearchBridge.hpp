@@ -53,6 +53,14 @@ namespace ResearchBridge
 	void ArmNoteDrawListSnapshot();
 	void ArmScreenMapSnapshot();
 	bool TryHandleProbeCommand(const std::string& requestJson, std::string& response);
+	// In-process probe reload for the debug overlay (no research pipe or N key needed).
+	// ReloadDeployedProbe swaps in the probe currently deployed at GetDefaultProbePath,
+	// preserving the player's Note by Note enable state across the swap (the reload gate
+	// requires NBN off, so it is disabled for the swap then restored). IsProbeReloadAvailable
+	// is true only when a probe DLL is actually present, so the overlay button appears only on
+	// builds that ship a probe.
+	bool ReloadDeployedProbe(std::string& error);
+	bool IsProbeReloadAvailable();
 	void ProcessNoteDrawList(
 		void* renderCtx,
 		void* unusedEdx,

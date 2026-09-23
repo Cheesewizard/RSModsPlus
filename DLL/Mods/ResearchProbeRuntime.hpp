@@ -33,8 +33,16 @@ namespace ResearchProbeRuntime
 	uint64_t GetMlAudioSampleIndex();
 	bool QueryMlNoteEvidence(int expectedMidi, float minConfidence,
 		uint64_t minimumSampleIndex, ResearchProtocol::MlNoteEvidence& evidence);
+	bool QueryMlChordEvidence(const int32_t* expectedMidiByString, float minConfidence,
+		uint64_t minimumSampleIndex, ResearchProtocol::MlChordEvidence& evidence);
 	void PublishExpectedAttackEvent(const ResearchProtocol::ExpectedAttackEvent& event);
 	bool QueryRawAttacks(uint64_t afterSampleIndex, RawPitchVerifier::RawAttackBatch& out);
+	// The raw route snapshot behind chord/dyad/unison/mute attack confirmation, bridged from the
+	// host (HostApi::CaptureRawSnapshot). The reloadable probe has no tap of its own.
+	bool CaptureRawSnapshot(RawPitchVerifier::AudioSnapshot& out);
+	// True when the snapshot bridge is wired (host present and the v9 slot set). Distinct from
+	// CaptureRawSnapshot returning data, which is also false before any audio has been captured.
+	bool IsRawSnapshotBridgeAvailable();
 	void Shutdown();
 }
 

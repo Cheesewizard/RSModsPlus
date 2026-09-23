@@ -23,11 +23,13 @@ bool ResearchProbeRuntime::Initialize(const ResearchProtocol::HostApi* hostApi)
 		|| hostApi->HandleControllerFault == nullptr
 		|| hostApi->PublishExpectedAttackEvent == nullptr
 		|| hostApi->QueryMlNoteEvidence == nullptr
+		|| hostApi->QueryMlChordEvidence == nullptr
 		|| hostApi->GetMlAudioSampleIndex == nullptr
 		|| hostApi->Log == nullptr
 		|| hostApi->QueryRawToneComb == nullptr
 		|| hostApi->QueryRawNoteConfirmation == nullptr
-		|| hostApi->QueryRawAttacks == nullptr)
+		|| hostApi->QueryRawAttacks == nullptr
+		|| hostApi->CaptureRawSnapshot == nullptr)
 	{
 		return false;
 	}
@@ -134,9 +136,34 @@ bool ResearchProbeRuntime::QueryMlNoteEvidence(int expectedMidi, float minConfid
 		minimumSampleIndex, &evidence) != 0;
 }
 
+bool ResearchProbeRuntime::QueryMlChordEvidence(const int32_t* expectedMidiByString,
+	float minConfidence, uint64_t minimumSampleIndex,
+	ResearchProtocol::MlChordEvidence& evidence)
+{
+	const auto hostApi = GetHostApi();
+	evidence = {};
+	if (hostApi == nullptr) return false;
+	return hostApi->QueryMlChordEvidence(expectedMidiByString, minConfidence,
+		minimumSampleIndex, &evidence) != 0;
+}
+
 bool ResearchProbeRuntime::QueryRawAttacks(uint64_t afterSampleIndex, RawPitchVerifier::RawAttackBatch& out)
 {
 	out = {};
 	const auto hostApi = GetHostApi();
 	return hostApi != nullptr && hostApi->QueryRawAttacks(afterSampleIndex, &out) != 0;
+}
+
+bool ResearchProbeRuntime::CaptureRawSnapshot(RawPitchVerifier::AudioSnapshot& out)
+{
+	out = {};
+	const auto hostApi = GetHostApi();
+	return hostApi != nullptr && hostApi->CaptureRawSnapshot != nullptr
+		&& hostApi->CaptureRawSnapshot(&out) != 0;
+}
+
+bool ResearchProbeRuntime::IsRawSnapshotBridgeAvailable()
+{
+	const auto hostApi = GetHostApi();
+	return hostApi != nullptr && hostApi->CaptureRawSnapshot != nullptr;
 }

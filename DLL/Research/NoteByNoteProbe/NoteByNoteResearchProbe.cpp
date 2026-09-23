@@ -338,7 +338,24 @@ namespace
 
 	uint8_t __cdecl GetState(ResearchProtocol::NoteByNoteState* state)
 	{
-		if (state == nullptr || state->structSize < sizeof(ResearchProtocol::NoteByNoteState)) return 0;
+		if (state == nullptr) return 0;
+
+		const auto callerSize = state->structSize;
+		if (callerSize != sizeof(ResearchProtocol::NoteByNoteState))
+		{
+			static std::atomic<bool> hasLoggedStateSizeMismatch{ false };
+			if (!hasLoggedStateSizeMismatch.exchange(true))
+			{
+				std::ostringstream message;
+				message << "(NBN CONTROLLER) State ABI mismatch: caller provides "
+					<< callerSize << " bytes, controller requires "
+					<< sizeof(ResearchProtocol::NoteByNoteState)
+					<< ". Rebuild and deploy the host and controller together.";
+				ResearchProbeRuntime::Log(ResearchProtocol::LogLevel::Error, message.str());
+			}
+			return 0;
+		}
+
 		*state = NoteByNoteNativeScoring::GetResearchState();
 		return 1;
 	}

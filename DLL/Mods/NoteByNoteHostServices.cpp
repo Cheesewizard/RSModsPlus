@@ -1,4 +1,5 @@
 #include "NoteByNoteHostServices.hpp"
+#include "MlChordConfirmation.hpp"
 
 #include <iomanip>
 
@@ -296,6 +297,48 @@ namespace NoteByNoteHostServices
 			return 1;
 		}
 
+		uint8_t __cdecl HostQueryMlChordEvidence(const int32_t* expectedMidiByString,
+			float minConfidence, uint64_t minimumSampleIndex,
+			ResearchProtocol::MlChordEvidence* evidence)
+		{
+			if (expectedMidiByString == nullptr || evidence == nullptr) return 0;
+			*evidence = {};
+			MlStringFretReader::StringFret sample;
+			const char* readReason = nullptr;
+			if (!MlStringFretReader::TryGet(sample, 0.6, &readReason)) return 0;
+
+			evidence->analyzedSampleIndex = sample.analyzedSampleIndex;
+			evidence->sampleRate = sample.sampleRate;
+			evidence->ageSeconds = sample.ageSeconds;
+			const int appliedShift = DropPedal::GetAppliedInputShiftSemitones();
+			if (sample.analyzedSampleIndex <= minimumSampleIndex || sample.shift != appliedShift)
+			{
+				evidence->verdict = MlNoteVerdict::Pending;
+				return 1;
+			}
+
+			constexpr int OPEN_MIDI[6] = { 40, 45, 50, 55, 59, 64 };
+			int observedMidiByString[6] = { -1, -1, -1, -1, -1, -1 };
+			for (int stringIndex = 0; stringIndex < 6; ++stringIndex)
+			{
+				if (sample.fret[stringIndex] >= 0 && sample.fret[stringIndex] <= 19)
+				{
+					observedMidiByString[stringIndex] = OPEN_MIDI[stringIndex]
+						+ sample.fret[stringIndex];
+				}
+			}
+
+			const bool confirmed = NoteByNote::ConfirmMlChordStrings(
+				expectedMidiByString,
+				observedMidiByString,
+				sample.conf,
+				minConfidence,
+				evidence->requiredStringMask,
+				evidence->matchedStringMask);
+			evidence->verdict = confirmed ? MlNoteVerdict::Confirmed : MlNoteVerdict::Conflicting;
+			return 1;
+		}
+
 		uint8_t __cdecl HostQueryRawToneComb(double frequencyHz, ResearchProtocol::RawToneComb* out)
 		{
 			if (out == nullptr) return 0;
@@ -340,6 +383,11 @@ namespace NoteByNoteHostServices
 			return out != nullptr && RawPitchVerifier::QueryAttacks(afterSampleIndex, *out) ? 1 : 0;
 		}
 
+		uint8_t __cdecl HostCaptureRawSnapshot(RawPitchVerifier::AudioSnapshot* out)
+		{
+			return out != nullptr && RawPitchVerifier::CaptureSnapshot(*out) ? 1 : 0;
+		}
+
 		const ResearchProtocol::HostApi hostApi =
 		{
 			ResearchProtocol::HOST_API_VERSION,
@@ -354,9 +402,11 @@ namespace NoteByNoteHostServices
 			&HostIsMlPitchServiceAlive,
 			&HostGetMlAudioSampleIndex,
 			&HostQueryMlNoteEvidence,
+			&HostQueryMlChordEvidence,
 			&HostQueryRawToneComb,
 			&HostQueryRawNoteConfirmation,
-			&HostQueryRawAttacks
+			&HostQueryRawAttacks,
+			&HostCaptureRawSnapshot
 		};
 	}
 
