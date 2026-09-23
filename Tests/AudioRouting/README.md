@@ -63,10 +63,11 @@ packets, and writes a WAV. It does not exercise Rocksmith or capture guitar.
 The checked machine offered a 480-frame shared period on 7 September 2026.
 
 The same command builds and runs `asio_config_tests.cs` with the production
-`AsioProxySetup.cs`. These tests change fixture INIs only. They verify that linking
-RS_ASIO to the Rocksmith Audio Bridge shares one proxy host for output and input,
-preserves the real driver name, restores it on unlink, and repairs an ini whose
-output was pointed at the proxy by hand.
+`AsioProxySetup.cs`. These tests guard the contract that the GUI never writes
+RS_ASIO.ini: they fail if the old Link/Unlink/LinkSettings/SynchronizeLinkedInputs
+methods return, and they confirm that reading link state leaves a fixture ini
+byte-for-byte unchanged. Pointing RS_ASIO at the bridge is the user's job; the GUI
+only registers the proxy and records the wrapped driver in the HKCU Target.
 
 Passing these tests does not establish game-hook compatibility, audible latency,
 YouTube coexistence in the game, or successful Note by Note recording. Follow

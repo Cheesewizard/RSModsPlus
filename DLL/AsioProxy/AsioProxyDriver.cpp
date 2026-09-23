@@ -201,17 +201,10 @@ namespace
 			RegCloseKey(key);
 		}
 		if (buffer[0] != L'\0') return buffer;
-		// Fallback: when the GUI points RS_ASIO at this proxy it records the wrapped driver in RS_ASIO.ini as
-		// OriginalOutputDriver.RSMods. If the HKCU Target was never written or got cleared, read the real driver
-		// from there so ASIO still resolves its device instead of failing to boot with "No hardware was found".
-		const std::wstring dir = ThisModuleDir();
-		if (!dir.empty())
-		{
-			const std::wstring ini = dir + L"\\RS_ASIO.ini";
-			wchar_t fallback[512]{};
-			GetPrivateProfileStringW(L"Asio.Output", L"OriginalOutputDriver.RSMods", L"", fallback, 512, ini.c_str());
-			return fallback;
-		}
+		// The wrapped driver name comes only from HKCU Target (set by the GUI's Apply output). We deliberately
+		// do NOT fall back to reading RS_ASIO.ini: that file is the user's to own, and the old
+		// OriginalOutputDriver.RSMods stash was written by the same GUI link/unlink machinery that could silently
+		// revert the user's ini, so it is gone. An empty Target means the GUI setup was never run.
 		return std::wstring();
 	}
 

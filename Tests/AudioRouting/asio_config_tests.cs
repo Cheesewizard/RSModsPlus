@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using RSMods.Audio;
 
 namespace RSMods.Tests
@@ -15,43 +16,38 @@ namespace RSMods.Tests
 		{
 			try
 			{
+				// Contract: the GUI never writes RS_ASIO.ini. Pointing RS_ASIO at the bridge is the user's job.
+				// The old Link/Unlink/LinkSettings/SynchronizeLinkedInputs machinery rewrote the user's ini on the
+				// bridge power toggle and stranded them on the raw driver, which then failed to boot when the
+				// interface was absent. Guard against any of it returning.
+				var type = typeof(AsioProxySetup);
+				const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+				foreach (string forbidden in new[] { "Link", "LinkSettings", "Unlink", "SynchronizeLinkedInputs" })
+					Require(type.GetMethod(forbidden, all) == null,
+						"AsioProxySetup." + forbidden + " must not exist: the GUI must never write RS_ASIO.ini.");
+
+				// It must never write RS_ASIO.ini either directly: no WritePrivateProfileString P/Invoke here.
+				foreach (var method in type.GetMethods(all))
+					Require(method.Name != "WritePrivateProfileString",
+						"AsioProxySetup must not P/Invoke WritePrivateProfileString: RS_ASIO.ini is the user's to edit.");
+
+				// Prove it in practice: an ini on the raw driver is left byte-for-byte identical after the setup
+				// entry points the GUI still owns (which touch only HKLM registration and HKCU Target).
 				string directory = args[0];
 				Directory.CreateDirectory(directory);
 				string path = Path.Combine(directory, "RS_ASIO.ini");
 				string original = "[Config]\r\nEnableWasapiOutputs=0\r\nEnableAsio=1\r\n[Asio.Output]\r\nDriver=Fixture ASIO\r\nBaseChannel=2\r\n[Asio.Input.0]\r\nDriver=Fixture ASIO\r\nChannel=1\r\n";
 				File.WriteAllText(path, original);
-				File.WriteAllText(path, original);
-				AsioProxySetup.LinkSettings(path, "Fixture ASIO");
-				string linked = File.ReadAllText(path);
-				Require(linked.Contains("[Asio.Output]\r\nDriver=Rocksmith Audio Bridge"), "Proxy link did not replace the ASIO output driver");
-				Require(linked.Contains("[Asio.Input.0]\r\nDriver=Rocksmith Audio Bridge"), "Proxy link did not share one driver host with ASIO input");
-				Require(linked.Contains("OriginalDriver.AudioBridge=Fixture ASIO"), "Proxy link did not preserve the ASIO input driver");
-				AsioProxySetup.Unlink(directory);
-				string unlinked = File.ReadAllText(path);
-				Require(unlinked.Contains("[Asio.Input.0]\r\nDriver=Fixture ASIO"), "Proxy unlink did not restore the ASIO input driver");
-				Require(!unlinked.Contains("OriginalDriver.AudioBridge"), "Proxy unlink retained its temporary input setting");
+				Require(!AsioProxySetup.IsLinked(directory), "A raw-driver ini must not report as linked to the bridge.");
+				Require(File.ReadAllText(path) == original, "Reading link state must not modify RS_ASIO.ini.");
 
-				File.WriteAllText(path,
-					"[Config]\r\nEnableWasapiOutputs=0\r\nEnableAsio=1\r\n[Asio.Output]\r\n"
-					+ "Driver=Rocksmith Audio Bridge\r\nOriginalOutputDriver.RSMods=Fixture ASIO\r\nBaseChannel=2\r\n"
-					+ "[Asio.Input.0]\r\nDriver=Fixture ASIO\r\nOriginalDriver.RSMods=Fixture ASIO\r\nChannel=1\r\n");
-				AsioProxySetup.SynchronizeLinkedInputs(directory);
-				string synchronized = File.ReadAllText(path);
-				Require(synchronized.Contains("[Asio.Input.0]\r\nDriver=Rocksmith Audio Bridge"), "Existing proxy link did not synchronize its matching ASIO input");
-				Require(synchronized.Contains("OriginalDriver.AudioBridge=Fixture ASIO"), "Existing proxy link did not preserve the synchronized input driver");
+				// An ini the user pointed at the bridge reads back as linked, and stays untouched.
+				string linked = "[Config]\r\nEnableWasapiOutputs=0\r\nEnableAsio=1\r\n[Asio.Output]\r\nDriver=Rocksmith Audio Bridge\r\nBaseChannel=2\r\n[Asio.Input.0]\r\nDriver=Rocksmith Audio Bridge\r\nChannel=1\r\n";
+				File.WriteAllText(path, linked);
+				Require(AsioProxySetup.IsLinked(directory), "An ini pointed at the bridge must report as linked.");
+				Require(File.ReadAllText(path) == linked, "Reading link state must not modify a linked RS_ASIO.ini.");
 
-				// Output pointed at the proxy by hand (no stash, input still on the raw driver): linking must record
-				// the real driver for Unlink and the proxy's boot fallback, and share the input host.
-				File.WriteAllText(path,
-					"[Config]\r\nEnableWasapiOutputs=0\r\nEnableAsio=1\r\n[Asio.Output]\r\n"
-					+ "Driver=Rocksmith Audio Bridge\r\nBaseChannel=2\r\n[Asio.Input.0]\r\nDriver=Fixture ASIO\r\nChannel=1\r\n");
-				AsioProxySetup.LinkSettings(path, "Fixture ASIO");
-				string handEdited = File.ReadAllText(path);
-				Require(handEdited.Contains("OriginalOutputDriver.RSMods=Fixture ASIO"), "Hand-edited proxy output did not record the real driver");
-				Require(handEdited.Contains("[Asio.Input.0]\r\nDriver=Rocksmith Audio Bridge"), "Hand-edited proxy output did not share the input host");
-				AsioProxySetup.Unlink(directory);
-				Require(File.ReadAllText(path).Contains("[Asio.Output]\r\nDriver=Fixture ASIO"), "Unlink after a hand-edited link did not restore the output driver");
-				Console.WriteLine("PASS: proxy link shares the input host, preserves and restores the real driver, and repairs an output-only link");
+				Console.WriteLine("PASS: the GUI never writes RS_ASIO.ini; link state is read-only");
 				return 0;
 			}
 			catch (Exception exception)
