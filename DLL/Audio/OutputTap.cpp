@@ -1,7 +1,6 @@
 #include "stdafx.h"
 #include "OutputTap.hpp"
 #include "GameAudioRecorder.hpp"
-#include "DrySignalRecording.hpp"
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
@@ -30,14 +29,13 @@ namespace Audio::OutputTap
 		TapFormat g_format;
 
 		std::mutex g_recorderMutex;
-		std::shared_ptr<GameAudioRecorder> g_recorder;   // non-null only while recording; guarded by g_recorderMutex
-		bool g_recordingDry = false;                      // dry take is fed by the input hook, not the tap
-		// Lock-free mirror of g_recorder for the read-only status getters. The overlay polls IsRecording
+		std::shared_ptr<RecordingSession> g_session;
+		// Lock-free mirror of the session for the read-only status getters. The overlay polls IsRecording
 		// every rendered frame and the ASIO callback takes g_recorderMutex every audio block, so the
 		// getters must not share that mutex with the real-time thread. Written (under g_recorderMutex)
 		// only by Start/StopRecording; read with std::atomic_load.
-		std::shared_ptr<GameAudioRecorder> g_recorderView;
-		std::shared_ptr<GameAudioRecorder> RecorderView() { return std::atomic_load(&g_recorderView); }
+		std::shared_ptr<RecordingSession> g_sessionView;
+		std::shared_ptr<RecordingSession> SessionView() { return std::atomic_load(&g_sessionView); }
 		std::atomic<bool> g_clientSeen{ false };
 		std::atomic<uint64_t> g_observedFrames{ 0 };
 		std::atomic<uint64_t> g_loggedFrames{ 0 };
@@ -72,13 +70,12 @@ namespace Audio::OutputTap
 				LOG_INFO("(OUTPUT TAP) observed " << total << " frames at the render tap" << std::endl);
 			}
 
-			std::shared_ptr<GameAudioRecorder> recorder;
+			std::shared_ptr<RecordingSession> session;
 			{
 				std::lock_guard<std::mutex> guard(g_recorderMutex);
-				if (g_recordingDry) return;   // a dry take is fed by the input hook, not the render tap
-				recorder = g_recorder;
+				session = g_session;
 			}
-			if (!recorder || !data || !frames) return;
+			if (!session || !data || !frames) return;
 
 			const uint32_t channels = g_format.channels.load(std::memory_order_relaxed);
 			const uint32_t bits = g_format.bits.load(std::memory_order_relaxed);
@@ -109,7 +106,7 @@ namespace Audio::OutputTap
 				stereo[static_cast<size_t>(frame) * 2] = left;
 				stereo[static_cast<size_t>(frame) * 2 + 1] = right;
 			}
-			recorder->Submit(stereo.data(), frames);
+			session->SubmitWet(stereo.data(), frames);
 		}
 
 		class TapRenderClient : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IAudioRenderClient, FtmBase>
@@ -371,13 +368,12 @@ namespace Audio::OutputTap
 		void __cdecl ProxySink(const void* data, long frames, long channels, long asioType, double) noexcept
 		{
 			if (!data || frames <= 0 || channels <= 0) return;
-			std::shared_ptr<GameAudioRecorder> recorder;
+			std::shared_ptr<RecordingSession> session;
 			{
 				std::lock_guard<std::mutex> guard(g_recorderMutex);
-				if (g_recordingDry) return;   // dry is the input hook, not the output tap
-				recorder = g_recorder;
+				session = g_session;
 			}
-			if (!recorder) return;
+			if (!session) return;
 			const int bytes = AsioSampleBytes(asioType);
 			if (bytes == 0) return;
 			g_observedFrames.fetch_add(frames, std::memory_order_relaxed);
@@ -391,9 +387,9 @@ namespace Audio::OutputTap
 				stereo[static_cast<size_t>(f) * 2] = left;
 				stereo[static_cast<size_t>(f) * 2 + 1] = channels > 1 ? AsioToFloat(fb + bytes, asioType) : left;
 			}
-			recorder->Submit(stereo.data(), frames);
+			session->SubmitWet(stereo.data(), frames);
 		}
-		// Arm/disarm the tap in the proxy driver. Registered only while a wet take runs, so with the
+		// Arm/disarm the tap in the proxy driver. Registered only while a take runs, so with the
 		// bridge off the proxy is a pure passthrough (no sink, no copy).
 		void SetProxySink(bool on)
 		{
@@ -409,27 +405,25 @@ namespace Audio::OutputTap
 		}
 	}
 
-	HRESULT StartRecording(const std::wstring& directory, bool dry)
+	HRESULT StartRecording(const std::wstring& directory)
 	{
 		const std::filesystem::path path(directory);
 		if (!path.is_absolute()) return E_INVALIDARG;
-		if (dry && !DrySignalRecording::IsReady()) return AUDCLNT_E_DEVICE_INVALIDATED;
-		auto recorder = std::make_shared<GameAudioRecorder>();
-		// Dry takes the guitar input (mono, larger buffer); wet takes the tapped game mix (stereo).
-		const HRESULT result = recorder->Open(path, dry ? 4096 : 2048, dry ? L"dry" : L"wet");
+		auto session = std::make_shared<RecordingSession>();
+		HRESULT result = session->Start(path, 2048);
 		if (FAILED(result)) return result;
 		std::lock_guard<std::mutex> guard(g_recorderMutex);
-		if (g_recorder) return HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
-		if (dry)
+		if (g_session)
 		{
-			const HRESULT attached = DrySignalRecording::Attach(*recorder);
-			if (FAILED(attached)) return attached;
+			std::wstring ignoredPath;
+			uint64_t ignoredFrames = 0, ignoredStarted = 0;
+			session->Stop(ignoredPath, ignoredFrames, ignoredStarted);
+			return HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
 		}
-		g_recorder = std::move(recorder);
-		std::atomic_store(&g_recorderView, g_recorder);
-		g_recordingDry = dry;
-		if (!dry) SetProxySink(true);   // wet: pull the mix from the Rocksmith Audio Bridge proxy driver
-		LOG_INFO("(OUTPUT TAP) recording started (" << (dry ? "dry input" : "wet mix via proxy driver") << ")" << std::endl);
+		g_session = std::move(session);
+		std::atomic_store(&g_sessionView, g_session);
+		SetProxySink(true);
+		LOG_INFO("(OUTPUT TAP) recording started (wet mix and dry input)" << std::endl);
 		return S_OK;
 	}
 
@@ -437,54 +431,47 @@ namespace Audio::OutputTap
 	{
 		frames = 0; started = 0;
 		SetProxySink(false);   // stop pulling from the proxy before we tear the recorder down (no-op if dry)
-		std::shared_ptr<GameAudioRecorder> finished;
-		bool wasDry = false;
+		std::shared_ptr<RecordingSession> finished;
 		{
 			std::lock_guard<std::mutex> guard(g_recorderMutex);
-			if (g_recordingDry) { DrySignalRecording::Detach(); wasDry = true; }
-			finished.swap(g_recorder);
-			std::atomic_store(&g_recorderView, std::shared_ptr<GameAudioRecorder>());
-			g_recordingDry = false;
+			finished.swap(g_session);
+			std::atomic_store(&g_sessionView, std::shared_ptr<RecordingSession>());
 		}
 		if (!finished) return HRESULT_FROM_WIN32(ERROR_NOT_READY);
-		finished->Close();
-		savedPath = finished->GetPath();
-		frames = finished->GetFrames();
-		started = finished->GetStarted();
-		LOG_INFO("(OUTPUT TAP) recording stopped (" << (wasDry ? "dry" : "wet") << "); " << frames << " frames; saved "
-			<< std::string(savedPath.begin(), savedPath.end()) << std::endl);
+		finished->Stop(savedPath, frames, started);
+		LOG_INFO("(OUTPUT TAP) recording stopped (wet + dry); " << frames << " frames" << std::endl);
 		return finished->GetError();
 	}
 
-	// Status getters read the lock-free view (see g_recorderView): polled per frame by the overlay and per
+	// Status getters read the lock-free session view: polled per frame by the overlay and per
 	// status request by the bridge, they never contend with the audio thread's per-block lock.
 	bool IsRecording()
 	{
-		return RecorderView() != nullptr;
+		return SessionView() != nullptr;
 	}
 
 	bool IsRecordingDry()
 	{
-		std::lock_guard<std::mutex> guard(g_recorderMutex);   // g_recordingDry is only guarded by the mutex
-		return g_recorder != nullptr && g_recordingDry;
+		std::lock_guard<std::mutex> guard(g_recorderMutex);
+		return g_session != nullptr;
 	}
 
 	HRESULT RecordingError()
 	{
-		const auto recorder = RecorderView();
-		return recorder ? recorder->GetError() : S_OK;
+		const auto session = SessionView();
+		return session ? session->GetError() : S_OK;
 	}
 
 	uint64_t RecordedFrames()
 	{
-		const auto recorder = RecorderView();
-		return recorder ? recorder->GetFrames() : 0;
+		const auto session = SessionView();
+		return session ? session->GetFrames() : 0;
 	}
 
 	uint64_t RecordingStarted()
 	{
-		const auto recorder = RecorderView();
-		return recorder ? recorder->GetStarted() : 0;
+		const auto session = SessionView();
+		return session ? session->GetStarted() : 0;
 	}
 
 	bool TapClientSeen() { return g_clientSeen.load(std::memory_order_acquire); }

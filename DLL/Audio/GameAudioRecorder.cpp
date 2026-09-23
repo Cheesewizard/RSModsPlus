@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "GameAudioRecorder.hpp"
+#include "DrySignalRecording.hpp"
 
 namespace Audio
 {
@@ -142,5 +143,92 @@ namespace Audio
 		if (writer.joinable()) writer.join();
 		if (file != INVALID_HANDLE_VALUE) { CloseHandle(file); file = INVALID_HANDLE_VALUE; }
 		if (wakeEvent) { CloseHandle(wakeEvent); wakeEvent = nullptr; }
+	}
+
+	RecordingSession::~RecordingSession()
+	{
+		std::wstring path;
+		uint64_t frames = 0, started = 0;
+		Stop(path, frames, started);
+	}
+
+	HRESULT RecordingSession::Start(const std::filesystem::path& directory, uint32_t wetMaximumFrames)
+	{
+		if (wetRecorder || dryRecorder) return HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
+		if (directory.empty() || wetMaximumFrames == 0) return E_INVALIDARG;
+		auto wet = std::make_shared<GameAudioRecorder>();
+		auto dry = std::make_shared<GameAudioRecorder>();
+		HRESULT result = wet->Open(directory, wetMaximumFrames, L"wet");
+		if (FAILED(result)) return result;
+		result = dry->Open(directory, 4096, L"dry");
+		if (FAILED(result)) { wet->Close(); return result; }
+		wetRecorder = std::move(wet);
+		dryRecorder = std::move(dry);
+		lastError = S_OK;
+		const HRESULT attached = DrySignalRecording::Attach(*this);
+		if (FAILED(attached))
+		{
+			std::wstring ignoredPath;
+			uint64_t ignoredFrames = 0, ignoredStarted = 0;
+			Stop(ignoredPath, ignoredFrames, ignoredStarted);
+			return attached;
+		}
+		dryAttached = true;
+		return S_OK;
+	}
+
+	void RecordingSession::SubmitWet(const float* stereo, uint32_t frames) noexcept
+	{
+		if (wetRecorder) wetRecorder->Submit(stereo, frames);
+	}
+
+	void RecordingSession::SubmitDry(const float* mono, uint32_t frames, uint32_t sampleRate) noexcept
+	{
+		if (dryRecorder) dryRecorder->SubmitMono(mono, frames, sampleRate);
+	}
+
+	void RecordingSession::Stop(std::wstring& wetPath, uint64_t& frames, uint64_t& started)
+	{
+		wetPath.clear();
+		frames = 0;
+		started = 0;
+		if (dryAttached)
+		{
+			DrySignalRecording::Detach();
+			dryAttached = false;
+		}
+		std::shared_ptr<GameAudioRecorder> wet = std::move(wetRecorder);
+		std::shared_ptr<GameAudioRecorder> dry = std::move(dryRecorder);
+		if (!wet) return;
+		lastError = wet->GetError();
+		if (dry && FAILED(dry->GetError())) lastError = dry->GetError();
+		frames = wet->GetFrames();
+		started = wet->GetStarted();
+		wetPath = wet->GetPath();
+		wet->Close();
+		if (dry) dry->Close();
+	}
+
+	HRESULT RecordingSession::GetError() const noexcept
+	{
+		if (wetRecorder && FAILED(wetRecorder->GetError())) return wetRecorder->GetError();
+		if (dryRecorder && FAILED(dryRecorder->GetError())) return dryRecorder->GetError();
+		return lastError;
+	}
+
+	uint64_t RecordingSession::GetFrames() const noexcept
+	{
+		return wetRecorder ? wetRecorder->GetFrames() : 0;
+	}
+
+	uint64_t RecordingSession::GetStarted() const noexcept
+	{
+		return wetRecorder ? wetRecorder->GetStarted() : 0;
+	}
+
+	const std::wstring& RecordingSession::GetWetPath() const noexcept
+	{
+		static const std::wstring empty;
+		return wetRecorder ? wetRecorder->GetPath() : empty;
 	}
 }

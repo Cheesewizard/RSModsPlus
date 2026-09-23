@@ -13,10 +13,9 @@ namespace Audio::OutputTap
 	// Wrap a physical (possibly RS_ASIO) enumerator so its render devices hand back a tapping client.
 	HRESULT CreateTapEnumerator(IMMDeviceEnumerator* physical, IMMDeviceEnumerator** enumerator);
 
-	// Begin/stop a passthrough take under directory. dry captures the guitar input (via the input hook,
-	// no tap needed); wet captures the game mix through the render tap. When idle the tap wrapper just
-	// forwards, adding no latency to what the player hears.
-	HRESULT StartRecording(const std::wstring& directory, bool dry);
+	// Begin/stop a paired wet game-mix and dry guitar take under directory. When idle the tap wrapper
+	// just forwards, adding no latency to what the player hears.
+	HRESULT StartRecording(const std::wstring& directory);
 	// Outputs the finished take's frame count and start FILETIME so a video take can align/validate it.
 	HRESULT StopRecording(std::wstring& savedPath, uint64_t& frames, uint64_t& started);
 	bool IsRecording();

@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include <atomic>
 #include <filesystem>
+#include <memory>
 #include <thread>
 #include "AudioPacketQueue.hpp"
 
@@ -37,5 +38,26 @@ namespace Audio
 		uint32_t dataBytes = 0;
 		uint32_t packetLimit = 0;
 		std::wstring recordingPath;
+	};
+
+	class RecordingSession
+	{
+	public:
+		~RecordingSession();
+		HRESULT Start(const std::filesystem::path& directory, uint32_t wetMaximumFrames);
+		void SubmitWet(const float* stereo, uint32_t frames) noexcept;
+		void SubmitDry(const float* mono, uint32_t frames, uint32_t sampleRate) noexcept;
+		void Stop(std::wstring& wetPath, uint64_t& frames, uint64_t& started);
+		bool IsRecording() const noexcept { return wetRecorder != nullptr; }
+		HRESULT GetError() const noexcept;
+		uint64_t GetFrames() const noexcept;
+		uint64_t GetStarted() const noexcept;
+		const std::wstring& GetWetPath() const noexcept;
+
+	private:
+		std::shared_ptr<GameAudioRecorder> wetRecorder;
+		std::shared_ptr<GameAudioRecorder> dryRecorder;
+		HRESULT lastError = S_OK;
+		bool dryAttached = false;
 	};
 }

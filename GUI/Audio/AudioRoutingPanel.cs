@@ -72,12 +72,11 @@ namespace RSMods.Audio
 		private readonly Label libraryLabel = StudioTheme.Hint("");
 		private readonly LevelMeter meter = new LevelMeter { Dock = DockStyle.Fill };
 		private readonly SegmentedControl captureMode = new SegmentedControl("Audio (WAV)", "Video (MP4)");
-		private readonly SegmentedControl recordingSource = new SegmentedControl("Game mix", "Dry guitar");
 		private readonly StudioSelector recordingHotkeySelector = new StudioSelector { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "In-game recording hotkey" };
 		private bool syncingRecordingHotkey;
 		private readonly SegmentedControl inputSelector = new SegmentedControl("Real Tone Cable", "ASIO interface");
-		private readonly StudioCheck eventDrivenCaptureCheck = new StudioCheck("Read the cable with Windows audio events") { Margin = new Padding(0, 10, 0, 0) };
-		private readonly Label eventDrivenCaptureHint = StudioTheme.Hint("Event-driven capture of the Real Tone Cable. Tone is unchanged; RS_ASIO stays off in cable mode. Restart Rocksmith after changing it.");
+		private readonly StudioCheck eventDrivenCaptureCheck = new StudioCheck("Improve USB cable compatibility") { Margin = new Padding(0, 10, 0, 0) };
+		private readonly Label eventDrivenCaptureHint = StudioTheme.Hint("Lets Rocksmith use more USB guitar cables by converting supported Windows input formats to the 48 kHz format the game expects. Also uses Windows audio events when available. Restart Rocksmith after changing it.");
 		private readonly StudioCheck cableForPlayerTwoCheck = new StudioCheck("Use the Real Tone Cable for Player 2") { Margin = new Padding(0, 10, 0, 0) };
 		private readonly Label cableForPlayerTwoHint = StudioTheme.Hint("Adds the cable as a second input after the ASIO interface for multiplayer. RS_ASIO.ini is not changed. Applies live while Rocksmith is connected.");
 		private bool syncingEventDrivenCapture;
@@ -277,7 +276,6 @@ namespace RSMods.Audio
 			// owns that file, so opening this window must not silently rewrite the ASIO driver either way.
 			StudioTheme.EnableDoubleBuffering(this);
 			recordingDirectory.Text = ReadSetting("RecordingDirectory", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "RSModsPlus"));
-			recordingSource.SelectedIndex = ReadSetting("RecordingSource", "Tone") == "Dry" ? 1 : 0;
 			// Default new setups to Video (MP4). Audio-only stays a one-click choice and is remembered.
 			captureMode.SelectedIndex = ReadSetting("CaptureMode", "Video") == "Audio" ? 0 : 1;
 			foreach (Keys key in recordingHotkeys)
@@ -814,6 +812,7 @@ namespace RSMods.Audio
 		private Control BuildOptionsCard()
 		{
 			var card = new StudioCard("Take options") { Dock = DockStyle.Fill };
+			card.Padding = new Padding(18, StudioCard.HeaderHeight + 10, 18, 8);
 			var options = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0) };
 			// AutoSize, not a fixed width: the captions (FORMAT / SOURCE / HOTKEY / FOLDER) are uppercase and set
 			// in a bold point font, so a hardcoded 76px column wrapped them to two lines once the font scaled with
@@ -832,7 +831,7 @@ namespace RSMods.Audio
 			buttons.Controls.Add(browseButton);
 			buttons.Controls.Add(openButton);
 			card.Add(buttons);
-			spaceLabel.Margin = new Padding(0, 4, 0, 2);
+			spaceLabel.Margin = new Padding(0, 2, 0, 0);
 			card.Add(spaceLabel);
 			return card;
 		}
@@ -1166,7 +1165,7 @@ namespace RSMods.Audio
 
 		private Control BuildTakesCard()
 		{
-			var card = new StudioCard("Recent takes", true) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 140) };
+			var card = new StudioCard("Recent takes", true) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 220) };
 			card.Add(takes, true);
 			var buttons = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
 			buttons.Controls.Add(playButton);
@@ -1205,7 +1204,6 @@ namespace RSMods.Audio
 			takes.DoubleClick += (sender, args) => Launch(takes.SelectedPath);
 			takes.SelectedIndexChanged += (sender, args) => UpdateTakeButtons();
 			captureMode.SelectedIndexChanged += (sender, args) => UpdateState();
-			recordingSource.SelectedIndexChanged += (sender, args) => UpdateState();
 			recordingHotkeySelector.SelectedIndexChanged += RecordingHotkeySelectionChanged;
 			outputSelector.SelectedIndexChanged += (sender, args) => { UpdateOutputHint(); UpdateState(); };
 			outputSelector.DropDown += (sender, args) => RefreshDevices();
@@ -1369,8 +1367,6 @@ namespace RSMods.Audio
 			string key = RecordingHotkey.ToString();
 			SetTip(recordButton, "Start a take (" + key + ")");
 			SetTip(stopButton, "Finish the take and write the file (" + key + ")");
-			recordingHotkeyStatus.Text = "In-game hotkey: " + key + ". Press it in Rocksmith to start or stop a take.";
-			recordingHotkeyStatus.ForeColor = StudioTheme.Positive;
 		}
 
 		void IMMNotificationClient.OnDeviceStateChanged(string deviceId, DeviceState newState) => Interlocked.Exchange(ref devicesChanged, 1);
@@ -1597,7 +1593,6 @@ namespace RSMods.Audio
 				SetPollInterval(ConnectedPollMilliseconds);
 				bool broken = latestStatus.OutputError < 0;
 				connectionChip.Set(broken ? "Connected · playback device unavailable" : "Connected", broken ? ChipTone.Bad : ChipTone.Good);
-				UpdateBridgeChip(broken);
 				elapsedLabel.Text = StudioFormat.Timecode(TimeSpan.FromSeconds(latestStatus.Frames / 48000.0));
 				meter.SetLevel(latestStatus.Peak);
 				// The Master strip is the output master, so show the proxy's measured output level there (peak of
@@ -1609,9 +1604,9 @@ namespace RSMods.Audio
 					lastSignal = DateTime.UtcNow;
 				if (latestStatus.RecordingError < 0)
 					SetStatus("Recording stopped with error 0x" + latestStatus.RecordingError.ToString("X8") + ". Press Stop & save to finalize the take.", ChipTone.Bad);
-				else if (latestStatus.IsRecording && latestStatus.IsDryRecording && !latestStatus.IsDryInputReady)
+				else if (latestStatus.IsRecording && !latestStatus.IsDryInputReady)
 					SetStatus("Dry guitar input is no longer arriving. Stop & save this take and check Player 1's input.", ChipTone.Warn);
-				else if (latestStatus.IsRecording && !latestStatus.IsDryRecording && (DateTime.UtcNow - lastSignal).TotalSeconds > 4)
+				else if (latestStatus.IsRecording && (DateTime.UtcNow - lastSignal).TotalSeconds > 4)
 					SetStatus("No sound is reaching the output. Check the device and the in-game volume before you play on.", ChipTone.Warn);
 			}
 			catch (Exception error)
@@ -1631,7 +1626,6 @@ namespace RSMods.Audio
 				routeSourceStalled = false;
 				SetPollInterval(SearchingPollMilliseconds);
 				connectionChip.Set(Summarize(error), ChipTone.Idle);
-				bridgeChip.Visible = false;
 				if (error is NotSupportedException) SetStatus(error.Message, ChipTone.Bad);
 				meter.Reset();
 				Strip(MixerChannel.Master).ResetLevel();
@@ -2210,7 +2204,6 @@ namespace RSMods.Audio
 			removeProxyButton.Visible = proxyInstalled && !isGameRunning;
 			outputSelector.Enabled = !isCommandRunning;
 			captureMode.Enabled = !recording && !isCommandRunning && video == null;
-			recordingSource.Enabled = captureMode.Enabled;
 			// Output logging is read when Rocksmith opens its output stream, so changing it while the
 			// game is running cannot affect the current session. Keep the live overlay independent.
 			monitorOutputCheck.Enabled = !isGameRunning && !isCommandRunning;
@@ -2218,7 +2211,7 @@ namespace RSMods.Audio
 			recordingChip.Tone = ChipTone.Bad;
 			elapsedLabel.ForeColor = recording ? StudioTheme.Record : StudioTheme.Ink;
 			deckHint.Text = recording
-				? "Take running · " + (latestStatus.IsDryRecording ? "dry guitar" : "game mix") + (wantsVideo ? " and video" : "") + " · " + recordingDirectory.Text
+				? "Take running · wet + dry" + (wantsVideo ? " and video" : "") + " · " + recordingDirectory.Text
 				: blocker ?? "Ready. Press Record, or " + RecordingHotkey + " in the game, to start a take.";
 			deckHint.ForeColor = blocker == null || recording ? StudioTheme.Muted : StudioTheme.Warning;
 			captureChip.Visible = wantsVideo;
@@ -2240,22 +2233,6 @@ namespace RSMods.Audio
 			if (isRouting) return "Windows output is live. Select the routed device above to inspect or change its buffer.";
 			if (latestStatus.EndpointId == PassthroughEndpoint) return "ASIO output is live; the Windows playback buffer does not apply.";
 			return "Playback device unavailable. Reconnect it, or select another output and press Apply output.";
-		}
-
-		private void UpdateBridgeChip(bool playbackBroken)
-		{
-			bridgeChip.Visible = true;
-			if (isSilentProxy)
-				bridgeChip.Set("Bridge ready · silent", ChipTone.Warn);
-			else if (isStartingProxy)
-				bridgeChip.Set("Bridge starting", ChipTone.Idle);
-			else if (isDowngradingProxy || routeSourceStalled)
-				bridgeChip.Set("Bridge recovering", ChipTone.Warn);
-			else
-			{
-				bool bridgeOn = latestStatus != null && !playbackBroken && (isRouting || !isPassthrough);
-				bridgeChip.Set(bridgeOn ? "Bridge on" : "Bridge off", bridgeOn ? ChipTone.Good : ChipTone.Idle);
-			}
 		}
 
 		private string DescribeBlocker(bool recording, bool wantsVideo, bool captureReady)

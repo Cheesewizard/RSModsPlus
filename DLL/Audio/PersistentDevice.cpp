@@ -498,10 +498,16 @@ namespace Audio::PersistentInput
 			LOG_INFO("(P2 CABLE SCAN) game created a device enumerator -> 0x" << std::hex << result << std::dec
 				<< (configuredTap ? " (tap)" : "") << std::endl);
 		if (FAILED(result)) return result;
-		// Passthrough tap: hand the game a read-only wrapper of the real render device instead of
-		// substituting our own output. The player's path (WASAPI or RS_ASIO->ASIO) is unchanged.
+		// Compose the passive render tap around the configured enumerator. This keeps the selected
+		// input/output strategy intact while exposing the same normalized wet samples to recording.
 		if (configuredTap)
-			return OutputTap::CreateTapEnumerator(physical.Get(), reinterpret_cast<IMMDeviceEnumerator**>(object));
+		{
+			ComPtr<IMMDeviceEnumerator> configured;
+			const HRESULT configuredResult = CreateEnumerator(physical.Get(), configuredEndpoint, configuredOutput,
+				configuredCapture, configuredOutputReplacement, reinterpret_cast<IMMDeviceEnumerator**>(configured.GetAddressOf()));
+			if (FAILED(configuredResult)) return configuredResult;
+			return OutputTap::CreateTapEnumerator(configured.Get(), reinterpret_cast<IMMDeviceEnumerator**>(object));
+		}
 		return CreateEnumerator(physical.Get(), configuredEndpoint, configuredOutput, configuredCapture,
 			configuredOutputReplacement, reinterpret_cast<IMMDeviceEnumerator**>(object));
 	}

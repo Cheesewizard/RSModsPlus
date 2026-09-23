@@ -6,7 +6,7 @@
 namespace Audio::DrySignalRecording
 {
 	inline CaptureProcessingGate gate;
-	inline GameAudioRecorder* recorder = nullptr;
+	inline RecordingSession* session = nullptr;
 	inline std::atomic<uint64_t> lastPacketTick{ 0 };
 	inline std::atomic<uint32_t> lastSampleRate{ 0 };
 
@@ -17,19 +17,20 @@ namespace Audio::DrySignalRecording
 	}
 
 	// Control callers serialize attachment and detachment; the input callback never waits.
-	inline HRESULT Attach(GameAudioRecorder& target)
+	inline HRESULT Attach(RecordingSession& target)
 	{
-		if (recorder) return HRESULT_FROM_WIN32(ERROR_BUSY);
+		if (session) return HRESULT_FROM_WIN32(ERROR_BUSY);
 		if (!IsReady()) return AUDCLNT_E_DEVICE_INVALIDATED;
-		recorder = &target;
+		session = &target;
 		gate.Open();
 		return S_OK;
 	}
 
 	inline void Detach()
 	{
+		if (!session) return;
 		gate.CloseAndWait();
-		recorder = nullptr;
+		session = nullptr;
 	}
 
 	inline void Observe(const float* mono, uint32_t frames, uint32_t sampleRate)
@@ -38,6 +39,6 @@ namespace Audio::DrySignalRecording
 		lastSampleRate.store(sampleRate);
 		lastPacketTick.store(GetTickCount64());
 		CaptureCallbackScope callback(gate);
-		if (callback) recorder->SubmitMono(mono, frames, sampleRate);
+		if (callback && session) session->SubmitDry(mono, frames, sampleRate);
 	}
 }

@@ -1638,7 +1638,7 @@ namespace Audio::CableInput
 				? PersistentInput::EnumeratorSource::RsAsio
 				: PersistentInput::EnumeratorSource::Game;
 			const bool installed = PersistentInput::Install(routingConfiguration.inputDeviceId,
-				routingConfiguration.outputDeviceId, true, replaceOutput, source);
+				routingConfiguration.outputDeviceId, true, replaceOutput, source, true);
 			if (!installed)
 			{
 				SetStatus("permanent Cable installation failed: unsupported or modified game calls");

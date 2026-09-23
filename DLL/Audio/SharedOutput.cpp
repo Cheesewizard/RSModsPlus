@@ -369,43 +369,42 @@ namespace Audio::SharedOutput
 				bool alreadyRecording = false;
 				Invoke([&]() { alreadyRecording = recorder != nullptr; return S_OK; });
 				if (alreadyRecording) response.result = HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
-				else if (request.operation == 14 && !DrySignalRecording::IsReady()) response.result = AUDCLNT_E_DEVICE_INVALIDATED;
 				else
 				{
-					auto next = std::make_shared<GameAudioRecorder>();
+					auto session = std::make_shared<RecordingSession>();
 					const std::filesystem::path directory(request.value);
-					const bool dry = request.operation == 14;
-					response.result = directory.is_absolute() ? next->Open(directory, dry ? 4096 : periodFrames, dry ? L"dry" : L"wet") : E_INVALIDARG;
+					response.result = directory.is_absolute() ? session->Start(directory, periodFrames) : E_INVALIDARG;
 					if (SUCCEEDED(response.result)) response.result = Invoke([&]()
 					{
-						lastRecordingPath = next->GetPath();
-						if (dry)
-						{
-							const HRESULT attached = DrySignalRecording::Attach(*next);
-							if (FAILED(attached)) return attached;
-							isDryRecording = true;
-						}
-						recorder = next; recordedFrames = 0; recordingStarted = 0; recordingError = S_OK;
+						lastRecordingPath = session->GetWetPath();
+						recorder = session;
+						recordedFrames = 0; recordingStarted = 0; recordingError = S_OK;
 						return S_OK;
 					});
+					if (FAILED(response.result))
+					{
+						std::wstring ignoredPath;
+						uint64_t ignoredFrames = 0, ignoredStarted = 0;
+						session->Stop(ignoredPath, ignoredFrames, ignoredStarted);
+					}
 				}
 			}
 			else if (request.operation == 3)
 			{
-				std::shared_ptr<GameAudioRecorder> finished;
+				std::shared_ptr<RecordingSession> finished;
 				Invoke([&]()
 				{
-					if (isDryRecording) DrySignalRecording::Detach();
-					isDryRecording = false;
 					if (recorder) { recordedFrames = recorder->GetFrames(); recordingStarted = recorder->GetStarted(); }
 					finished.swap(recorder);
 					return S_OK;
 				});
 				if (finished)
 				{
-					finished->Close();
+					std::wstring stoppedPath;
+					uint64_t stoppedFrames = 0, stoppedStarted = 0;
+					finished->Stop(stoppedPath, stoppedFrames, stoppedStarted);
 					response.result = finished->GetError();
-					Invoke([&]() { lastRecordingPath = finished->GetPath(); recordingError = finished->GetError(); return S_OK; });
+					Invoke([&]() { lastRecordingPath = stoppedPath; recordingError = response.result; return S_OK; });
 				}
 			}
 			else if (request.operation == 4) response.result = SwitchOutput(request.value);
@@ -440,12 +439,12 @@ namespace Audio::SharedOutput
 				response.recordedFrames = recorder ? recorder->GetFrames() : recordedFrames;
 				response.recordingStarted = recorder ? recorder->GetStarted() : recordingStarted;
 				response.dryInputReady = DrySignalRecording::IsReady() ? 1 : 0;
-				response.recordingSource = isDryRecording ? 1 : 0;
+				response.recordingSource = 0;
 				OutputTap::ReadOutputLevels(response.outputPeak, response.outputRms, 2);
 				response.proxyInputMode = static_cast<uint32_t>(OutputTap::ProxyInputMode());
 				response.peak = peak;
 				if (request.operation == 1) peak = 0;
-				wcsncpy_s(response.file, recorder ? recorder->GetPath().c_str() : lastRecordingPath.c_str(), _TRUNCATE);
+				wcsncpy_s(response.file, recorder ? recorder->GetWetPath().c_str() : lastRecordingPath.c_str(), _TRUNCATE);
 				wcsncpy_s(response.endpoint, (SUCCEEDED(backendStatus.error) ? backendStatus.activeEndpoint : activeEndpoint).c_str(), _TRUNCATE);
 				if (request.operation == 18) WriteLatencyResult(response);   // overwrites file with the latency result
 				if (request.operation == 5)
@@ -781,7 +780,7 @@ namespace Audio::SharedOutput
 					const float sample = converted[index];
 					if (std::isfinite(sample)) peak = std::max(peak, static_cast<uint32_t>(std::min(1.0f, std::abs(sample)) * 1000));
 				}
-				if (recorder && !isDryRecording) recorder->Submit(converted.data(), packetFrames);
+					if (recorder) recorder->SubmitWet(converted.data(), packetFrames);
 				++packetReadIndex;
 				queue.CommitRead();
 			}
@@ -808,8 +807,12 @@ namespace Audio::SharedOutput
 					SignalGame();
 				}
 			}
-			if (isDryRecording) DrySignalRecording::Detach();
-			if (recorder) recorder->Close();
+			if (recorder)
+			{
+				std::wstring ignoredPath;
+				uint64_t ignoredFrames = 0, ignoredStarted = 0;
+				recorder->Stop(ignoredPath, ignoredFrames, ignoredStarted);
+			}
 			if (task) AvRevertMmThreadCharacteristics(task);
 		}
 
@@ -827,8 +830,7 @@ namespace Audio::SharedOutput
 		std::atomic<uint64_t> routeGeneration{ 0 };
 		uint64_t pendingGeneration = 0;
 		uint32_t packetWriteIndex = 0, packetReadIndex = 0;
-		std::shared_ptr<GameAudioRecorder> recorder;
-		bool isDryRecording = false;
+		std::shared_ptr<RecordingSession> recorder;
 		std::wstring activeEndpoint;
 		UINT32 selectedPeriod = 0;
 		std::wstring lastRecordingPath;
@@ -1252,7 +1254,7 @@ namespace Audio::SharedOutput
 
 	// Status returned while nothing is routed. The playback mixer is the game's own bus volumes,
 	// set through VolumeControl (game code), so it works with or without routing and stays live here.
-	// Only the features that genuinely need an owned output - recording (2, 3, 14) and switching the
+	// Only the features that genuinely need an owned output - recording (2, 3) and switching the
 	// physical output device (4, 6) - are refused, with a clear code so the GUI can say routing is
 	// required. A sentinel endpoint lets the GUI show "passthrough" without changing the wire layout.
 	ControlResponse PassthroughStatus(const ControlRequest& request)
@@ -1267,18 +1269,11 @@ namespace Audio::SharedOutput
 		{
 			// handled: the input-hook DSP, mixer, latency probe, gate override, proxy promotion, Player 2 Cable
 		}
-		else if (request.operation == 14)
-		{
-			// Dry take: guitar input via the input hook - available without the tap.
-			response.result = OutputTap::StartRecording(request.value, true);
-		}
 		else if (request.operation == 2)
 		{
-			// Wet take needs the Rocksmith Audio Bridge proxy ASIO driver in the chain; refuse cleanly
-			// if it is not installed/loaded, so we never write a silent file.
-			response.result = OutputTap::ProxyAvailable()
-				? OutputTap::StartRecording(request.value, false)
-				: HRESULT_FROM_WIN32(ERROR_NOT_READY);
+			// Wet + dry takes consume the normalized output tap and input hook streams. The tap works
+			// with both the ASIO-backed and cable/WASAPI output strategies.
+			response.result = OutputTap::StartRecording(request.value);
 		}
 		std::wstring stoppedPath;
 		uint64_t stoppedFrames = 0, stoppedStarted = 0;
