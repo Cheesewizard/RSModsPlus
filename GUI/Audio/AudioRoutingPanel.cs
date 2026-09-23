@@ -49,7 +49,6 @@ namespace RSMods.Audio
 		// status poll used to call it several times per 100 ms tick with unchanged text.
 		private readonly Dictionary<Control, string> tipTexts = new Dictionary<Control, string>();
 		private readonly StatusChip connectionChip = new StatusChip("Looking for Rocksmith");
-		private readonly StatusChip bridgeChip = new StatusChip("Bridge off") { Visible = false };
 		private readonly StatusChip recordingChip = new StatusChip("REC") { Visible = false };
 		private readonly StatusChip inputChip = new StatusChip("Input");
 		private readonly StatusChip captureChip = new StatusChip("Window capture") { Visible = false };
@@ -62,7 +61,6 @@ namespace RSMods.Audio
 		// reserves the common m:ss.f width so the deck does not jump as the first digits appear.
 		private readonly Label elapsedLabel = new Label { AutoSize = true, MinimumSize = new Size(150, 0), Text = "00:00.0", Font = StudioTheme.Timecode, ForeColor = StudioTheme.Ink, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, 0, 12, 0), UseMnemonic = false };
 		private readonly Label deckHint = StudioTheme.Hint("");
-		private readonly Label recordingHotkeyStatus = StudioTheme.Hint("");
 		private readonly Label statusLabel = new Label { AutoEllipsis = true, UseMnemonic = false, Font = StudioTheme.Body, ForeColor = StudioTheme.Muted, TextAlign = ContentAlignment.MiddleLeft };
 		// A lightning bolt in the header, top-right by the connection chip: it appears (amber) only while the game
 		// is playing straight out the low-latency ASIO device, so "lit" = high-performance output is live.
@@ -716,7 +714,7 @@ namespace RSMods.Audio
 			body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 			body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 			body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-			body.Controls.Add(BuildPageIntro("Recording", "Capture a polished game mix or a clean guitar take, then review recent recordings in one place."), 0, 0);
+			body.Controls.Add(BuildPageIntro("Recording", "Capture the wet game mix and dry guitar together, then review recent recordings in one place."), 0, 0);
 			body.Controls.Add(Columns(BuildDeck(), BuildOptionsCard()), 0, 1);
 			var takes = BuildTakesCard();
 			takes.Margin = new Padding(0);
@@ -757,9 +755,6 @@ namespace RSMods.Audio
 			right.Controls.Add(perfBolt);
 			connectionChip.Anchor = AnchorStyles.None;
 			right.Controls.Add(connectionChip);
-			bridgeChip.Anchor = AnchorStyles.None;
-			tips.SetToolTip(bridgeChip, "Green while the bridge is routing the game's audio to your chosen output; grey while the game plays out of its own output untouched.");
-			right.Controls.Add(bridgeChip);
 			header.Controls.Add(right, 1, 0);
 			// Wrap the subtitle to the width the header actually has rather than letting it run off the right edge
 			// (it clipped to "...output routing" once the text scaled with DPI). Cap it just short of the space to
@@ -777,6 +772,7 @@ namespace RSMods.Audio
 		private Control BuildDeck()
 		{
 			var deck = new StudioCard("Transport") { Dock = DockStyle.Fill };
+			deck.Padding = new Padding(18, StudioCard.HeaderHeight + 10, 18, 8);
 			var clock = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0) };
 			recordingChip.Margin = new Padding(0, 12, 0, 0);
 			clock.Controls.Add(elapsedLabel);
@@ -803,8 +799,6 @@ namespace RSMods.Audio
 			deck.Add(chips);
 			deckHint.Margin = new Padding(0, 6, 0, 2);
 			deck.Add(deckHint);
-			recordingHotkeyStatus.Margin = new Padding(0, 1, 0, 0);
-			deck.Add(recordingHotkeyStatus);
 			return deck;
 		}
 
@@ -820,11 +814,10 @@ namespace RSMods.Audio
 			options.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 			options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 			AddOptionRow(options, 0, "Format", captureMode);
-			AddOptionRow(options, 1, "Source", recordingSource);
 			recordingHotkeySelector.Margin = new Padding(0, 2, 0, 2);
-			AddOptionRow(options, 2, "Hotkey", recordingHotkeySelector);
+			AddOptionRow(options, 1, "Hotkey", recordingHotkeySelector);
 			recordingDirectory.Margin = new Padding(0, 2, 0, 2);
-			AddOptionRow(options, 3, "Folder", recordingDirectory);
+			AddOptionRow(options, 2, "Folder", recordingDirectory);
 			recordingDirectory.Anchor = AnchorStyles.Left | AnchorStyles.Right;
 			card.Add(options);
 			var buttons = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 2, 0, 0) };
@@ -1306,10 +1299,9 @@ namespace RSMods.Audio
 			tips.SetToolTip(applyButton, "Use the selected device. A device with an ASIO driver plays through ASIO (best latency, and game-mix recording works); anything else is bridged over Windows audio.");
 			tips.SetToolTip(openButton, "Open the takes folder in Explorer.");
 			tips.SetToolTip(browseButton, "Choose the folder takes are saved to.");
-			tips.SetToolTip(captureMode, "Both formats record the selected audio source. MP4 also records the Rocksmith window.");
-			tips.SetToolTip(recordingSource, "Game mix records everything you hear. Dry guitar records Player 1's input after pitch shifting and before any tone. Playback is unchanged either way.");
+			tips.SetToolTip(captureMode, "Both formats record wet + dry WAVs. MP4 also records the Rocksmith window.");
 			tips.SetToolTip(inputSelector, "ASIO uses RS_ASIO and your interface for the lowest latency. The Real Tone Cable uses the Windows audio path.");
-			tips.SetToolTip(eventDrivenCaptureCheck, "Reads the Real Tone Cable with Windows audio events. Whether it feels lower latency depends on the machine. Restart Rocksmith after changing it.");
+			tips.SetToolTip(eventDrivenCaptureCheck, "Improves compatibility with USB guitar cables that do not natively use Rocksmith's 48 kHz input format. Windows audio events may also reduce latency on some machines. Restart Rocksmith after changing it.");
 			tips.SetToolTip(cableForPlayerTwoCheck, "Adds the RSModsPlus Real Tone Cable device after the configured ASIO input. RS_ASIO.ini is not changed. Applies live while Rocksmith is connected.");
 			tips.SetToolTip(inputGainEnableCheck, "Adds gain to the guitar signal before Rocksmith hears it. 0 dB leaves the input unchanged. Applies live.");
 			tips.SetToolTip(inputGainSlider, "Input gain from 0 to +20 dB. Type an exact value in the box or nudge by 0.1 dB.");
@@ -1335,15 +1327,13 @@ namespace RSMods.Audio
 			ToggleRecordingFromHotkey(IntPtr.Zero);
 		}
 
-		// The in-game overlay posts this with a flags word: bit 0x100 marks an override, bit 1 = dry guitar
-		// (else game mix), bit 2 = video (else audio). When present, apply the overlay's chosen source and
-		// format before starting the take; the plain hotkey (flags 0) keeps whatever is selected here.
+		// The in-game overlay posts this with a flags word: bit 0x100 marks an override and bit 2 = video
+		// (else audio). Wet and dry WAVs are always captured together.
 		internal void ToggleRecordingFromHotkey(IntPtr flags)
 		{
 			long value = flags.ToInt64();
 			if ((value & 0x100) != 0)
 			{
-				recordingSource.SelectedIndex = (value & 1) != 0 ? 1 : 0;
 				captureMode.SelectedIndex = (value & 2) != 0 ? 1 : 0;
 			}
 			if (recordButton.Enabled)
@@ -1491,7 +1481,6 @@ namespace RSMods.Audio
 				client = null;
 				latestStatus = null;
 				connectionChip.Set("Audio bridge off", ChipTone.Idle);
-				bridgeChip.Visible = false;
 				SetPollInterval(SearchingPollMilliseconds);
 				SetStatus(masterOffRequiresClose
 					? "Audio bridge is off. Close Rocksmith to restore its saved audio setup."
@@ -1804,8 +1793,8 @@ namespace RSMods.Audio
 					await video.StartAsync(client.ProcessId, recordingDirectory.Text);
 				}
 				lastSignal = DateTime.UtcNow;
-				latestStatus = await client.SendAsync(recordingSource.SelectedIndex == 1 ? 14u : 2u, Path.GetFullPath(recordingDirectory.Text));
-				SetStatus("Recording " + (latestStatus.IsDryRecording ? "dry guitar" : "tone + song") + (video != null ? " and video" : "") + " · press Stop & save to finish this take.", ChipTone.Info);
+				latestStatus = await client.SendAsync(2, Path.GetFullPath(recordingDirectory.Text));
+				SetStatus("Recording wet + dry" + (video != null ? " and video" : "") + " · press Stop & save to finish this take.", ChipTone.Info);
 			}
 			catch (Exception error) { SetRecordingError(error); video?.Dispose(); video = null; }
 			finally { isCommandRunning = false; UpdateState(); }
@@ -2245,13 +2234,12 @@ namespace RSMods.Audio
 				return "The last take ended with an error. Press Stop & save to close it before recording again.";
 			if (!Path.IsPathRooted(recordingDirectory.Text))
 				return "Choose a full folder path for takes before recording.";
-			if (recordingSource.SelectedIndex == 1 && latestStatus?.IsDryInputReady != true)
-				return "Dry recording needs an active Player 1 guitar input at 48 kHz.";
+			if (latestStatus?.IsDryInputReady != true)
+				return "Wet + dry recording needs an active Player 1 guitar input at 48 kHz.";
 			// Game-mix (wet) recording on an ASIO output only captures through the Rocksmith Audio Bridge proxy.
 			// A plain WASAPI output records the mix via the render tap and needs no driver, so gate only the
 			// ASIO-without-driver case and point the user at the one action that installs it.
-			if (recordingSource.SelectedIndex == 0
-				&& cachedMode == AudioInputMode.Asio
+			if (cachedMode == AudioInputMode.Asio
 				&& outputSelector.SelectedItem is AudioDeviceChoice wetOut
 				&& FindMatchingAsioDriver(wetOut.Name) != null
 				&& !cachedProxyRegistered)
@@ -2329,7 +2317,7 @@ namespace RSMods.Audio
 			try
 			{
 				WriteModernCableInput(eventDrivenCaptureCheck.Checked);
-				SetStatus("Event-driven cable capture " + (eventDrivenCaptureCheck.Checked ? "on" : "off") + ". Restart Rocksmith to apply.", ChipTone.Good);
+				SetStatus("USB cable compatibility mode " + (eventDrivenCaptureCheck.Checked ? "on" : "off") + ". Restart Rocksmith to apply.", ChipTone.Good);
 			}
 			catch (Exception error)
 			{
@@ -3066,7 +3054,6 @@ namespace RSMods.Audio
 		private void SavePreferences()
 		{
 			WriteSetting("RecordingDirectory", Path.GetFullPath(recordingDirectory.Text));
-			WriteSetting("RecordingSource", recordingSource.SelectedIndex == 1 ? "Dry" : "Tone");
 			WriteSetting("CaptureMode", captureMode.SelectedIndex == 1 ? "Video" : "Audio");
 		}
 
