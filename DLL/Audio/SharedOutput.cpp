@@ -12,8 +12,10 @@
 #include "../AsioProxy/LatencyDsp.h"
 #include "../Mods/VolumeControl.hpp"
 #include "../Mods/RocksmithGate.hpp"
+#include "../Mods/Enumeration.hpp"
 #include <vector>
 #include <avrt.h>
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -25,10 +27,38 @@
 
 #pragma comment(lib, "avrt.lib")
 
+namespace Settings
+{
+	bool SetNoteByNoteDetectionVisible(bool enabled);
+}
+
 namespace Audio::SharedOutput
 {
 	namespace
 	{
+		HRESULT PersistCustomSetting(const char* name, long value)
+		{
+			char executablePath[MAX_PATH]{};
+			if (!GetModuleFileNameA(nullptr, executablePath, MAX_PATH))
+				return HRESULT_FROM_WIN32(GetLastError());
+			const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
+			const std::string text = std::to_string(value);
+			if (!WritePrivateProfileStringA("Mod Settings", name, text.c_str(), iniPath.c_str()))
+				return HRESULT_FROM_WIN32(GetLastError());
+			return S_OK;
+		}
+
+		HRESULT PersistStringSetting(const char* section, const char* name, const char* value)
+		{
+			char executablePath[MAX_PATH]{};
+			if (!GetModuleFileNameA(nullptr, executablePath, MAX_PATH))
+				return HRESULT_FROM_WIN32(GetLastError());
+			const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
+			if (!WritePrivateProfileStringA(section, name, value, iniPath.c_str()))
+				return HRESULT_FROM_WIN32(GetLastError());
+			return S_OK;
+		}
+
 		// Latency round-trip result, shared by both control handlers (a class member would not be visible to
 		// the free-function passthrough handler). g_latencyProbeLen is captured when a measure is armed (op 17).
 		int g_latencyProbeLen = 0;
@@ -185,8 +215,12 @@ namespace Audio::SharedOutput
 		}
 		case 15:
 			// Guitar input make-up gain, signed tenths of a dB ("60" = +6.0 dB), as RSMods.ini stores it.
-			if (!parseInteger(integer)) response.result = E_INVALIDARG;
-			else { AsioHook::SetInputGainDb(static_cast<float>(integer) / 10.0f); response.result = S_OK; }
+			if (!parseInteger(integer) || integer < -240 || integer > 240) response.result = E_INVALIDARG;
+			else
+			{
+				AsioHook::SetInputGainDb(static_cast<float>(integer) / 10.0f);
+				response.result = PersistCustomSetting("AsioInputGain", integer);
+			}
 			return true;
 		case 16:
 		{
@@ -204,8 +238,23 @@ namespace Audio::SharedOutput
 			const bool valid = hasCeiling && hasAgc && hasTarget && e && (*e == 0 || *e == L'\n')
 				&& (limOn == 0 || limOn == 1) && (agcOn == 0 || agcOn == 1);
 			if (!valid) response.result = E_INVALIDARG;
-			else response.result = configureGuard(limOn != 0, static_cast<float>(ceiling), agcOn != 0, static_cast<float>(target))
-				? S_OK : HRESULT_FROM_WIN32(ERROR_NOT_READY);
+			else
+			{
+				const HRESULT guard = configureGuard(limOn != 0, static_cast<float>(ceiling), agcOn != 0, static_cast<float>(target))
+					? S_OK : HRESULT_FROM_WIN32(ERROR_NOT_READY);
+				// The ceiling cap is a deliberate saved state, like the guitar-input controls, so write it back to
+				// survive a relaunch. Ceiling and target arrive linear; store them as tenths of a dBFS, the inverse
+				// of the pow(10, tenths/200) the load path uses (ConfigureSavedOutputGuard / HandleAudioBridgeLimiter).
+				// Persist even when the proxy is not loaded yet (NOT_READY) so the preference still sticks and the
+				// saved guard is applied once the ASIO proxy comes up.
+				const long ceilingTenths = ceiling > 0.0 ? std::lround(200.0 * std::log10(ceiling)) : -60;
+				const long targetTenths = target > 0.0 ? std::lround(200.0 * std::log10(target)) : -200;
+				HRESULT persist = PersistCustomSetting("AudioBridgeLimiter", limOn);
+				if (SUCCEEDED(persist)) persist = PersistCustomSetting("AudioBridgeLimiterLevel", ceilingTenths);
+				if (SUCCEEDED(persist)) persist = PersistCustomSetting("AudioBridgeLoudnessMatch", agcOn);
+				if (SUCCEEDED(persist)) persist = PersistCustomSetting("AudioBridgeLoudnessTarget", targetTenths);
+				response.result = FAILED(guard) ? guard : persist;
+			}
 			return true;
 		}
 		case 17:
@@ -219,14 +268,22 @@ namespace Audio::SharedOutput
 			response.result = S_OK;   // the latency result is written into response.file after the common fill
 			return true;
 		case 19:
-			// Guitar input noise gate threshold, signed tenths of a dB ("-600" = -60 dB); 0 or above = off.
-			if (!parseInteger(integer)) response.result = E_INVALIDARG;
-			else { AsioHook::SetNoiseGateThresholdDb(static_cast<float>(integer) / 10.0f); response.result = S_OK; }
+			// Guitar input suppressor open threshold, signed tenths of a dB ("-600" = -60 dB); 0 or above = off.
+			if (!parseInteger(integer) || (integer != 0 && (integer < -900 || integer > -200))) response.result = E_INVALIDARG;
+			else
+			{
+				AsioHook::SetNoiseGateThresholdDb(static_cast<float>(integer) / 10.0f);
+				response.result = PersistCustomSetting("NoiseGateThreshold", integer);
+			}
 			return true;
 		case 20:
 			// Guitar input compressor strength, integer 0-100 (0 = off).
-			if (!parseInteger(integer)) response.result = E_INVALIDARG;
-			else { AsioHook::SetCompressorStrength(static_cast<float>(integer) / 100.0f); response.result = S_OK; }
+			if (!parseInteger(integer) || integer < 0 || integer > 100) response.result = E_INVALIDARG;
+			else
+			{
+				AsioHook::SetCompressorStrength(static_cast<float>(integer) / 100.0f);
+				response.result = PersistCustomSetting("CompressorStrength", integer);
+			}
 			return true;
 		case 23:
 		{
@@ -235,16 +292,24 @@ namespace Audio::SharedOutput
 			// (RocksmithGate::ApplyPerFrame) whether or not the bridge routes.
 			wchar_t* end = nullptr;
 			const long on = wcstol(request.value, &end, 10);
-			if (end == request.value) { response.result = E_INVALIDARG; return true; }
-			const long tenths = (*end == L',') ? wcstol(end + 1, nullptr, 10) : 0;
+			if (end == request.value || *end != L',' || (on != 0 && on != 1)) { response.result = E_INVALIDARG; return true; }
+			wchar_t* thresholdEnd = nullptr;
+			const long tenths = wcstol(end + 1, &thresholdEnd, 10);
+			if (thresholdEnd == end + 1 || (*thresholdEnd != 0 && *thresholdEnd != L'\n')
+				|| tenths < -1000 || tenths > 100) { response.result = E_INVALIDARG; return true; }
 			RocksmithGate::SetOverride(on != 0, static_cast<float>(tenths) / 10.0f);
-			response.result = S_OK;
+			response.result = PersistCustomSetting("RocksmithGateThreshold", tenths);
+			if (SUCCEEDED(response.result)) response.result = PersistCustomSetting("RocksmithGateOverride", on);
 			return true;
 		}
 		case 24:
 			// Mains-hum notch base frequency (0 = off, else 50 or 60).
-			if (!parseInteger(integer)) response.result = E_INVALIDARG;
-			else { AsioHook::SetHumFilterBaseHz(static_cast<float>(integer)); response.result = S_OK; }
+			if (!parseInteger(integer) || (integer != 0 && (integer < 20 || integer > 120))) response.result = E_INVALIDARG;
+			else
+			{
+				AsioHook::SetHumFilterBaseHz(static_cast<float>(integer));
+				response.result = PersistCustomSetting("HumFilter", integer);
+			}
 			return true;
 		case 25:
 		{
@@ -265,7 +330,11 @@ namespace Audio::SharedOutput
 			const long enabled = wcstol(request.value, &end, 10);
 			if (end == request.value || *end != L'\0' || (enabled != 0 && enabled != 1)) response.result = E_INVALIDARG;
 			else if (!PersistentInput::IsCableForPlayerTwoAvailable()) response.result = HRESULT_FROM_WIN32(ERROR_NOT_READY);
-			else { PersistentInput::SetCableForPlayerTwoEnabled(enabled != 0); response.result = S_OK; }
+			else
+			{
+				PersistentInput::SetCableForPlayerTwoEnabled(enabled != 0);
+				response.result = PersistStringSetting("Mod Settings", "CableForPlayerTwo", enabled != 0 ? "on" : "off");
+			}
 			return true;
 		}
 		case 27:
@@ -273,9 +342,33 @@ namespace Audio::SharedOutput
 			wchar_t* end = nullptr;
 			const long enabled = wcstol(request.value, &end, 10);
 			if (end == request.value || *end != L'\0' || (enabled != 0 && enabled != 1)) response.result = E_INVALIDARG;
-			else { CableInput::SetOverlayEnabled(enabled != 0); response.result = S_OK; }
+			else
+			{
+				CableInput::SetOverlayEnabled(enabled != 0);
+				char executablePath[MAX_PATH]{};
+				GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
+				const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
+				if (!WritePrivateProfileStringA("Mod Settings", "AudioDiagnosticsOverlay", enabled != 0 ? "on" : "off", iniPath.c_str())) response.result = HRESULT_FROM_WIN32(GetLastError());
+				else response.result = S_OK;
+			}
 			return true;
 		}
+		case 29:
+		{
+			wchar_t* end = nullptr;
+			const long enabled = wcstol(request.value, &end, 10);
+			if (end == request.value || *end != L'\0' || (enabled != 0 && enabled != 1)) response.result = E_INVALIDARG;
+			else response.result = Settings::SetNoteByNoteDetectionVisible(enabled != 0) ? S_OK : E_FAIL;
+			return true;
+		}
+		case 28:
+			// Force the game to re-enumerate its song library (pick up newly added psarc/CDLC without a
+			// restart). Same mechanism as the in-game ForceReEnumeration keypress: it flips the Steam DLC
+			// service flags the enumeration hook captured. If the hook has not seen that pointer yet (the
+			// game has not run its enumeration service since launch), report NOT_READY so the GUI can say so.
+			if (!Enumeration::rsSteamServiceFlagsPtr) response.result = HRESULT_FROM_WIN32(ERROR_NOT_READY);
+			else { Enumeration::ForceEnumeration(); response.result = S_OK; }
+			return true;
 		default:
 			return false;
 		}
@@ -361,10 +454,11 @@ namespace Audio::SharedOutput
 			{
 				return physical->ConfigureOutputGuard(limiterOn, ceilingLin, agcOn, targetRms);
 			};
-			// Player 2 Cable does not need the session at all, so it is answered even before Initialize.
-			if (request.operation == 26) { HandleSharedControl(request, response, configureGuard); return response; }
+			// Player 2 Cable (26), overlay toggles (27/29) and Force enumeration (28) do not need the session at all, so they are
+			// answered even before Initialize.
+			if (request.operation == 26 || request.operation == 27 || request.operation == 28 || request.operation == 29) { HandleSharedControl(request, response, configureGuard); return response; }
 			if (!initialized.load()) { response.result = AUDCLNT_E_NOT_INITIALIZED; return response; }
-			if (request.operation == 2 || request.operation == 14)
+			if (request.operation == 2)
 			{
 				bool alreadyRecording = false;
 				Invoke([&]() { alreadyRecording = recorder != nullptr; return S_OK; });
@@ -1347,17 +1441,28 @@ namespace Audio::SharedOutput
 		return response;
 	}
 
+	// Apply one control request against the live engine, picking the managed output session when one owns
+	// output or the passthrough backend otherwise - the exact dispatch the control pipe uses. Exposed so the
+	// in-game overlay can drive the audio backend directly (no pipe, same process). Serialised so the render
+	// thread (overlay) and the pipe worker thread never enter the engine handlers concurrently.
+	ControlResponse DispatchControl(const ControlRequest& request)
+	{
+		static std::mutex controlMutex;
+		std::lock_guard<std::mutex> serialize(controlMutex);
+		std::shared_ptr<OutputSession> session;
+		{
+			std::lock_guard<std::mutex> guard(g_sessionMutex);
+			session = g_activeSession.lock();
+		}
+		return session ? session->HandleControl(request) : PassthroughStatus(request);
+	}
+
 	void StartControlServer()
 	{
 		if (!g_control) g_control = new AudioControlServer();
 		const HRESULT result = g_control->Start([](const ControlRequest& request) -> ControlResponse
 		{
-			std::shared_ptr<OutputSession> session;
-			{
-				std::lock_guard<std::mutex> guard(g_sessionMutex);
-				session = g_activeSession.lock();
-			}
-			return session ? session->HandleControl(request) : PassthroughStatus(request);
+			return DispatchControl(request);
 		});
 		if (FAILED(result) && result != HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED))
 			LOG_ERROR("(AUDIO ROUTING) Control pipe could not start, HRESULT " << std::hex << result << std::dec << std::endl);

@@ -2,6 +2,16 @@
 #include "../../DLL/Audio/GameAudioRecorder.cpp"
 #include <fstream>
 
+// The focused routing harness embeds SharedOutput.cpp without the game Settings translation unit.
+// Keep the native overlay command linkable here; Settings.cpp owns the real persisted implementation.
+namespace Settings
+{
+	bool SetNoteByNoteDetectionVisible(bool)
+	{
+		return true;
+	}
+}
+
 namespace VolumeControl
 {
 	float testVolumes[7] = {100, 100, 100, 100, 100, 100, 100};
@@ -166,6 +176,13 @@ namespace Audio::AsioHook
 namespace RocksmithGate
 {
 	void SetOverride(bool, float) {}
+}
+
+// The real Enumeration.cpp pokes the game's DLC service flags in memory; the harness only needs the
+// SharedOutput control path to treat a force-enumeration request as handled.
+namespace Enumeration
+{
+	void ForceEnumeration() {}
 }
 
 namespace AudioRoutingTests

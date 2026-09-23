@@ -6,6 +6,7 @@
 #include "Audio/MlServiceLauncher.hpp"
 #include "Audio/AudioLifecycleTrace.hpp"
 #include "ProductVersion.hpp"
+#include "OverlayInputCapture.hpp"
 
 #if defined(_DEBUG) || defined(_WWISE_LOGS)
 bool debug = true;
@@ -115,10 +116,39 @@ const bool ensureForcedTopMode = false;
 /// <param name="lParam"> - Data Sent</param>
 /// <returns>Verification that message was sent.</returns>
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM keyPressed, LPARAM lParam) {
-	if (Menu::menuEnabled && ImGui_ImplWin32_WndProcHandler(hWnd, msg, keyPressed, lParam))
+	if (msg == WM_SETFOCUS || (msg == WM_ACTIVATEAPP && keyPressed != FALSE))
+		Keybindings::NotifyGameFocused();
+
+	// The overlay toggle is owned by RSModsPlus. Consume it before ImGui's general keyboard capture so
+	// keyboard navigation inside the focused panel cannot prevent the same key from closing the panel.
+	if (GameState::GameLoaded && keyPressed == VK_OEM_5 && (msg == WM_KEYDOWN || msg == WM_KEYUP)) {
+		if (msg == WM_KEYUP) Keybindings::HandleKeyUp(keyPressed);
+		return true;
+	}
+	if (GameState::GameLoaded && msg == WM_CHAR && keyPressed == 0x5C) // backslash '\'
 		return true;
 
-	if (Settings::ReturnSettingValue("PreventMidSongPause") == "on" && D3DHooks::cachedIsInSong) {
+	// Keep ImGui's input state synchronized even while its panels are closed. It must see a button release or
+	// focus-loss event that occurs after a panel closes; otherwise MouseDown remains latched and the next open
+	// panel stops accepting input.
+	if (Menu::ImGuiInit)
+		ImGui_ImplWin32_WndProcHandler(hWnd, msg, keyPressed, lParam);
+
+	// When a panel is open, swallow only what it owns: mouse events while the
+	// cursor is over a panel, and keyboard navigation while the panel owns it. This lets sliders and
+	// buttons work over exclusive-fullscreen Rocksmith without the clicks also driving the game, while leaving
+	// gameplay input live when the cursor is outside the panel.
+	if (Menu::menuEnabled || Menu::audioBridgeMenuEnabled) {
+		const ImGuiIO& io = ImGui::GetIO();
+		OverlayInputCapture::SetMouseCapture(io.WantCaptureMouse);
+		const bool isMouse = (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST);
+		const bool isKey = (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_CHAR);
+		if ((io.WantCaptureMouse && isMouse) || (io.WantCaptureKeyboard && isKey))
+			return true;
+	}
+
+	if (Settings::ReturnSettingValue("PreventMidSongPause") == "on" && D3DHooks::cachedIsInSong
+		&& !Keybindings::IsAudioBridgeFocusTransferPending()) {
 		switch (msg) {
 			case WM_NCACTIVATE:
 			case WM_ACTIVATEAPP:
@@ -209,6 +239,7 @@ HRESULT APIENTRY D3DHooks::Hook_EndScene(IDirect3DDevice9* pDevice) {
 
 	Menu::Init(pDevice, (LONG_PTR)WndProc);
 	Menu::RenderImGuiMenu();
+	OverlayInputCapture::SetMouseCapture((Menu::menuEnabled || Menu::audioBridgeMenuEnabled) && ImGui::GetIO().WantCaptureMouse);
 	Menu::UpdateStringTextures(pDevice);
 	UpdateGameWindowStacking();
 	GameOverlay::RenderOverlay(pDevice);
@@ -300,6 +331,7 @@ void Initialize() {
 	LogSettings::startupTime = clock();
 
 	Wwise::Exports::Initialize();
+	OverlayInputCapture::Install();
 
 	// Read before any thread is spawned. Every mod thread reads these maps, so
 	// rebuilding them later frees the strings a reader is still holding.
@@ -378,6 +410,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, uint32_t dwReason, LPVOID lpReserved) {
 			Initialize(); // Inject our mod code.
 			return TRUE;
 		case DLL_PROCESS_DETACH:
+			OverlayInputCapture::Shutdown();
 			Proxy::Shutdown(); // Kill Proxy to xinput1_3.dll
 
 			if (Menu::ImGuiInit)

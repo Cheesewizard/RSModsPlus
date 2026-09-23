@@ -3,6 +3,7 @@
 namespace VolumeControl {
 	bool GetPlaybackVolume(unsigned int channel, float& volume);
 	bool SetPlaybackVolume(unsigned int channel, float volume);
+	bool SetPlaybackVolumeWithTransition(unsigned int channel, float volume, unsigned int transitionMilliseconds);
 	void IncreaseVolume(int amountToIncrease, std::string mixerToIncrease);
 	void DecreaseVolume(int amountToDecrease, std::string mixerToDecrease);
 	void MutePlayer(bool player2 = false);
@@ -11,8 +12,13 @@ namespace VolumeControl {
 	void EnableSongPreviewAudio();
 	void AllowAltTabbingWithAudio();
 	void DisableAltTabbingWithAudio();
+	bool EnableExternalAmpMode();
+	bool RestoreRocksmithGuitar();
+	bool IsExternalAmpModeEnabled();
 	inline bool disabledSongPreviewAudio = false;
 	inline bool allowedAltTabbingWithAudio = false;
+	inline bool externalAmpModeEnabled = false;
+	inline float player1VolumeBeforeExternalAmp = 100.f;
 
 	inline bool player1Muted = false;
 	inline bool player2Muted = false;
@@ -20,8 +26,6 @@ namespace VolumeControl {
 
 inline float player1VolumeBeforeMute = 100.f;
 inline float player2VolumeBeforeMute = 100.f;
-
-
 inline std::vector<std::string> mixerNames = {
 	{"Master_Volume"}, // Master Volume
 	{"Mixer_Music"}, // Song Volume

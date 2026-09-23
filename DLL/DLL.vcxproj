@@ -27,6 +27,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="OverlayInputCapture.cpp" />
     <ClCompile Include="Audio\AsioHook.cpp" />
     <ClCompile Include="Audio\CableInput.cpp" />
     <ClCompile Include="Audio\MlAudioExporter.cpp" />
@@ -504,6 +505,7 @@
     <ClInclude Include="Wwise\Types.hpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="OverlayInputCapture.hpp" />
     <ProjectReference Include="Research\DebugTools\DebugTools.vcxproj" Condition="'$(Configuration)' != 'Release Public'">
       <Project>{ECA1B03D-4580-4456-931C-54B5B6526585}</Project><LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>

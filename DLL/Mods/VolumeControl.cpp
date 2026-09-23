@@ -18,19 +18,75 @@ bool VolumeControl::GetPlaybackVolume(unsigned int channel, float& volume)
 
 bool VolumeControl::SetPlaybackVolume(unsigned int channel, float volume)
 {
+	return SetPlaybackVolumeWithTransition(channel, volume, 0);
+}
+
+bool VolumeControl::SetPlaybackVolumeWithTransition(unsigned int channel, float volume, unsigned int transitionMilliseconds)
+{
 	if (!std::isfinite(volume) || volume < 0.f || volume > 100.f) return false;
 	if (channel >= 7) return false;
 	if (!Wwise::SoundEngine::IsInitialized()) return false;   // never touch the mixer before Wwise is up
 	const char* names[] = { "Mixer_Music", "Mixer_Player1", "Master_Volume", "Mixer_Player2", "Mixer_Mic", "Mixer_VO", "Mixer_SFX" };
 	const char* mixer = names[channel];
-	const auto global = Wwise::SoundEngine::SetRTPCValue(mixer, volume, AK_INVALID_GAME_OBJECT, 0, AkCurveInterpolation_Linear);
-	const auto player = Wwise::SoundEngine::SetRTPCValue(mixer, volume, 0x1234, 0, AkCurveInterpolation_Linear);
+	const auto global = Wwise::SoundEngine::SetRTPCValue(mixer, volume, AK_INVALID_GAME_OBJECT, transitionMilliseconds, AkCurveInterpolation_Linear);
+	const auto player = Wwise::SoundEngine::SetRTPCValue(mixer, volume, 0x1234, transitionMilliseconds, AkCurveInterpolation_Linear);
 	if (global != AK_Success || player != AK_Success)
 	{
 		LOG_ERROR("(PLAYBACK MIXER) Could not set " << mixer << ": " << global << ", " << player << std::endl);
 		return false;
 	}
 	return true;
+}
+
+bool VolumeControl::EnableExternalAmpMode()
+{
+	if (externalAmpModeEnabled)
+	{
+		LOG_INFO("External amp mode is already enabled; keeping the saved Player 1 volume." << std::endl);
+		return true;
+	}
+
+	float currentVolume = 0.f;
+	if (!GetPlaybackVolume(1, currentVolume))
+	{
+		LOG_ERROR("Could not enable external amp mode: failed to read Mixer_Player1 volume." << std::endl);
+		return false;
+	}
+
+	if (!SetPlaybackVolumeWithTransition(1, 0.f, 100))
+	{
+		LOG_ERROR("Could not enable external amp mode: failed to mute Mixer_Player1." << std::endl);
+		return false;
+	}
+
+	player1VolumeBeforeExternalAmp = currentVolume;
+	externalAmpModeEnabled = true;
+	LOG_INFO("Enabled external amp mode: muted Rocksmith's audible Mixer_Player1 bus; dry guitar detection is unchanged." << std::endl);
+	return true;
+}
+
+bool VolumeControl::RestoreRocksmithGuitar()
+{
+	if (!externalAmpModeEnabled)
+	{
+		LOG_INFO("Rocksmith guitar is already restored; external amp mode is disabled." << std::endl);
+		return true;
+	}
+
+	if (!SetPlaybackVolumeWithTransition(1, player1VolumeBeforeExternalAmp, 100))
+	{
+		LOG_ERROR("Could not restore Rocksmith guitar: failed to restore Mixer_Player1 volume." << std::endl);
+		return false;
+	}
+
+	externalAmpModeEnabled = false;
+	LOG_INFO("Disabled external amp mode: restored Rocksmith's Mixer_Player1 volume." << std::endl);
+	return true;
+}
+
+bool VolumeControl::IsExternalAmpModeEnabled()
+{
+	return externalAmpModeEnabled;
 }
 
 /// <summary>

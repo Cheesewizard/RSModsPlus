@@ -17,6 +17,7 @@ namespace RSMods.Tests
 			{
 				Application.EnableVisualStyles();
 				var assembly = Assembly.LoadFrom(Path.GetFullPath(arguments[0]));
+				VerifyBridgeOwnedSettings(assembly);
 				var windowType = assembly.GetType("RSMods.Audio.AudioRoutingWindow", true);
 				Directory.CreateDirectory(arguments[1]);
 				File.WriteAllText(Path.Combine(arguments[1], "cache.psarc"), "fixture");
@@ -26,18 +27,48 @@ namespace RSMods.Tests
 					"[Config]\r\nEnableAsio=0\r\nEnableWasapiInputs=1\r\n\r\n[Asio.Input.0]\r\nDriver=\r\n\r\n"
 					+ "[Asio.Input.1]\r\nDriver=\r\n\r\n[Asio.Input.Mic]\r\nDriver=\r\n");
 				File.WriteAllText(Path.Combine(arguments[1], "AudioRouting.ini"), "[Audio]\r\nMasterEnabled=1\r\n");
+				File.WriteAllText(Path.Combine(arguments[1], "RSMods.ini"),
+					"[Mod Settings]\r\nAudioDiagnosticsOverlay = off\r\n\r\n[Note by Note]\r\nNoteByNoteDetectionOverlay = off\r\n");
 				assembly.GetType("RSMods.Data.Constants", true).GetProperty("RSFolder").SetValue(null, Path.GetFullPath(arguments[1]));
 				using (var backgroundWindow = (Form)Activator.CreateInstance(windowType, BindingFlags.Instance | BindingFlags.NonPublic,
-					null, new object[] { Path.GetFullPath(arguments[1]), System.Diagnostics.Process.GetCurrentProcess().Id }, null))
+					null, new object[] { Path.GetFullPath(arguments[1]), System.Diagnostics.Process.GetCurrentProcess().Id, false }, null))
 				{
+					// The bridge auto-starts behind Rocksmith, so its first show must land it minimised -
+					// but still create the taskbar button (a window whose very first show is already
+					// minimised never gets one) and end up opaque so the taskbar icon is the real one.
+					backgroundWindow.Show();
+					Application.DoEvents();
 					if (backgroundWindow.WindowState != FormWindowState.Minimized || !backgroundWindow.ShowInTaskbar)
-						throw new Exception("Rocksmith-started Audio Bridge was not minimized and discoverable on the taskbar.");
+						throw new Exception("Rocksmith-started Audio Bridge did not minimise on first show with a taskbar entry to restore it from.");
+					if (backgroundWindow.Opacity != 1)
+						throw new Exception("Rocksmith-started Audio Bridge stayed transparent after its start-minimised show.");
 				}
 				using (var window = (Form)Activator.CreateInstance(windowType, Path.GetFullPath(arguments[1])))
 				{
 					if (window.Text != "RSModsPlus 4 · Audio bridge") throw new Exception("Audio bridge title does not identify the matching RSModsPlus version.");
 					var panel = (Control)windowType.GetField("panel", PRIVATE_INSTANCE).GetValue(window);
 					var panelType = panel.GetType();
+					var diagnosticsOverlay = panelType.GetField("diagnosticsOverlayCheck", PRIVATE_INSTANCE).GetValue(panel);
+					var detectionOverlay = panelType.GetField("detectionOverlayCheck", PRIVATE_INSTANCE).GetValue(panel);
+					var checkedProperty = diagnosticsOverlay.GetType().GetProperty("Checked");
+					if ((bool)checkedProperty.GetValue(diagnosticsOverlay) || (bool)checkedProperty.GetValue(detectionOverlay))
+						throw new Exception("Audio Bridge overlay toggles did not load their saved off state.");
+					checkedProperty.SetValue(diagnosticsOverlay, true);
+					checkedProperty.SetValue(detectionOverlay, true);
+					string savedOverlaySettings = File.ReadAllText(Path.Combine(arguments[1], "RSMods.ini"));
+					int modSection = savedOverlaySettings.IndexOf("[Mod Settings]", StringComparison.Ordinal);
+					int diagnosticsSetting = savedOverlaySettings.IndexOf("AudioDiagnosticsOverlay = on", StringComparison.Ordinal);
+					int noteSection = savedOverlaySettings.IndexOf("[Note by Note]", StringComparison.Ordinal);
+					int detectionSetting = savedOverlaySettings.IndexOf("NoteByNoteDetectionOverlay = on", StringComparison.Ordinal);
+					if (modSection < 0 || diagnosticsSetting < modSection || noteSection < diagnosticsSetting || detectionSetting < noteSection)
+						throw new Exception("Audio Bridge overlay toggles were not persisted in their owning sections.");
+					using (var reconstructedPanel = (Control)Activator.CreateInstance(panelType, Path.GetFullPath(arguments[1])))
+					{
+						var reconstructedType = reconstructedPanel.GetType();
+						if (!(bool)checkedProperty.GetValue(reconstructedType.GetField("diagnosticsOverlayCheck", PRIVATE_INSTANCE).GetValue(reconstructedPanel))
+							|| !(bool)checkedProperty.GetValue(reconstructedType.GetField("detectionOverlayCheck", PRIVATE_INSTANCE).GetValue(reconstructedPanel)))
+							throw new Exception("Audio Bridge overlay toggles did not survive panel reconstruction.");
+					}
 					var recordingHotkeySelector = (ComboBox)panelType.GetField("recordingHotkeySelector", PRIVATE_INSTANCE).GetValue(panel);
 					if ((Keys)recordingHotkeySelector.SelectedItem != Keys.F9)
 						throw new Exception("Recording hotkey did not default to F9.");
@@ -49,7 +80,7 @@ namespace RSMods.Tests
 					if (File.ReadAllText(Path.Combine(arguments[1], "AudioRouting.ini")).Contains("RecordingHotkey"))
 						throw new Exception("Recording hotkey leaked into AudioRouting.ini.");
 					var recordingHotkeyStatus = (Label)panelType.GetField("recordingHotkeyStatus", PRIVATE_INSTANCE).GetValue(panel);
-					if (!recordingHotkeyStatus.Text.Contains("In-game recording hotkey: F10"))
+						if (!recordingHotkeyStatus.Text.Contains("In-game hotkey: F10"))
 						throw new Exception("Recording page does not explain the active in-game recording hotkey.");
 					var hotkeyTips = (ToolTip)panelType.GetField("tips", PRIVATE_INSTANCE).GetValue(panel);
 					var hotkeyRecordButton = (Control)panelType.GetField("recordButton", PRIVATE_INSTANCE).GetValue(panel);
@@ -60,14 +91,15 @@ namespace RSMods.Tests
 					if (masterPower.GetType().Name != "RockerToggle" || !(bool)isOnProperty.GetValue(masterPower) || masterPower.Width < 130)
 						throw new Exception("Audio Bridge master power is not an On/Off rocker showing its saved state.");
 					isOnProperty.SetValue(masterPower, false);
-					if ((bool)isOnProperty.GetValue(masterPower) || ((Control)panelType.GetField("bridgeTabs", PRIVATE_INSTANCE).GetValue(panel)).Enabled)
+					var bridgePages = (Control[])panelType.GetField("pages", PRIVATE_INSTANCE).GetValue(panel);
+					if ((bool)isOnProperty.GetValue(masterPower) || EnabledPages(bridgePages) != 0)
 						throw new Exception("Audio Bridge off did not disable its controls; power=" + isOnProperty.GetValue(masterPower)
-							+ ", tabs=" + ((Control)panelType.GetField("bridgeTabs", PRIVATE_INSTANCE).GetValue(panel)).Enabled
+							+ ", enabledPages=" + EnabledPages(bridgePages)
 							+ ", status=" + ((Label)panelType.GetField("statusLabel", PRIVATE_INSTANCE).GetValue(panel)).Text + ".");
 					if (!File.ReadAllText(Path.Combine(arguments[1], "AudioRouting.ini")).Contains("MasterEnabled=0"))
 						throw new Exception("Audio Bridge off was not persisted.");
 					isOnProperty.SetValue(masterPower, true);
-					if (!(bool)isOnProperty.GetValue(masterPower) || !((Control)panelType.GetField("bridgeTabs", PRIVATE_INSTANCE).GetValue(panel)).Enabled)
+					if (!(bool)isOnProperty.GetValue(masterPower) || EnabledPages(bridgePages) != bridgePages.Length)
 						throw new Exception("Audio Bridge on did not re-enable its controls.");
 					File.Delete(Path.Combine(arguments[1], "AudioRouting.ini"));
 					using (var defaultPanel = (Control)Activator.CreateInstance(panelType, Path.GetFullPath(arguments[1])))
@@ -250,7 +282,7 @@ namespace RSMods.Tests
 					var updateAsio = panelType.GetMethod("UpdateAsioBuffer", PRIVATE_INSTANCE);
 					diagnostics.GetType().GetProperty("FilePath").SetValue(diagnostics, "asioInputFrames=128 asioInputRate=48000");
 					updateAsio.Invoke(panel, new[] { diagnostics });
-					if (!asioLabel.Text.Contains("128 frames") || !asioLabel.Text.Contains("2.67 ms") || !bufferLabel.Text.Contains("Windows playback: 480 frames"))
+						if (!asioLabel.Text.Contains("128 frames") || !asioLabel.Text.Contains("2.67 ms") || !bufferLabel.Text.Contains("Windows playback buffer: 480 frames"))
 						throw new Exception("ASIO and Windows buffers were not distinguished.");
 					diagnostics.GetType().GetProperty("FilePath").SetValue(diagnostics, "asioInputFrames=128 asioInputRate=96000");
 					updateAsio.Invoke(panel, new[] { diagnostics });
@@ -321,7 +353,9 @@ namespace RSMods.Tests
 							song.Parent.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
 							bitmap.Save(Path.Combine(arguments[1], "mixer-detail.png"));
 						}
-						var tabs = (TabControl)panel.Controls[0].Controls[1];
+						var pageControls = (Control[])panelType.GetField("pages", PRIVATE_INSTANCE).GetValue(panel);
+						var nav = (Control)panelType.GetField("nav", PRIVATE_INSTANCE).GetValue(panel);
+						var navIndex = nav.GetType().GetProperty("SelectedIndex");
 						updateAsio.Invoke(panel, new[] { diagnostics });
 						panelType.GetMethod("UpdateState", PRIVATE_INSTANCE).Invoke(panel, null);
 						var takes = (ListView)panelType.GetField("takes", PRIVATE_INSTANCE).GetValue(panel);
@@ -332,9 +366,9 @@ namespace RSMods.Tests
 						}
 						takes.Items[0].Selected = true;
 						((Label)panelType.GetField("libraryLabel", PRIVATE_INSTANCE).GetValue(panel)).Text = "8 sample takes · 25.6 MB";
-						for (int tabIndex = 0; tabIndex < tabs.TabCount; tabIndex++)
+						for (int tabIndex = 0; tabIndex < pageControls.Length; tabIndex++)
 						{
-							tabs.SelectedIndex = tabIndex;
+							navIndex.SetValue(nav, tabIndex);
 							preview.PerformLayout();
 							using (var tabBitmap = new Bitmap(preview.Width, preview.Height))
 							{
@@ -342,13 +376,19 @@ namespace RSMods.Tests
 								tabBitmap.Save(Path.Combine(arguments[1], "tab-" + tabIndex + ".png"));
 							}
 						}
-						tabs.SelectedIndex = 1;
+						navIndex.SetValue(nav, 2);
 						foreach (var previewSize in new[] { new Size(940, 620), new Size(1060, 880), new Size(1400, 1000) })
 						{
 							preview.ClientSize = previewSize;
 							preview.PerformLayout();
-							if (takes.GetItemRect(3).Bottom > takes.ClientSize.Height)
-								throw new Exception("Recent takes cannot display four complete rows at " + previewSize);
+							// Comfortable sizes must show four complete recent takes; the small size only has to
+							// keep the first row whole (the list scrolls - the redesign reserves the height for
+							// transport and take options).
+							if (previewSize.Height >= 880
+								? takes.GetItemRect(3).Bottom > takes.ClientSize.Height
+								: takes.GetItemRect(0).Bottom > takes.ClientSize.Height)
+								throw new Exception("Recent takes clipped at " + previewSize
+									+ "; row4bottom=" + takes.GetItemRect(3).Bottom + ", clientHeight=" + takes.ClientSize.Height);
 							using (var recordingBitmap = new Bitmap(preview.Width, preview.Height))
 							{
 								preview.DrawToBitmap(recordingBitmap, new Rectangle(Point.Empty, recordingBitmap.Size));
@@ -384,6 +424,36 @@ namespace RSMods.Tests
 				Console.Error.WriteLine(error);
 				return 1;
 			}
+		}
+
+		private static void VerifyBridgeOwnedSettings(Assembly assembly)
+		{
+			var readSettingsType = assembly.GetType("RSMods.ReadSettings", true);
+			var bridgeOwnedIdentifiers = (string[])readSettingsType.GetField("BridgeOwnedIdentifiers").GetValue(null);
+			var requiredIdentifierFields = new[]
+			{
+				"AsioInputGainIdentifier",
+				"NoiseGateThresholdIdentifier",
+				"CompressorStrengthIdentifier",
+				"HumFilterIdentifier",
+				"RocksmithGateOverrideIdentifier",
+				"RocksmithGateThresholdIdentifier"
+			};
+
+			foreach (var fieldName in requiredIdentifierFields)
+			{
+				var identifier = (string)readSettingsType.GetField(fieldName).GetValue(null);
+				if (Array.IndexOf(bridgeOwnedIdentifiers, identifier) < 0)
+					throw new Exception(fieldName + " is written by Audio Bridge but is not refreshed before the main settings file is saved.");
+			}
+		}
+
+		private static int EnabledPages(Control[] pages)
+		{
+			int enabled = 0;
+			foreach (Control page in pages)
+				if (page != null && page.Enabled) enabled++;
+			return enabled;
 		}
 	}
 

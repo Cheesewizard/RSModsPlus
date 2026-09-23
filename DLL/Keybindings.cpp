@@ -5,6 +5,7 @@
 namespace Keybindings {
 	std::map<std::string, ModCommand, std::less<>> keyUpCommands;
 	std::map<std::string, ModCommand, std::less<>> keyDownCommands;
+	static std::atomic_bool audioBridgeFocusTransferPending = false;
 
 	constexpr UINT TOGGLE_RECORDING_MESSAGE = WM_APP + 0x421;
 	// Cross-process contract with the GUI: must equal ProductInfo.AUDIO_BRIDGE_WINDOW_TITLE
@@ -31,16 +32,17 @@ namespace Keybindings {
 		return true;
 	}
 
-	void EnsureAudioBridgeRunning()
+	bool EnsureAudioBridgeRunning(bool showWindow)
 	{
-		if (FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE) != nullptr) return;
+		if (FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE) != nullptr) return true;
 
 		std::wstring executable;
 		std::wstring directory;
-		if (!ResolveAudioBridgePaths(executable, directory)) return;
+		if (!ResolveAudioBridgePaths(executable, directory)) return false;
 
 		std::wstring command = L"\"" + executable + L"\" --audio-bridge \"" + directory
 			+ L"\" --rocksmith-pid " + std::to_wstring(GetCurrentProcessId());
+		if (showWindow) command += L" --show";
 		STARTUPINFOW startup = {};
 		startup.cb = sizeof(startup);
 		PROCESS_INFORMATION process = {};
@@ -48,23 +50,61 @@ namespace Keybindings {
 			CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &process))
 		{
 			LOG_ERROR("[Audio Bridge] Cannot start the background bridge, error=" << GetLastError() << std::endl);
-			return;
+			return false;
 		}
 		CloseHandle(process.hThread);
 		CloseHandle(process.hProcess);
 		LOG_INFO("[Audio Bridge] Started for Rocksmith process " << GetCurrentProcessId() << "." << std::endl);
+		return true;
 	}
 
-	void ToggleAudioBridgeRecording()
+	bool IsAudioBridgeFocusTransferPending()
+	{
+		return audioBridgeFocusTransferPending.load(std::memory_order_acquire);
+	}
+
+	void NotifyGameFocused()
+	{
+		audioBridgeFocusTransferPending.store(false, std::memory_order_release);
+	}
+
+	static void PostRecordingToggle(WPARAM flags)
 	{
 		HWND bridgeWindow = FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE);
 		if (bridgeWindow == nullptr)
 		{
-			LOG_ERROR("[Audio Bridge] Recording hotkey ignored because the background bridge is unavailable." << std::endl);
+			LOG_ERROR("[Audio Bridge] Recording toggle ignored because the background bridge is unavailable." << std::endl);
 			return;
 		}
-		if (!PostMessageW(bridgeWindow, TOGGLE_RECORDING_MESSAGE, 0, 0))
-			LOG_ERROR("[Audio Bridge] Cannot deliver the recording hotkey, error=" << GetLastError() << std::endl);
+		if (!PostMessageW(bridgeWindow, TOGGLE_RECORDING_MESSAGE, flags, 0))
+			LOG_ERROR("[Audio Bridge] Cannot deliver the recording toggle, error=" << GetLastError() << std::endl);
+	}
+
+	// Hotkey path: toggle using the desktop bridge's own current format.
+	void ToggleAudioBridgeRecording() { PostRecordingToggle(0); }
+
+	// Overlay path: toggle and override the desktop bridge's format. Wet and dry WAVs are always paired.
+	void ToggleAudioBridgeRecording(bool video)
+	{
+		PostRecordingToggle(static_cast<WPARAM>(0x100 | (video ? 2 : 0)));
+	}
+
+	void BringAudioBridgeToFront()
+	{
+		// The game normally suppresses focus loss while a song is active. Explicitly suspend that policy for
+		// this user-requested handoff so exclusive fullscreen releases cleanly instead of fighting a topmost
+		// desktop window. WndProc clears the handoff when focus returns to Rocksmith.
+		audioBridgeFocusTransferPending.store(true, std::memory_order_release);
+		HWND bridgeWindow = FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE);
+		if (bridgeWindow == nullptr)
+		{
+			// This is an explicit open request, so a newly started bridge must show normally instead of
+			// following the background bridge's auto-minimise startup path.
+			if (!EnsureAudioBridgeRunning(true)) NotifyGameFocused();
+			return;
+		}
+		if (IsIconic(bridgeWindow)) ShowWindow(bridgeWindow, SW_RESTORE);
+		if (!SetForegroundWindow(bridgeWindow)) NotifyGameFocused();
 	}
 
 	void HandleTuningOffset()
@@ -228,6 +268,12 @@ namespace Keybindings {
 		DispatchCommand(keyPressed, keyUpCommands);
 		if (keyPressed == Settings::GetKeyBind("RecordingHotkey"))
 			ToggleAudioBridgeRecording();
+
+		// Toggle the in-game Audio Bridge overlay with backslash. Not a letter, so it never types into the
+		// song-list search and never collides with Rocksmith's Ctrl menus; B stays free for typing. Available
+		// in Release, unlike the debug menu below.
+		if (keyPressed == VK_OEM_5) // backslash '\'
+			Menu::audioBridgeMenuEnabled = !Menu::audioBridgeMenuEnabled;
 
 		// Control + A. Force us to read the Settings from the INI again, to renew our cached values.
 		if (keyPressed == 0x41 && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) {

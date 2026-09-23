@@ -4,6 +4,8 @@
 #include <audioclient.h>
 #include <string>
 
+#include "AudioControl.hpp"
+
 namespace Audio::SharedOutput
 {
 	enum class ProxyRouteAction
@@ -34,6 +36,9 @@ namespace Audio::SharedOutput
 	// Host the audio control pipe for the whole process life, independent of whether routing is
 	// enabled, so the GUI can always connect to a running game. Idempotent; safe to call once at init.
 	void StartControlServer();
+	// Run one control request against the live engine directly (same dispatch the pipe uses), for the
+	// in-game overlay to drive the audio backend in-process without a pipe round trip. Thread-safe.
+	ControlResponse DispatchControl(const ControlRequest& request);
 	// Reconciles the proxy's current transport with the saved output. In virtual mode this automatically
 	// opens a shared Windows route (or stays silently alive when no endpoint exists). A returning ASIO
 	// device is never selected here; promotion requires an explicit Apply output command, and input is
