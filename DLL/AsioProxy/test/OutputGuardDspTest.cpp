@@ -146,6 +146,38 @@ int main()
 		pass &= Check("combined: ceiling held", held, Peak(out), 0.5f);
 	}
 
+	// 9. True-peak: a signal whose SAMPLES all sit under the ceiling but whose reconstructed waveform
+	//    overshoots it (an inter-sample peak) must still be pulled down. A 12 kHz tone at 48 kHz with a
+	//    45 deg phase lands every sample at +-0.707*A while the true peak is A. With A=0.6 and a 0.5 ceiling
+	//    the sample peak (~0.424) never trips a sample-only limiter, but the true peak (0.6) exceeds it.
+	{
+		const float A = 0.6f, f = 12000.0f, ph = 0.7853982f; // 45 deg
+		auto isp = [&](void) {
+			std::vector<float> x(FRAMES);
+			for (int n = 0; n < FRAMES; ++n) x[n] = A * std::sin(2.0f * 3.14159265f * f * n / SR + ph);
+			return x;
+		};
+
+		// Sample-peak only: the limiter idles because no sample exceeds the ceiling.
+		OutputGuardDsp::Config off; off.sampleRate = SR; off.limiterOn = true; off.ceilingLin = 0.5f; off.truePeak = false;
+		OutputGuardDsp::OutputGuard goff; goff.Configure(off); goff.Reset(CH);
+		std::vector<float> a = isp(), b = isp();
+		double msoff[CH] = { MeanSquare(a), MeanSquare(b) };
+		goff.BeginBlock(msoff, CH, FRAMES); goff.ProcessChannel(0, a.data(), FRAMES);
+		const float peakOff = Peak(a);
+
+		// True-peak on: sees the ~0.6 inter-sample peak and eases the level down, leaving headroom.
+		OutputGuardDsp::Config on = off; on.truePeak = true;
+		OutputGuardDsp::OutputGuard gon; gon.Configure(on); gon.Reset(CH);
+		std::vector<float> c = isp(), d = isp();
+		double mson[CH] = { MeanSquare(c), MeanSquare(d) };
+		gon.BeginBlock(mson, CH, FRAMES); gon.ProcessChannel(0, c.data(), FRAMES);
+		const float peakOn = Peak(c);
+
+		pass &= Check("true-peak: sample-only idles (no reduction)", std::fabs(peakOff - 0.4243f) < 0.02f, peakOff, 0.4243f);
+		pass &= Check("true-peak: ISP detected, level eased down", peakOn < peakOff * 0.95f && peakOn > 0.2f, peakOn, 0.354f);
+	}
+
 	printf(pass ? "PASS: output guard holds the ceiling and equalises loudness.\n" : "FAIL: output guard.\n");
 	return pass ? 0 : 1;
 }
