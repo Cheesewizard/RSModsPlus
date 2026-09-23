@@ -1297,7 +1297,7 @@ namespace Audio::SharedOutput
 		else if (request.operation == 21)
 		{
 			// Route the game mix to the given WASAPI device (e.g. laptop speakers) live, no restart.
-			// (Op 19 is the input noise gate, op 20 reserved; alternate-device routing is 21/22.)
+			// (Op 19 is the input suppressor, op 20 reserved; alternate-device routing is 21/22.)
 			response.result = RouteStart(request.value);
 		}
 		else if (request.operation == 22)

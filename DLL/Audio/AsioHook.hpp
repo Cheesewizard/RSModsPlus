@@ -4,10 +4,48 @@
 #include "IInputProcessor.hpp"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace Audio::AsioHook
 {
 	constexpr size_t INPUT_ROUTE_COUNT = 2;
+
+	namespace Detail
+	{
+		class NoiseSuppressor final
+		{
+		public:
+			void Configure(uint32_t sampleRate, float threshold);
+			float NextGain(float sidechain, float threshold);
+			void Process(float* samples, size_t sampleCount, uint32_t sampleRate, float threshold);
+			void Reset();
+
+		private:
+			static constexpr float EXPANDER_RATIO = 6.0f;
+			static constexpr float EXPANDER_RANGE_DB = -80.0f;
+			static constexpr float DETECTOR_ATTACK_SECONDS = 0.002f;
+			static constexpr float DETECTOR_RELEASE_SECONDS = 0.080f;
+			static constexpr float GAIN_ATTACK_SECONDS = 0.002f;
+			static constexpr float GAIN_RELEASE_SECONDS = 0.180f;
+			static constexpr float OPEN_CONFIRM_SECONDS = 0.003f;
+			static constexpr float CLOSE_HYSTERESIS = 0.65f;
+			static constexpr float ATTACK_THRESHOLD_DB = -30.0f;
+
+			float energy = 0.0f;
+			float appliedGain = 0.0f;
+			float detectorAttackCoef = 0.0f;
+			float detectorReleaseCoef = 0.0f;
+			float gainAttackCoef = 0.0f;
+			float gainReleaseCoef = 0.0f;
+			float rangeGain = 0.0001f;
+			float configuredThreshold = -1.0f;
+			float attackThreshold = 0.0316228f;
+			uint32_t openConfirmSamples = 1;
+			uint32_t openConfirmCount = 0;
+			uint32_t configuredRate = 0;
+			bool isOpen = false;
+		};
+	}
 
 	// Validates and chains RS_ASIO's existing PortAudio unmarshal patch. This observes the
 	// IAudioCaptureClient RS_ASIO already created instead of creating another ASIO host.
@@ -30,8 +68,8 @@ namespace Audio::AsioHook
 	// otherwise makes the game's level-sensitive gate mute sustains and bends early. 0 dB = off.
 	void SetInputGainDb(float decibels);
 
-	// Soft noise gate (downward expander) threshold in dBFS, keyed to the raw pre-gain input. It ducks
-	// the between-note hiss the make-up gain would amplify, without chopping sustain. >= 0 dB = off.
+	// Adaptive suppressor threshold in dBFS, keyed to the raw pre-gain input. It requires a sustained
+	// onset, rejects idle noise and brief spikes, and closes gradually after notes. >= 0 dB = off.
 	void SetNoiseGateThresholdDb(float decibels);
 	float GetNoiseGateThresholdDb();
 

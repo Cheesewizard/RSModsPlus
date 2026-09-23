@@ -158,13 +158,24 @@ namespace ModManager {
 		// when RS_ASIO loads the same module.
 		DropPedal::InstallInputHooks();
 
-		// The guitar input conditioner (make-up gain + noise gate) is a front-of-chain stage inside the
-		// same capture hook, but it must work without Drop Pedal. When either is saved, install the hook
-		// here (before RS_ASIO attaches its capture stream, same reason as above) so it applies in normal
-		// play on cable or RS_ASIO. Install() is idempotent, so this is a no-op if Drop Pedal already
-		// installed it.
-		if (Settings::GetModSetting("AsioInputGain") != 0 || Settings::GetModSetting("NoiseGateThreshold") != 0
-			|| Settings::GetModSetting("CompressorStrength") != 0 || Settings::GetModSetting("HumFilter") != 0)
+		// Configure the front-of-chain input conditioner before RS_ASIO starts delivering capture buffers.
+		// Applying these values later from the post-load game loop leaves the initial ASIO stream unconditioned.
+		const int inputGainTenths = Settings::GetModSetting("AsioInputGain");
+		const int suppressorThresholdTenths = Settings::GetModSetting("NoiseGateThreshold");
+		const int compressorStrength = Settings::GetModSetting("CompressorStrength");
+		const int humFilterBaseHz = Settings::GetModSetting("HumFilter");
+		Audio::AsioHook::SetInputGainDb(inputGainTenths / 10.0f);
+		Audio::AsioHook::SetNoiseGateThresholdDb(suppressorThresholdTenths / 10.0f);
+		Audio::AsioHook::SetCompressorStrength(compressorStrength / 100.0f);
+		Audio::AsioHook::SetHumFilterBaseHz(static_cast<float>(humFilterBaseHz));
+		LOG_INFO("[InputCapture] Startup conditioner configured: gain " << inputGainTenths / 10.0f
+			<< " dB, suppressor " << suppressorThresholdTenths / 10.0f
+			<< " dBFS, compressor " << compressorStrength
+			<< "%, hum filter " << humFilterBaseHz << " Hz." << std::endl);
+
+		// The conditioner shares the Drop Pedal capture hook, but it must also run when Drop Pedal is off.
+		if (inputGainTenths != 0 || suppressorThresholdTenths != 0
+			|| compressorStrength != 0 || humFilterBaseHz != 0)
 		{
 			Audio::AsioHook::Install();
 			inputConditionerHookActive = true;
@@ -388,10 +399,6 @@ namespace ModManager {
 		GameState::currentMenu = GameState::GetCurrentMenu(); // This loads without checking if memory is safe... This can cause crashes if used when GameLoaded is false.
 
 		HandleExternalMonitor(state);
-		HandleAsioInputGain();
-		HandleNoiseGate();
-		HandleCompressor();
-		HandleHumFilter();
 		HandleRocksmithGate();
 		HandleAudioBridgeLimiter();
 		HandleMicrophoneVolumeOverride();
@@ -578,53 +585,6 @@ namespace ModManager {
 			);
 			state.movedToExternalDisplay = true;
 		}
-	}
-
-	/// <summary>
-	/// Applies the saved guitar input make-up gain once the game is loaded, so it takes effect at
-	/// launch even if the audio bridge window is never opened. Runs one time; live changes from the
-	/// bridge arrive over the control pipe, so re-reading every frame here would fight them.
-	/// </summary>
-	void HandleAsioInputGain() {
-		static bool applied = false;
-		if (applied) return;
-		applied = true;
-		// Stored as tenths of a dB in RSMods.ini (0 = unity/off).
-		Audio::AsioHook::SetInputGainDb(Settings::GetModSetting("AsioInputGain") / 10.0f);
-	}
-
-	/// <summary>
-	/// Applies the saved guitar-input noise gate threshold once at startup. Stored as signed tenths of a
-	/// dB in RSMods.ini (0 = off, else a negative threshold). Live changes arrive over the control pipe,
-	/// so this only seeds the launch value.
-	/// </summary>
-	void HandleNoiseGate() {
-		static bool applied = false;
-		if (applied) return;
-		applied = true;
-		Audio::AsioHook::SetNoiseGateThresholdDb(Settings::GetModSetting("NoiseGateThreshold") / 10.0f);
-	}
-
-	/// <summary>
-	/// Applies the saved guitar-input compressor strength once at startup. Stored as 0-100 in RSMods.ini
-	/// (0 = off). Live changes arrive over the control pipe, so this only seeds the launch value.
-	/// </summary>
-	void HandleCompressor() {
-		static bool applied = false;
-		if (applied) return;
-		applied = true;
-		Audio::AsioHook::SetCompressorStrength(Settings::GetModSetting("CompressorStrength") / 100.0f);
-	}
-
-	/// <summary>
-	/// Applies the saved mains-hum notch once at startup. Stored as the base frequency in RSMods.ini
-	/// (0 = off, else 50 or 60). Live changes arrive over the control pipe, so this only seeds launch.
-	/// </summary>
-	void HandleHumFilter() {
-		static bool applied = false;
-		if (applied) return;
-		applied = true;
-		Audio::AsioHook::SetHumFilterBaseHz(static_cast<float>(Settings::GetModSetting("HumFilter")));
 	}
 
 	/// <summary>

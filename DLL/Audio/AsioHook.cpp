@@ -34,12 +34,11 @@ namespace Audio::AsioHook
 		// input here restores the cable's headroom above the gate. 1.0 = unity (feature off).
 		std::atomic<float> g_inputGainLinear{ 1.0f };
 
-		// Downward-expander (soft noise gate) threshold, as a LINEAR amplitude, keyed to the RAW
-		// pre-gain input. 0 = disabled (feature off, input untouched). A guitar's decay tails sit well
-		// above the interface's own noise floor, so a threshold set just above that floor ducks the
-		// between-note hiss the make-up gain would otherwise amplify, WITHOUT chopping sustain - unlike
-		// the game's own hard Wwise gate, which is what the whole input-conditioner stage exists to dodge.
+		// Adaptive suppressor threshold, as a LINEAR amplitude, keyed to the RAW pre-gain input.
+		// 0 = disabled (feature off, input untouched). The energy detector requires a sustained onset,
+		// rejects idle floor and isolated spikes, then closes gradually after a note.
 		std::atomic<float> g_gateThresholdLinear{ 0.0f };
+		std::atomic<uint32_t> g_gateThresholdRevision{ 0 };
 
 		// Input compressor strength, 0..1 (0 = disabled). Emulates what the game's amp does when a hot
 		// Real Tone Cable drives it into compression: it squeezes the natural open-string AMPLITUDE
@@ -462,75 +461,107 @@ namespace Audio::AsioHook
 			}
 		}
 
-		// Per-sample downward expander used as a soft noise gate on the raw route-0 input. It is a
-		// sidechained VCA: the detector follows channel 0's peak envelope with a short hold, and when the
-		// envelope falls below the threshold the applied gain is pulled down at EXPANDER_RATIO:1, floored
-		// at EXPANDER_RANGE_DB so it never fully mutes (avoids choppy tails). A fast attack lets notes
-		// through instantly; a slow release lets decays glide down instead of being chopped. Only touched
-		// on the capture (audio) thread, so it needs no synchronisation; state carries across packets.
-		struct NoiseGate
+	}
+
+	namespace Detail
+	{
+		void NoiseSuppressor::Reset()
 		{
-			static constexpr float EXPANDER_RATIO = 3.0f;      // slope below threshold (3:1 = gentle gate)
-			static constexpr float EXPANDER_RANGE_DB = -35.0f; // deepest attenuation the gate will apply
-			static constexpr float ATTACK_SECONDS = 0.002f;    // how fast the gate opens on a new note
-			static constexpr float RELEASE_SECONDS = 0.180f;   // how slowly it closes so tails glide
-			static constexpr float DETECTOR_HOLD_SECONDS = 0.030f;
+			configuredThreshold = -1.0f;
+			energy = 0.0f;
+			appliedGain = rangeGain;
+			openConfirmCount = 0;
+			isOpen = false;
+		}
 
-			float envelope = 0.0f;      // peak-follower on the sidechain (linear)
-			float appliedGain = 1.0f;   // smoothed VCA gain currently applied (linear)
-			float attackCoef = 0.0f, releaseCoef = 0.0f, detectorCoef = 0.0f;
-			float rangeGain = 1.0f;
-			uint32_t coeffRate = 0;
+		void NoiseSuppressor::Configure(uint32_t sampleRate, float threshold)
+		{
+			if (sampleRate == 0) return;
+			if (sampleRate == configuredRate && threshold == configuredThreshold) return;
 
-			void Configure(uint32_t sampleRate)
+			configuredRate = sampleRate;
+			configuredThreshold = threshold;
+			const double fs = static_cast<double>(sampleRate);
+			detectorAttackCoef = static_cast<float>(1.0 - std::exp(-1.0 / (DETECTOR_ATTACK_SECONDS * fs)));
+			detectorReleaseCoef = static_cast<float>(1.0 - std::exp(-1.0 / (DETECTOR_RELEASE_SECONDS * fs)));
+			gainAttackCoef = static_cast<float>(1.0 - std::exp(-1.0 / (GAIN_ATTACK_SECONDS * fs)));
+			gainReleaseCoef = static_cast<float>(1.0 - std::exp(-1.0 / (GAIN_RELEASE_SECONDS * fs)));
+			rangeGain = std::pow(10.0f, EXPANDER_RANGE_DB / 20.0f);
+			attackThreshold = std::max(threshold, std::pow(10.0f, ATTACK_THRESHOLD_DB / 20.0f));
+			openConfirmSamples = std::max<uint32_t>(1, static_cast<uint32_t>(std::lround(OPEN_CONFIRM_SECONDS * sampleRate)));
+			energy = 0.0f;
+			appliedGain = rangeGain;
+			openConfirmCount = 0;
+			isOpen = false;
+		}
+
+		float NoiseSuppressor::NextGain(float sidechain, float threshold)
+		{
+			if (!std::isfinite(sidechain) || threshold <= 0.0f) return 1.0f;
+			const float magnitude = std::fabs(sidechain);
+			const float sampleEnergy = magnitude * magnitude;
+			const float detectorCoef = sampleEnergy > energy ? detectorAttackCoef : detectorReleaseCoef;
+			energy += (sampleEnergy - energy) * detectorCoef;
+			const float envelope = std::sqrt(std::max(energy, 0.0f));
+
+			if (!isOpen)
 			{
-				if (sampleRate == 0 || sampleRate == coeffRate) return;
-				coeffRate = sampleRate;
-				const double fs = static_cast<double>(sampleRate);
-				attackCoef = static_cast<float>(1.0 - std::exp(-1.0 / (ATTACK_SECONDS * fs)));
-				releaseCoef = static_cast<float>(1.0 - std::exp(-1.0 / (RELEASE_SECONDS * fs)));
-				detectorCoef = static_cast<float>(std::exp(-1.0 / (DETECTOR_HOLD_SECONDS * fs)));
-				rangeGain = std::pow(10.0f, EXPANDER_RANGE_DB / 20.0f);
+				if (envelope >= attackThreshold)
+					openConfirmCount = std::min(openConfirmCount + 1, openConfirmSamples);
+				else
+					openConfirmCount = 0;
+				if (openConfirmCount >= openConfirmSamples)
+					isOpen = true;
+			}
+			else if (envelope < threshold * CLOSE_HYSTERESIS)
+			{
+				isOpen = false;
+				openConfirmCount = 0;
 			}
 
-			// Advances the detector and VCA for one frame given the sidechain sample, returning the gain
-			// to apply to every channel of that frame.
-			inline float NextGain(float sidechain, float threshold)
+			float target = 1.0f;
+			if (!isOpen)
 			{
-				const float rectified = std::fabs(sidechain);
-				envelope = rectified > envelope ? rectified : envelope * detectorCoef;
-
-				float target;
-				if (envelope >= threshold)
+				if (envelope < threshold)
 				{
-					target = 1.0f;
+					const float belowDb = 20.0f * std::log10(std::max(envelope, 1e-9f) / threshold);
+					const float reductionDb = belowDb * (EXPANDER_RATIO - 1.0f);
+					target = reductionDb <= EXPANDER_RANGE_DB
+						? rangeGain
+						: std::pow(10.0f, reductionDb / 20.0f);
 				}
 				else
-				{
-					// dB below threshold * (ratio - 1) = attenuation in dB (negative), floored at range.
-					const float belowDb = 20.0f * std::log10((envelope + 1e-9f) / threshold);
-					const float reductionDb = belowDb * (EXPANDER_RATIO - 1.0f);
-					target = reductionDb <= EXPANDER_RANGE_DB ? rangeGain : std::pow(10.0f, reductionDb / 20.0f);
-				}
-
-				// Open fast, close slow: pick the coefficient by the direction of travel.
-				const float coef = target > appliedGain ? attackCoef : releaseCoef;
-				appliedGain += (target - appliedGain) * coef;
-				return appliedGain;
+					target = rangeGain;
 			}
-		};
 
-		NoiseGate g_noiseGate;
+			const float coefficient = target > appliedGain ? gainAttackCoef : gainReleaseCoef;
+			appliedGain += (target - appliedGain) * coefficient;
+			return appliedGain;
+		}
 
-		// Applies the soft noise gate to the raw capture buffer in place, ahead of the make-up gain, so
+		void NoiseSuppressor::Process(float* samples, size_t sampleCount, uint32_t sampleRate, float threshold)
+		{
+			if (samples == nullptr || sampleCount == 0 || threshold <= 0.0f) return;
+			Configure(sampleRate, threshold);
+			for (size_t index = 0; index < sampleCount; ++index)
+				samples[index] *= NextGain(samples[index], threshold);
+		}
+	}
+
+	namespace
+	{
+		Detail::NoiseSuppressor g_noiseSuppressor;
+		uint32_t g_processedGateThresholdRevision = 0;
+
+		// Applies adaptive suppression to the raw capture buffer in place, ahead of the make-up gain, so
 		// its detector sees the true input level (independent of the gain slider). Mirrors
 		// ScaleBufferInPlace's format handling. Runs only while a threshold is set, so the feature-off
 		// path stays bit-exact.
-		void ProcessGateInPlace(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float threshold)
+		void ProcessNoiseSuppressorInPlace(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float threshold)
 		{
 			const size_t channelCount = format.channelCount;
 			if (channelCount == 0) return;
-			g_noiseGate.Configure(format.sampleRate);
+			g_noiseSuppressor.Configure(format.sampleRate, threshold);
 
 			switch (format.sampleFormat)
 			{
@@ -540,7 +571,7 @@ namespace Audio::AsioHook
 				for (uint32_t frame = 0; frame < frameCount; ++frame)
 				{
 					const size_t base = static_cast<size_t>(frame) * channelCount;
-					const float gain = g_noiseGate.NextGain(samples[base], threshold);
+					const float gain = g_noiseSuppressor.NextGain(samples[base], threshold);
 					for (size_t channel = 0; channel < channelCount; ++channel)
 						samples[base + channel] = ClampSample(samples[base + channel] * gain);
 				}
@@ -552,7 +583,7 @@ namespace Audio::AsioHook
 				for (uint32_t frame = 0; frame < frameCount; ++frame)
 				{
 					const size_t base = static_cast<size_t>(frame) * channelCount;
-					const float gain = g_noiseGate.NextGain(static_cast<float>(samples[base]) * INT32_TO_FLOAT, threshold);
+					const float gain = g_noiseSuppressor.NextGain(static_cast<float>(samples[base]) * INT32_TO_FLOAT, threshold);
 					for (size_t channel = 0; channel < channelCount; ++channel)
 						samples[base + channel] = FloatToSignedInteger<int32_t, 32>(static_cast<float>(samples[base + channel]) * INT32_TO_FLOAT * gain);
 				}
@@ -563,7 +594,7 @@ namespace Audio::AsioHook
 				for (uint32_t frame = 0; frame < frameCount; ++frame)
 				{
 					const size_t base = static_cast<size_t>(frame) * channelCount;
-					const float gain = g_noiseGate.NextGain(static_cast<float>(ReadInt24(packet + base * 3)) * INT24_TO_FLOAT, threshold);
+					const float gain = g_noiseSuppressor.NextGain(static_cast<float>(ReadInt24(packet + base * 3)) * INT24_TO_FLOAT, threshold);
 					for (size_t channel = 0; channel < channelCount; ++channel)
 					{
 						const size_t index = base + channel;
@@ -579,7 +610,7 @@ namespace Audio::AsioHook
 				for (uint32_t frame = 0; frame < frameCount; ++frame)
 				{
 					const size_t base = static_cast<size_t>(frame) * channelCount;
-					const float gain = g_noiseGate.NextGain(static_cast<float>(samples[base]) * INT16_TO_FLOAT, threshold);
+					const float gain = g_noiseSuppressor.NextGain(static_cast<float>(samples[base]) * INT16_TO_FLOAT, threshold);
 					for (size_t channel = 0; channel < channelCount; ++channel)
 						samples[base + channel] = FloatToSignedInteger<int16_t, 16>(static_cast<float>(samples[base + channel]) * INT16_TO_FLOAT * gain);
 				}
@@ -1142,22 +1173,28 @@ namespace Audio::AsioHook
 
 			// Front-of-chain guitar input conditioner. Runs on every real packet, BEFORE the processing
 			// gate below, so it lifts/cleans the input globally (cable or RS_ASIO, Drop Pedal or not) and
-			// always precedes any pitch shift. Chain order: soft noise gate (keyed to the raw level) ->
+			// always precedes any pitch shift. Chain order: noise suppressor (keyed to the raw level) ->
 			// make-up gain (+ soft-clip) -> band-limit. Every stage is a no-op when its control is off, so
 			// the feature-off input stays bit-exact.
 			if (routeIndex == 0 && data && *data && frameCount && *frameCount <= MAX_BUFFER_FRAMES
 				&& routeFormats[routeIndex].IsUsable()
 				&& !(flags && (*flags & AUDCLNT_BUFFERFLAGS_SILENT)))
 			{
-				// Mains-hum notch runs first, on the raw input, so the gate/compressor/gain and the game all
-				// see the de-hummed signal (and the gate keys off a level no longer inflated by the hum).
+				// Mains-hum notch runs first, on the raw input, so the suppressor/compressor/gain and the game all
+				// see the de-hummed signal (and the suppressor keys off a level no longer inflated by the hum).
 				const float humBaseHz = g_humFilterBaseHz.load(std::memory_order_relaxed);
 				if (humBaseHz > 0.0f)
 					ProcessHumFilterInPlace(*data, routeFormats[routeIndex], *frameCount, humBaseHz);
 
+				const uint32_t gateThresholdRevision = g_gateThresholdRevision.load(std::memory_order_acquire);
+				if (gateThresholdRevision != g_processedGateThresholdRevision)
+				{
+					g_noiseSuppressor.Reset();
+					g_processedGateThresholdRevision = gateThresholdRevision;
+				}
 				const float gateThreshold = g_gateThresholdLinear.load(std::memory_order_relaxed);
 				if (gateThreshold > 0.0f)
-					ProcessGateInPlace(*data, routeFormats[routeIndex], *frameCount, gateThreshold);
+					ProcessNoiseSuppressorInPlace(*data, routeFormats[routeIndex], *frameCount, gateThreshold);
 
 				// Compressor sits after the gate and before the make-up gain: it flattens the string-beat
 				// wobble so the game amp downstream cannot magnify it into a warble.
@@ -1780,16 +1817,18 @@ namespace Audio::AsioHook
 
 	void SetNoiseGateThresholdDb(float decibels)
 	{
-		// A threshold at or above 0 dBFS is meaningless as a gate, so it doubles as the "off" signal:
-		// store 0 (disabled, raw input untouched). Otherwise clamp to a sane gate range and store the
-		// linear threshold the expander compares its envelope against.
+		// A threshold at or above 0 dBFS is meaningless, so it doubles as the "off" signal: store 0
+		// (disabled, raw input untouched). The revision makes the audio thread reset its detector after
+		// every live setting change, including off then on again at the same threshold.
 		if (!std::isfinite(decibels) || decibels >= 0.0f)
 		{
 			g_gateThresholdLinear.store(0.0f, std::memory_order_relaxed);
+			g_gateThresholdRevision.fetch_add(1, std::memory_order_release);
 			return;
 		}
 		decibels = std::clamp(decibels, -90.0f, -20.0f);
 		g_gateThresholdLinear.store(std::pow(10.0f, decibels / 20.0f), std::memory_order_relaxed);
+		g_gateThresholdRevision.fetch_add(1, std::memory_order_release);
 	}
 
 	void StartLatencyCapture(int frames)

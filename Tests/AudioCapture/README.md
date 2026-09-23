@@ -46,6 +46,13 @@ vtable. Backend method results and packets are supplied by the fixture.
 | `active-shift` | A real non-zero shifter's changed samples are written back; bypass protection does not discard the effect. |
 | `concurrent-players` | Both players can be inside processing concurrently; the lifecycle gate does not serialize independent input callbacks. |
 | `late-attachment` | Polling before attachment is safe; later attachment/preparation succeeds, and duplicate registration does not reset a live route. |
+| `noise-off-bit-exact` | Disabled adaptive suppression leaves float samples bit-for-bit unchanged. |
+| `noise-floor` | A steady -70 dBFS idle floor is deeply attenuated before Rocksmith's tone chain. |
+| `noise-spike` | A one-sample full-scale spike cannot open the suppressor. |
+| `noise-fault` | A sustained -37 dBFS interface fault cannot satisfy the -30 dBFS note-attack qualification. |
+| `noise-tone` | A sustained guitar-like tone opens the suppressor promptly. |
+| `noise-tail` | After a valid attack opens it, a -37 dBFS sustain remains audible above the configured close threshold. |
+| `noise-decay` | The suppressor closes gradually instead of chopping a sustained tail. |
 
 The concurrency test uses explicit atomic handshakes, not a hoped-for race
 after a short sleep. It waits until the gate is closed while the old callback

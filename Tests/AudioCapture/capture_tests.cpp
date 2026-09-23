@@ -4,6 +4,7 @@
 #include "../../DLL/Audio/AsioHook.cpp"
 #include "../../DLL/Audio/GameAudioRecorder.cpp"
 #include "../../DLL/Audio/DelayLinePitchShifter.cpp"
+#include "noise_suppressor_tests.hpp"
 
 #include <stdexcept>
 #include <future>
@@ -534,6 +535,7 @@ namespace Audio::CableInput
 {
 	bool IsAsioPath() { return AudioCaptureTests::asioPath; }
 	void ReportTapPacket(float, bool, uint32_t, uint32_t) { ++AudioCaptureTests::observedPackets; }
+	void ReportPlayerTwoPacket(float, bool) {}
 	void ReportMeasuredInputRaw(int64_t delta, uint32_t) { AudioCaptureTests::observedDelta = delta; }
 	void ReportCaptureTimestampLag(double lag) { AudioCaptureTests::observedLag = lag; }
 }
@@ -571,6 +573,13 @@ int main(int argc, char** argv)
 		else if (test == "persistent-readiness") AudioCaptureTests::PersistentReadiness();
 		else if (test == "lifecycle-forwarding") AudioCaptureTests::LifecycleForwarding();
 		else if (test == "lifecycle-overflow") AudioCaptureTests::LifecycleOverflow();
+		else if (test == "noise-off-bit-exact") AudioCaptureTests::NoiseSuppressorOffIsBitExact();
+		else if (test == "noise-floor") AudioCaptureTests::NoiseSuppressorSuppressesFloor();
+		else if (test == "noise-spike") AudioCaptureTests::NoiseSuppressorRejectsSpike();
+		else if (test == "noise-fault") AudioCaptureTests::NoiseSuppressorRejectsSustainedFault();
+		else if (test == "noise-tone") AudioCaptureTests::NoiseSuppressorOpensTone();
+		else if (test == "noise-tail") AudioCaptureTests::NoiseSuppressorKeepsLowTailOpen();
+		else if (test == "noise-decay") AudioCaptureTests::NoiseSuppressorClosesSmoothly();
 		else throw std::invalid_argument("Unknown test");
 		std::cout << "PASS " << test << '\n';
 		return 0;
