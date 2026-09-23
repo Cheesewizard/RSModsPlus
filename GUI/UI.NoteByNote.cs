@@ -10,6 +10,7 @@ namespace RSMods
 		private CheckBox noteByNoteDetectionCheckBox;
 		private NumericUpDown noteByNoteUiSize;
 		private NumericUpDown noteByNoteTargetSize;
+		private ComboBox noteByNoteTargetPosition;
 		private FeatureColourSettings noteByNoteColours;
 		private FeatureColourSettings dropPedalColours;
 		private bool loadingNoteByNoteControls;
@@ -31,7 +32,25 @@ namespace RSMods
 			page.Controls.Add(CreateFeatureDescription("Shows Native, Enhanced, ML and Target while practising.\nHiding the readout keeps note detection active."));
 			noteByNoteUiSize = CreateNoteByNoteSizeControl(page, "UI text size (%)", ReadSettings.NOTE_BY_NOTE_UI_SIZE_IDENTIFIER);
 			noteByNoteTargetSize = CreateNoteByNoteSizeControl(page, "Target text size (%)", ReadSettings.NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER);
+			var targetPositionRow = new FlowLayoutPanel
+			{
+				AutoSize = true, WrapContents = false, Margin = new Padding(0, 4, 0, 4)
+			};
+			targetPositionRow.Controls.Add(new Label { Text = "Target display position", Width = 170, AutoSize = false, Margin = new Padding(0, 5, 8, 0) });
+			noteByNoteTargetPosition = new ComboBox
+			{
+				DropDownStyle = ComboBoxStyle.DropDownList,
+				Width = 120,
+				BackColor = Audio.StudioTheme.Field,
+				ForeColor = Audio.StudioTheme.Ink,
+				AccessibleName = "Target display position"
+			};
+			noteByNoteTargetPosition.Items.AddRange(new object[] { "Left", "Center" });
+			noteByNoteTargetPosition.SelectedIndexChanged += SaveNoteByNoteTargetPosition;
+			targetPositionRow.Controls.Add(noteByNoteTargetPosition);
+			page.Controls.Add(targetPositionRow);
 			page.Controls.Add(CreateFeatureDescription("UI size changes Native, Enhanced and ML. Target size is independent.\n100% is the original size. Changes apply while the game is running."));
+			page.Controls.Add(CreateFeatureDescription("Left keeps the existing upper-left target. Center places only the target near the gameplay area in Note by Note mode."));
 			page.Controls.Add(CreateFeatureDescription("Enable Note by Note from the Riff Repeater menu in Rocksmith."));
 		}
 
@@ -96,6 +115,10 @@ namespace RSMods
 				noteByNoteDetectionCheckBox.Checked = ReadSettings.ProcessSettings(ReadSettings.NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER) == "on";
 				LoadNoteByNoteSize(noteByNoteUiSize, ReadSettings.NOTE_BY_NOTE_UI_SIZE_IDENTIFIER);
 				LoadNoteByNoteSize(noteByNoteTargetSize, ReadSettings.NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER);
+				var targetPosition = ReadSettings.ProcessSettings(ReadSettings.NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER);
+				if (targetPosition != "Left" && targetPosition != "Center")
+					throw new FormatException(ReadSettings.NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER + "must be Left or Center.");
+				noteByNoteTargetPosition.SelectedItem = targetPosition;
 				noteByNoteColours.LoadSettings();
 				dropPedalColours.LoadSettings();
 			}
@@ -109,6 +132,12 @@ namespace RSMods
 		{
 			if (loadingNoteByNoteControls) return;
 			SaveSettings_Save(ReadSettings.NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER, noteByNoteDetectionCheckBox.Checked ? "on" : "off");
+		}
+
+		private void SaveNoteByNoteTargetPosition(object sender, EventArgs args)
+		{
+			if (loadingNoteByNoteControls || noteByNoteTargetPosition.SelectedItem == null) return;
+			SaveSettings_Save(ReadSettings.NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER, noteByNoteTargetPosition.SelectedItem.ToString());
 		}
 	}
 }

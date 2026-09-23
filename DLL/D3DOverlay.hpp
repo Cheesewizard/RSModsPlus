@@ -36,10 +36,9 @@ namespace GameOverlay {
 	void DisplayRiffRepeaterOverHundredPercentSpeed();
 	void DisplayNoteByNoteStatus();
 	void DisplayNoteByNoteBendMeter();
-	// String/fret ML companion overlay (issue #66/#70): draws the model's per-string read
-	// of the live cable in EVERY build config (like the bend visualizer), so the ML feature
-	// is testable in Release at real FPS. Shadow only; never gates a gameplay decision.
-	// Visibility is driven by OverlayToggles ("bend_meter" / "ml_fret").
+	// Note-by-Note target plus string/fret ML companion overlay (issue #66/#70). The target
+	// is gameplay UI; the model's per-string diagnostic rows are gated by "ml_fret" and the
+	// detection-overlay setting. Draws in every build config and never gates a gameplay decision.
 	void DisplayMlStringFretOverlay();
 	// Audio diagnostics (RSModsPlus): input path + latency, the game's own output latency,
 	// a live signal bar and packet rate. Gated by OverlayToggles "audio_diag" and the

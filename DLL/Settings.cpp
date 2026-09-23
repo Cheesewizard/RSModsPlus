@@ -8,12 +8,42 @@ namespace
 	std::atomic<bool> noteByNoteCustomColours{ false };
 	std::atomic<int> noteByNoteUiSize{ 100 };
 	std::atomic<int> noteByNoteTargetSize{ 150 };
+	std::atomic<Settings::NoteByNoteTargetPosition> noteByNoteTargetPosition{ Settings::NoteByNoteTargetPosition::Left };
 	std::atomic<uint32_t> noteByNoteColors[] = { 0xFFFFFFFF, 0xFF55DD77, 0xFFFFAA44, 0xFFFF5555 };
 }
 
 bool Settings::IsNoteByNoteDetectionVisible()
 {
 	return noteByNoteDetectionVisible.load();
+}
+
+bool Settings::SetNoteByNoteDetectionVisible(bool visible)
+{
+	char executablePath[MAX_PATH]{};
+	GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
+	const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
+	if (!WritePrivateProfileStringA("Note by Note", "NoteByNoteDetectionOverlay", visible ? "on" : "off", iniPath.c_str()))
+	{
+		LOG_ERROR("[SETTINGS] Could not persist NoteByNoteDetectionOverlay" << std::endl);
+		return false;
+	}
+	noteByNoteDetectionVisible.store(visible);
+	return true;
+}
+
+bool Settings::SetNoteByNoteTargetPosition(NoteByNoteTargetPosition position)
+{
+	const char* value = position == NoteByNoteTargetPosition::Center ? "Center" : "Left";
+	char executablePath[MAX_PATH]{};
+	GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
+	const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
+	if (!WritePrivateProfileStringA("Note by Note", "NoteByNoteTargetPosition", value, iniPath.c_str()))
+	{
+		LOG_ERROR("[SETTINGS] Could not persist NoteByNoteTargetPosition" << std::endl);
+		return false;
+	}
+	noteByNoteTargetPosition.store(position);
+	return true;
 }
 
 int Settings::GetNoteByNoteUiSize()
@@ -24,6 +54,11 @@ int Settings::GetNoteByNoteUiSize()
 int Settings::GetNoteByNoteTargetSize()
 {
 	return noteByNoteTargetSize.load();
+}
+
+Settings::NoteByNoteTargetPosition Settings::GetNoteByNoteTargetPosition()
+{
+	return noteByNoteTargetPosition.load();
 }
 
 NoteByNote::DetectionPalette Settings::GetNoteByNoteDetectionPalette()
@@ -280,7 +315,7 @@ void Settings::ReadModSettings() {
 		{"CustomStringColors", reader.GetLongValue("Toggle Switches", "CustomStringColors", 0)}, //0 = default, 1 = Zag, 2 = custom colors
 		{"OverrideInputVolume", reader.GetLongValue("Mod Settings", "OverrideInputVolume", 17)}, // 17 is what Rocksmith calls default.
 		{"AsioInputGain", reader.GetLongValue("Mod Settings", "AsioInputGain", 0)}, // tenths of a dB of guitar input make-up gain (0 = off)
-		{"NoiseGateThreshold", reader.GetLongValue("Mod Settings", "NoiseGateThreshold", 0)}, // guitar input noise-gate threshold in tenths of a dB (0 = off, else negative)
+		{"NoiseGateThreshold", reader.GetLongValue("Mod Settings", "NoiseGateThreshold", 0)}, // guitar input suppressor open threshold in tenths of a dB (0 = off, else negative)
 		{"CompressorStrength", reader.GetLongValue("Mod Settings", "CompressorStrength", 0)}, // guitar input compressor strength, 0-100 (0 = off); flattens string-beat wobble before the game amp
 		{"HumFilter", reader.GetLongValue("Mod Settings", "HumFilter", 0)}, // mains-hum notch base frequency (0 = off, else 50 or 60); notches out the 50/60 Hz ground-loop hum comb on a grounded interface
 		{"RocksmithGateOverride", reader.GetLongValue("Mod Settings", "RocksmithGateOverride", 0)}, // 1 = take over the game's own amp noise gate (P1_NoiseFloor); 0 = leave the game's calibrated gate alone
@@ -380,6 +415,13 @@ void Settings::ReadModSettings() {
 
 	noteByNoteCustomColours.store(std::string(reader.GetValue("Note by Note", "NoteByNoteCustomColours", "off")) == "on");
 	noteByNoteDetectionVisible.store(std::string(reader.GetValue("Note by Note", "NoteByNoteDetectionOverlay", "on")) != "off");
+	const std::string targetPosition = reader.GetValue("Note by Note", "NoteByNoteTargetPosition", "Left");
+	if (targetPosition == "Left")
+		noteByNoteTargetPosition.store(Settings::NoteByNoteTargetPosition::Left);
+	else if (targetPosition == "Center")
+		noteByNoteTargetPosition.store(Settings::NoteByNoteTargetPosition::Center);
+	else
+		LOG_ERROR("Invalid NoteByNoteTargetPosition: expected Left or Center; keeping Left." << std::endl);
 	const char* sizeKeys[] = { "NoteByNoteUiSize", "NoteByNoteTargetSize" };
 	// Target text ships larger than the UI readout: at 100% the target label was too small to
 	// read comfortably, so its default is 150%. The UI readout stays at 100%.

@@ -11,6 +11,7 @@ namespace RSMods
 		public const string NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER = "NoteByNoteDetectionOverlay = ";
 		public const string NOTE_BY_NOTE_UI_SIZE_IDENTIFIER = "NoteByNoteUiSize = ";
 		public const string NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER = "NoteByNoteTargetSize = ";
+		public const string NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER = "NoteByNoteTargetPosition = ";
 		public const string NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER = "NoteByNoteNeutralColor = ";
 		public const string NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER = "NoteByNoteConfirmedColor = ";
 		public const string NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER = "NoteByNotePartialColor = ";
@@ -360,6 +361,7 @@ namespace RSMods
             if (identifierToGrab == NOTE_BY_NOTE_DETECTION_OVERLAY_IDENTIFIER) return "on";
 			if (identifierToGrab == NOTE_BY_NOTE_UI_SIZE_IDENTIFIER) return "100";
 			if (identifierToGrab == NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER) return "150";
+			if (identifierToGrab == NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER) return "Left";
             if (identifierToGrab == NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER) return "FFFFFF";
             if (identifierToGrab == NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER) return "55DD77";
             if (identifierToGrab == NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER) return "FFAA44";
@@ -635,6 +637,8 @@ namespace RSMods
 					return FillSettingVariable(NOTE_BY_NOTE_UI_SIZE_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteUiSize);
 				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER, identifierToGrab))
 					return FillSettingVariable(NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteTargetSize);
+				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER, identifierToGrab))
+					return FillSettingVariable(NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteTargetPosition);
                 if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER, identifierToGrab))
                     return FillSettingVariable(NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteNeutralColor);
                 if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER, identifierToGrab))

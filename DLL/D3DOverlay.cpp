@@ -598,72 +598,22 @@ void GameOverlay::DisplayAudioDiagnostics()
 // screen at all; the ML line now says "(service offline)" instead of vanishing.
 //
 // Deliberately OUTSIDE the _DEBUG block (like the bend visualizer) so it is visible in
-// Release at true FPS. Shadow only, never a gameplay decision. Gated by OverlayToggles
-// "ml_fret" (ships on; .ini + bridge controllable).
+// Release at true FPS. Shadow only, never a gameplay decision. The target remains visible
+// whenever automatic Note-by-Note is active; diagnostic rows are gated by "ml_fret" and the
+// detection-visibility setting.
 void GameOverlay::DisplayMlStringFretOverlay()
 {
 	if (!NoteByNoteProbe::IsAutomaticEnabledFast()) return;
 	if (!GameState::Menus::IsInSongModes() || GameState::Menus::IsInRiffRepeaterMenus()) return;
-	if (!OverlayToggles::Get("ml_fret") || !Settings::IsNoteByNoteDetectionVisible()) return;
 
 	ResearchProtocol::NoteByNoteState state;
 	const bool haveState = NoteByNoteNativeScoring::TryGetResearchState(state) && state.isInitialized;
-	const auto& feedback = state.detectionFeedback;
-	const auto now = GetTickCount64();
-	auto nativeColor = haveState
-		? NoteByNote::GetDetectorColor(feedback.nativeRole, feedback.tick, now) : 0xFFFFFFFF;
-	auto mlColor = haveState
-		? NoteByNote::GetDetectorColor(feedback.mlRole, feedback.tick, now) : 0xFFFFFFFF;
-	const auto enhancedColor = haveState
-		? NoteByNote::GetDetectorColor(feedback.enhancedRole, feedback.tick, now) : 0xFFFFFFFF;
-	const bool showDecision = haveState
-		&& (nativeColor != 0xFFFFFFFF || enhancedColor != 0xFFFFFFFF || mlColor != 0xFFFFFFFF);
 	const int targetMidi = haveState ? state.expectedMidi : -1;
 	const int targetString = haveState && state.selectedChordId == -1 ? state.selectedString : -1;
 	int targetColorString = targetString;
 	const int targetFret = haveState ? state.selectedFret : -1;
-	const int matchingMidi = haveState && state.isBendTarget ? state.bendAcceptMidi : targetMidi;
-	bool nativeMatchesLive = false;
-	bool mlMatchesLive = false;
-	int heard = -1;
-	if (showDecision) heard = feedback.nativeMidi;
-	else if (haveState && state.detectorSampleValid && state.detectorPassesLevel)
-		heard = state.detectorLoudestMidi;
-	if (!showDecision && targetString >= 0 && NoteByNote::MatchesDetectorTarget(heard, matchingMidi))
-		nativeMatchesLive = true;
-	const std::string nativeText = NoteByNote::FormatPitch(heard);
-	const std::string enhancedText = NoteByNote::FormatPitch(showDecision ? feedback.enhancedMidi : -1);
-
-	MlStringFretReader::StringFret sample;
-	std::string mlText;
-	if (showDecision)
-	{
-		mlText = NoteByNote::FormatPitch(feedback.mlMidi);
-	}
-	else if (!MlStringFretReader::TryGet(sample))
-	{
-		mlText = "(service offline)";
-	}
-	else
-	{
-		bool displayedPitches[12] = {};
-		const int appliedShift = DropPedal::GetAppliedInputShiftSemitones();
-		for (int stringIndex = 0; stringIndex < 6; ++stringIndex)
-		{
-			const int midi = NoteByNote::GetStringFretMidi(stringIndex, sample.fret[stringIndex]);
-			if (targetString >= 0 && sample.shift == appliedShift
-				&& (NoteByNote::MatchesDetectorTarget(midi, matchingMidi, sample.conf[stringIndex])
-					|| NoteByNote::MatchesDetectorTarget(midi, matchingMidi - appliedShift, sample.conf[stringIndex])))
-			{
-				mlMatchesLive = true;
-			}
-			if (midi < 0 || displayedPitches[midi % 12]) continue;
-			displayedPitches[midi % 12] = true;
-			if (!mlText.empty()) mlText += "  ";
-			mlText += NoteByNote::FormatPitch(midi);
-		}
-		if (mlText.empty()) mlText = "--";
-	}
+	const bool showDiagnostics = OverlayToggles::Get("ml_fret")
+		&& Settings::IsNoteByNoteDetectionVisible();
 
 	std::string targetText = NoteByNote::FormatPitch(targetMidi);
 	if (targetString >= 0 && targetFret >= 0)
@@ -707,6 +657,7 @@ void GameOverlay::DisplayMlStringFretOverlay()
 
 	const int baseX = static_cast<int>(WindowSize.width / 96.0f);
 	const int baseY = static_cast<int>(WindowSize.height / 5.2f);
+	const bool targetIsCentred = Settings::GetNoteByNoteTargetPosition() == Settings::NoteByNoteTargetPosition::Center;
 	const int defaultTextHeight = std::max(14, static_cast<int>(WindowSize.height / 80.0f));
 	const int textHeight = std::max(7, defaultTextHeight * Settings::GetNoteByNoteUiSize() / 100);
 	const int targetTextHeight = std::max(7, defaultTextHeight * Settings::GetNoteByNoteTargetSize() / 100);
@@ -716,7 +667,9 @@ void GameOverlay::DisplayMlStringFretOverlay()
 	// Horizontal layout is anchored to the UI text size, NOT the target size, so raising the
 	// target size only grows the value glyphs; it never shifts the row sideways. The target
 	// value starts at the same left edge as the detector labels.
-	int targetValueX = baseX;
+	int targetValueX = targetIsCentred
+		? static_cast<int>(WindowSize.width * 0.485f)
+		: baseX;
 	// The target value is a fixed-top box: its top-left is anchored here and never moves with the
 	// target size. The value text is top-aligned, so making it bigger only grows the box out to
 	// the right and downward - it never climbs into the Native/Enhanced/ML block above (there is a
@@ -725,7 +678,9 @@ void GameOverlay::DisplayMlStringFretOverlay()
 	// can render two lines across this band; proportional to text size so the gap holds at any
 	// resolution. (~two rows below the ML block clears both lyric lines seen in practice.)
 	const int targetLyricClearance = rowHeight * 2;
-	const int targetRowTop = baseY + rowHeight * 3 + targetLyricClearance;
+	const int targetRowTop = targetIsCentred
+		? static_cast<int>(WindowSize.height * 0.20f)
+		: baseY + rowHeight * 3 + targetLyricClearance;
 	if (targetColorString >= 0 && targetColorString < 6)
 	{
 		RSColor stringColor;
@@ -745,84 +700,102 @@ void GameOverlay::DisplayMlStringFretOverlay()
 			reportedMissingStringColor = true;
 		}
 	}
-	const char* labels[] = { "Native:", "Enhanced:", "ML:" };
 	const auto palette = Settings::GetNoteByNoteDetectionPalette();
-	// Each detector row's colour is derived from the SAME pitch it shows as text, never from a
-	// separate role/timer, so the swatch and the text can never disagree. A row is green only when
-	// the pitch it is displaying IS the target pitch, and neutral otherwise (a correct read always
-	// reads as correct; a wrong or absent read is calm neutral, not red). Detection here means "did
-	// I see the right pitch"; whether the note then PROGRESSES is a separate concern handled by the
-	// acceptance logic, deliberately not shown on these rows. A short hold keeps each row's text and
-	// colour on screen together for a moment so a flickering live reading does not strobe; they
-	// refresh and expire as one unit, so they always stay in sync.
-	auto matchesTarget = [&](int midi) { return matchingMidi >= 0 && midi == matchingMidi; };
-	const int shownEnhancedMidi = showDecision ? feedback.enhancedMidi : -1;
-	const bool nativeMatch = showDecision ? matchesTarget(heard) : nativeMatchesLive;
-	const bool enhancedMatch = matchesTarget(shownEnhancedMidi);
-	const bool mlMatch = showDecision ? matchesTarget(feedback.mlMidi) : mlMatchesLive;
-	struct RowHold { std::string text = "--"; uint32_t color = 0; uint64_t tick = 0; };
-	static RowHold holds[3];
-	constexpr uint64_t ROW_HOLD_MS = 300;
-	auto resolveRow = [&](int index, const std::string& text, bool match, bool hasReading)
-		-> std::pair<std::string, uint32_t> {
-		if (hasReading) holds[index] = { text, match ? palette.confirmed : palette.neutral, now };
-		else if (holds[index].tick && now - holds[index].tick > ROW_HOLD_MS)
-			holds[index] = { "--", palette.neutral, 0 };
-		return holds[index].tick
-			? std::pair<std::string, uint32_t>{ holds[index].text, holds[index].color }
-			: std::pair<std::string, uint32_t>{ std::string("--"), palette.neutral };
-	};
-	const auto nativeRow = resolveRow(0, nativeText, nativeMatch, heard >= 0);
-	const auto enhancedRow = resolveRow(1, enhancedText, enhancedMatch, shownEnhancedMidi >= 0);
-	const auto mlRow = resolveRow(2, mlText, mlMatch, mlText != "--");
-	const std::string values[] = { nativeRow.first, enhancedRow.first, mlRow.first };
-	const uint32_t colors[] = { nativeRow.second, enhancedRow.second, mlRow.second };
-	for (int row = 0; row < 3; ++row)
+	if (showDiagnostics)
 	{
-		const int y = baseY + row * rowHeight;
-		DX9DrawText(labels[row], colors[row], baseX, y, valueX, y + textHeight * 2,
-			pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
-		DX9DrawText(values[row], colors[row], valueX, y, rightEdge, y + textHeight * 2,
-			pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
-	}
+		const auto& feedback = state.detectionFeedback;
+		const auto now = GetTickCount64();
+		auto nativeColor = haveState
+			? NoteByNote::GetDetectorColor(feedback.nativeRole, feedback.tick, now) : 0xFFFFFFFF;
+		auto mlColor = haveState
+			? NoteByNote::GetDetectorColor(feedback.mlRole, feedback.tick, now) : 0xFFFFFFFF;
+		const auto enhancedColor = haveState
+			? NoteByNote::GetDetectorColor(feedback.enhancedRole, feedback.tick, now) : 0xFFFFFFFF;
+		const bool showDecision = haveState
+			&& (nativeColor != 0xFFFFFFFF || enhancedColor != 0xFFFFFFFF || mlColor != 0xFFFFFFFF);
+		const int matchingMidi = haveState && state.isBendTarget ? state.bendAcceptMidi : targetMidi;
+		bool nativeMatchesLive = false;
+		bool mlMatchesLive = false;
+		int heard = -1;
+		if (showDecision) heard = feedback.nativeMidi;
+		else if (haveState && state.detectorSampleValid && state.detectorPassesLevel)
+			heard = state.detectorLoudestMidi;
+		if (!showDecision && targetString >= 0 && NoteByNote::MatchesDetectorTarget(heard, matchingMidi))
+			nativeMatchesLive = true;
+		const std::string nativeText = NoteByNote::FormatPitch(heard);
+		const std::string enhancedText = NoteByNote::FormatPitch(showDecision ? feedback.enhancedMidi : -1);
 
-	// Veto line (Philip, 2026-09-15: "green but no progress ... something vetoed it and the green is
-	// not the live sync of the decision"). The rows above stay detection truth by design (the
-	// acceptance-coloured rows were tried and rejected on 2026-09-10); this fourth line names the
-	// stage holding the note back whenever a detector row is green and the target has not moved on.
-	// "game gate" is the native detector's hidden onset/confidence test ("none-visible" in the log);
-	// the transport phases are the mod's own timing states where no accept is possible yet.
-	if (haveState && targetMidi >= 0 && (nativeMatch || enhancedMatch || mlMatch))
-	{
-		std::string veto;
-		const std::string phase = state.holdPhase;
-		const std::string refusal = state.holdRefusal;
-		if (phase == "dense-rebuild-pending" || phase == "dense-play-packet-pending"
-			|| phase == "dense-recommit-after-rebuild")
-			veto = "transport rebuilding";
-		else if (phase == "waiting-for-input-release")
-			veto = "previous note still ringing";
-		else if (phase == "commit-before-release" || phase == "post-release" || phase == "recommit-after-release")
-			veto = "committing";
-		else if (refusal == "none-visible")
-			veto = "game gate (onset / confidence)";
-		else if (refusal == "unsettled")
-			veto = "pitch not settled";
-		else if (refusal == "already-consumed")
-			veto = "pick already used";
-		else if (refusal == "level" || refusal == "quality" || refusal == "level+quality")
-			veto = "detector " + refusal + " gate";
-		else if (!refusal.empty())
-			veto = refusal;
-		if (!veto.empty())
+		MlStringFretReader::StringFret sample;
+		std::string mlText;
+		if (showDecision)
 		{
-			const int y = baseY + 3 * rowHeight;
-			DX9DrawText("Held by:", palette.neutral, baseX, y, valueX, y + textHeight * 2,
+			mlText = NoteByNote::FormatPitch(feedback.mlMidi);
+		}
+		else if (!MlStringFretReader::TryGet(sample))
+		{
+			mlText = "(service offline)";
+		}
+		else
+		{
+			bool displayedPitches[12] = {};
+			const int appliedShift = DropPedal::GetAppliedInputShiftSemitones();
+			for (int stringIndex = 0; stringIndex < 6; ++stringIndex)
+			{
+				const int midi = NoteByNote::GetStringFretMidi(stringIndex, sample.fret[stringIndex]);
+				if (targetString >= 0 && sample.shift == appliedShift
+					&& (NoteByNote::MatchesDetectorTarget(midi, matchingMidi, sample.conf[stringIndex])
+						|| NoteByNote::MatchesDetectorTarget(midi, matchingMidi - appliedShift, sample.conf[stringIndex])))
+				{
+					mlMatchesLive = true;
+				}
+				if (midi < 0 || displayedPitches[midi % 12]) continue;
+				displayedPitches[midi % 12] = true;
+				if (!mlText.empty()) mlText += "  ";
+				mlText += NoteByNote::FormatPitch(midi);
+			}
+			if (mlText.empty()) mlText = "--";
+		}
+		// Each detector row's colour is derived from the SAME pitch it shows as text, never from a
+		// separate role/timer, so the swatch and the text can never disagree. A row is green only when
+		// the pitch it is displaying IS the target pitch, and neutral otherwise (a correct read always
+		// reads as correct; a wrong or absent read is calm neutral, not red). Detection here means "did
+		// I see the right pitch"; whether the note then PROGRESSES is a separate concern handled by the
+		// acceptance logic, deliberately not shown on these rows. A short hold keeps each row's text and
+		// colour on screen together for a moment so a flickering live reading does not strobe; they
+		// refresh and expire as one unit, so they always stay in sync.
+		auto matchesTarget = [&](int midi) { return matchingMidi >= 0 && midi == matchingMidi; };
+		const int shownEnhancedMidi = showDecision ? feedback.enhancedMidi : -1;
+		const bool nativeMatch = showDecision ? matchesTarget(heard) : nativeMatchesLive;
+		const bool enhancedMatch = matchesTarget(shownEnhancedMidi);
+		const bool mlMatch = showDecision ? matchesTarget(feedback.mlMidi) : mlMatchesLive;
+		struct RowHold { std::string text = "--"; uint32_t color = 0; uint64_t tick = 0; };
+		static RowHold holds[3];
+		constexpr uint64_t ROW_HOLD_MS = 300;
+		auto resolveRow = [&](int index, const std::string& text, bool match, bool hasReading)
+			-> std::pair<std::string, uint32_t> {
+			if (hasReading) holds[index] = { text, match ? palette.confirmed : palette.neutral, now };
+			else if (holds[index].tick && now - holds[index].tick > ROW_HOLD_MS)
+				holds[index] = { "--", palette.neutral, 0 };
+			return holds[index].tick
+				? std::pair<std::string, uint32_t>{ holds[index].text, holds[index].color }
+				: std::pair<std::string, uint32_t>{ std::string("--"), palette.neutral };
+		};
+		const auto nativeRow = resolveRow(0, nativeText, nativeMatch, heard >= 0);
+		const auto enhancedRow = resolveRow(1, enhancedText, enhancedMatch, shownEnhancedMidi >= 0);
+		const auto mlRow = resolveRow(2, mlText, mlMatch, mlText != "--");
+		const std::string values[] = { nativeRow.first, enhancedRow.first, mlRow.first };
+		const uint32_t colors[] = { nativeRow.second, enhancedRow.second, mlRow.second };
+		const char* labels[] = { "Native:", "Enhanced:", "ML:" };
+		for (int row = 0; row < 3; ++row)
+		{
+			const int y = baseY + row * rowHeight;
+			DX9DrawText(labels[row], colors[row], baseX, y, valueX, y + textHeight * 2,
 				pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
-			DX9DrawText(veto, palette.neutral, valueX, y, rightEdge, y + textHeight * 2,
+			DX9DrawText(values[row], colors[row], valueX, y, rightEdge, y + textHeight * 2,
 				pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
 		}
 	}
+
 	DX9DrawText(targetText, palette.neutral, targetValueX, targetRowTop, rightEdge,
 		targetRowTop + targetTextHeight * 2, pDevice,
 		{ 0, static_cast<unsigned>(targetTextHeight) }, DT_LEFT | DT_NOCLIP);
@@ -915,7 +888,7 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 	// The last good value is held through a few bad frames, and a light low-pass removes jitter.
 	static int meterTarget = -1;
 	static float displaySounding = -1.0f;
-	static int staleFrames = 0;
+	static double staleSeconds = 0.0;
 	static float lastRecordTime = -1.0e30f;
 	// Reset the pin to the base when a NEW bend note begins, not only when the target value
 	// changes (2026-09-05, Philip: "the pin starts from the top then teleports back to the
@@ -927,16 +900,36 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 		meterTarget = target;
 		lastRecordTime = state.selectedRecordTime;
 		displaySounding = -1.0f;
-		staleFrames = 0;
+		staleSeconds = 0.0;
 	}
+	// Frame time for the smoothing below (responsiveness review, win #2): the ease factor and
+	// the signal-loss hold used to be per-frame constants, so at 120 fps the return glide ran
+	// twice as fast and the hold window halved - the meter's feel changed with frame rate.
+	// Both are time-based now. A first draw or a long stall clamps to one nominal frame.
+	LARGE_INTEGER meterPerfNow;
+	QueryPerformanceCounter(&meterPerfNow);
+	LARGE_INTEGER meterPerfFreq;
+	QueryPerformanceFrequency(&meterPerfFreq);
+	static double lastDrawSeconds = 0.0;
+	const double nowSeconds = static_cast<double>(meterPerfNow.QuadPart)
+		/ static_cast<double>(meterPerfFreq.QuadPart);
+	double frameDelta = nowSeconds - lastDrawSeconds;
+	lastDrawSeconds = nowSeconds;
+	if (frameDelta <= 0.0 || frameDelta > 0.25) frameDelta = 1.0 / 60.0;
 	const float bandLow = static_cast<float>(base) - 1.0f;
 	const float bandHigh = static_cast<float>(target) + 1.5f;
 	bool haveNeedle = false;
-	// The one tween-speed knob (Philip 2026-09-05): how fast the pin eases DOWN toward the
-	// current pitch / back to base. Up is instant (a new high snaps the pin straight there), so
-	// the pin feels 1:1 on the way up while the return stays smooth. Tune this if the return
-	// feels too slow (raise toward 1.0 = snappier) or too twitchy (lower toward 0.1 = smoother).
-	constexpr float BEND_PIN_RELEASE = 0.25f;
+	// The one tween-speed knob (Philip 2026-09-05), now a TIME constant: how fast the pin eases
+	// DOWN toward the current pitch / back to base. Up is instant (a strong new high snaps the
+	// pin straight there), so the pin feels 1:1 on the way up while the return stays smooth.
+	// 0.06 s reproduces the old 0.25-per-frame ease at 60 fps; lower toward 0.03 = snappier
+	// return, raise toward 0.1 = smoother.
+	constexpr float BEND_PIN_TAU_SECONDS = 0.06f;
+	const float ease = 1.0f
+		- std::exp(-static_cast<float>(frameDelta) / BEND_PIN_TAU_SECONDS);
+	// The signal-loss hold: how long the pin keeps gliding home after the pitch read dies.
+	// 10 frames at 60 fps was ~167 ms; the time-based 150 ms keeps that feel at any fps.
+	constexpr double BEND_PIN_HOLD_SECONDS = 0.15;
 	if (state.soundingMidi >= bandLow && state.soundingMidi <= bandHigh
 		&& state.soundingQuality >= 20.0f)
 	{
@@ -953,29 +946,37 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 			displaySounding = state.soundingMidi < static_cast<float>(base)
 				? state.soundingMidi
 				: static_cast<float>(base);
-			staleFrames = 0;
+			staleSeconds = 0.0;
 			haveNeedle = true;
 		}
 		else
 		{
-			// Peak-follower (Philip 2026-09-05): snap the pin straight UP to any new high - that
+			// Peak-follower (Philip 2026-09-05): snap the pin straight UP to a new high - that
 			// high point is the bend's target and feels 1:1 on the way up. Otherwise ease it
 			// smoothly toward the current pitch, so a held bend sits still, a release glides back
 			// down toward base, and the weak quarter-bend jitter/drop-outs never yank it around.
-			if (state.soundingMidi > displaySounding)
+			// The snap needs a stronger read than the ease (responsiveness review, win #3): a
+			// single noisy overshoot frame at passable quality used to teleport the needle to
+			// the top on its own. A genuine bend's read clears this bar; a noisier one still
+			// climbs via the ease, just without the snap. (The probe's "strong green" bar is 70;
+			// this sits between the ease floor of 20 and that.)
+			constexpr float BEND_PIN_SNAP_QUALITY = 50.0f;
+			if (state.soundingMidi > displaySounding
+				&& state.soundingQuality >= BEND_PIN_SNAP_QUALITY)
 				displaySounding = state.soundingMidi;
 			else
-				displaySounding += (state.soundingMidi - displaySounding) * BEND_PIN_RELEASE;
-			staleFrames = 0;
+				displaySounding += (state.soundingMidi - displaySounding) * ease;
+			staleSeconds = 0.0;
 			haveNeedle = true;
 		}
 	}
 	// Signal gone/weak: ease the pin back toward base (the "back to zero" release) with the same
 	// tween so the return feels consistent, instead of freezing at the high point. It keeps
-	// drawing for a short window while it glides home, then clears below.
-	else if (displaySounding >= 0.0f && ++staleFrames < 10)
+	// drawing for a short wall-clock window while it glides home, then clears below.
+	else if (displaySounding >= 0.0f
+		&& (staleSeconds += frameDelta) < BEND_PIN_HOLD_SECONDS)
 	{
-		displaySounding += (static_cast<float>(base) - displaySounding) * BEND_PIN_RELEASE;
+		displaySounding += (static_cast<float>(base) - displaySounding) * ease;
 		haveNeedle = true;
 	}
 	else
@@ -983,25 +984,24 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 		// Signal gone: drop the pin AND clear the held value so the next bend re-seeds at the
 		// base instead of resuming from the previous bend's top.
 		displaySounding = -1.0f;
-		staleFrames = 0;
+		staleSeconds = 0.0;
 	}
 	
 	const float frac = depth > 0.0f
 		? (displaySounding - static_cast<float>(base)) / depth
 		: 0.0f;
-	// Green ("on target") only once the pitch is within the DETECTION under-tolerance of the
-	// target (0.3, matching BEND_UNDERBEND_SEMITONES in the probe), not the old loose 0.5 -
-	// so the needle does not turn green before the bend actually reaches pitch (Philip: "bend
-	// activated before it reached the target visually and turned green").
-	// Green matches the accept: it fires as soon as the raw pitch reaches the target band, not
-	// only when the low-passed pin has caught up (Philip 2026-09-05: "didn't always show green at
-	// the correct pitch"). The probe accepts on the raw fractional pitch, so the meter uses the
-	// same reading for green while the low-pass still drives the pin's position.
-	const bool rawOnTarget = state.soundingMidi >= bandLow && state.soundingMidi <= bandHigh
-		&& state.soundingQuality >= 20.0f
-		&& state.soundingMidi >= static_cast<float>(target) - 0.3f;
-	const bool onTarget = haveNeedle
-		&& (displaySounding >= static_cast<float>(target) - 0.3f || rawOnTarget);
+	// Green is the ENGINE's verdict, not a pitch re-derivation (responsiveness review, wins
+	// #1 and #4). The probe publishes bendReachedTarget: 1 only where its own bend evaluation
+	// counted the pitch - the tracker band read, the held raw-detector streak, the native
+	// sounding table, or the ML confirm, all after their vetoes - which is the same verdict that
+	// advances the note. Green therefore means progress by construction. The old meter OR-ed
+	// its own checks into green and showed it in two wrong cases: the eased pin kept the
+	// needle green for several frames after a release (the pin eases down slowly, so it sat
+	// past the target-0.3 line long after the raw pitch dropped), and a 1-2 tick flash went
+	// green without the accept streak behind it. Both are gone: white while climbing, green
+	// only when it counts. A flash too short to accept legitimately never greens - that is
+	// the anti-false-accept behavior this meter exists for.
+	const bool onTarget = haveNeedle && state.bendReachedTarget != 0;
 	
 	constexpr int ROWS = 12;
 	constexpr int TARGET_ROW = 2;            // rows above the target are overbend headroom

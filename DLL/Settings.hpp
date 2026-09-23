@@ -3,9 +3,13 @@
 #include <functional> 
 
 namespace Settings {
+	enum class NoteByNoteTargetPosition { Left, Center };
 	bool IsNoteByNoteDetectionVisible();
+	bool SetNoteByNoteDetectionVisible(bool visible);
+	bool SetNoteByNoteTargetPosition(NoteByNoteTargetPosition position);
 	int GetNoteByNoteUiSize();
 	int GetNoteByNoteTargetSize();
+	NoteByNoteTargetPosition GetNoteByNoteTargetPosition();
 	NoteByNote::DetectionPalette GetNoteByNoteDetectionPalette();
 
 	void Initialize(); // Default Settings
