@@ -9,6 +9,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <climits>
+#include <avrt.h>
+
+#pragma comment(lib, "avrt.lib")
 
 namespace AsioProxy
 {
@@ -87,7 +91,9 @@ namespace AsioProxy
 		if (!quitEvent || !wakeEvent || !captureEvent) return false;
 		if (running.exchange(true, std::memory_order_acq_rel)) return true;
 		ResetEvent(quitEvent);
-		Clear();
+		largestPacket.store(0, std::memory_order_relaxed);
+		packetWindowMax = 0; packetWindowCount = 0;
+		resetRequested.store(true, std::memory_order_release);
 		if (testMode.load(std::memory_order_acquire)) return true;
 		try { worker = std::thread(&VirtualCableCapture::Run, this); }
 		catch (...) { running.store(false, std::memory_order_release); return false; }
@@ -98,87 +104,177 @@ namespace AsioProxy
 	void VirtualCableCapture::Stop()
 	{
 		if (!running.exchange(false, std::memory_order_acq_rel)) return;
-		if (!worker.joinable())
+		if (worker.joinable())
 		{
-			Clear();
-			return;
+			SetEvent(quitEvent);
+			SetEvent(wakeEvent);
+			worker.join();
+			ResetEvent(quitEvent);
+			CloseDevice();
 		}
-		SetEvent(quitEvent);
-		SetEvent(wakeEvent);
-		if (worker.joinable()) worker.join();
-		ResetEvent(quitEvent);
-		CloseDevice();
-		Clear();
+		resetRequested.store(true, std::memory_order_release);
 	}
 
-	void VirtualCableCapture::Clear()
+	// Reader side: drop whatever is buffered and wait to prime again. The learned clock correction
+	// (integralPpm) survives unless the caller clears it: the two clocks did not change.
+	void VirtualCableCapture::ResetReader()
 	{
-		const uint64_t write = writeFrame.load(std::memory_order_acquire);
-		readFrame.store(write, std::memory_order_release);
+		readIndex = writeFrame.load(std::memory_order_acquire);
+		readFrame.store(readIndex, std::memory_order_release);
+		readPhase = 0.0;
+		primed = false;
+		fadeIn = 0;
+		windowMinFill = INT32_MAX;
+		windowFrames = 0;
+		correctionPpm = integralPpm;
+		primedFlag.store(0, std::memory_order_relaxed);
 	}
 
 	void VirtualCableCapture::Read(int32_t* stereoSamples, uint32_t frames)
 	{
 		if (!stereoSamples || !frames) return;
-		if (ringBusy.test_and_set(std::memory_order_acquire))
+		if (resetRequested.exchange(false, std::memory_order_acq_rel))
 		{
-			std::memset(stereoSamples, 0, static_cast<size_t>(frames) * 2 * sizeof(int32_t));
+			integralPpm = 0.0;
+			margin = MARGIN_FRAMES;
+			lastMargin.store(margin, std::memory_order_relaxed);
+			ResetReader();
+		}
+		const auto silence = [&] { std::memset(stereoSamples, 0, static_cast<size_t>(frames) * 2 * sizeof(int32_t)); };
+
+		const uint64_t write = writeFrame.load(std::memory_order_acquire);
+		const int64_t fill = static_cast<int64_t>(write - readIndex);
+		lastFill.store(static_cast<int32_t>(fill), std::memory_order_relaxed);
+		// The fill saw-tooths: +one device packet when it arrives, -one block per read. Keep its MINIMUM
+		// at one block plus a margin, so the read just before a packet still finds a full block.
+		const int32_t target = static_cast<int32_t>(frames) + margin;
+		const int32_t packetFrames = static_cast<int32_t>(largestPacket.load(std::memory_order_relaxed));
+		const int64_t startFill = static_cast<int64_t>(target) + packetFrames + 2;   // +2: interpolation look-ahead
+
+		if (!primed)
+		{
+			if (fill < startFill) { silence(); return; }
+			if (fill > startFill) readIndex = write - static_cast<uint64_t>(startFill);   // start at the target, not behind a backlog
+			readPhase = 0.0;
+			primed = true;
+			fadeIn = FADE_FRAMES;
+			windowMinFill = INT32_MAX;
+			windowFrames = 0;
+			primedFlag.store(1, std::memory_order_relaxed);
+		}
+		else if (fill > startFill + 4800)
+		{
+			// A backlog far beyond what the drift correction trims (device burst, long stall): jump to the
+			// target instead of carrying 100+ ms of extra latency.
+			readIndex = write - static_cast<uint64_t>(startFill);
+			readPhase = 0.0;
+			fadeIn = FADE_FRAMES;
+			skips.fetch_add(1, std::memory_order_relaxed);
+		}
+
+		const double ratio = 1.0 + correctionPpm * 1e-6;
+		const double span = readPhase + static_cast<double>(frames - 1) * ratio;
+		if (readIndex + static_cast<uint64_t>(span) + 3 > write)
+		{
+			// Ran dry. One silent block, then prime again (the next block fades back in).
+			// The writer was later than the margin allows: widen it so this timing does not repeat.
+			underruns.fetch_add(1, std::memory_order_relaxed);
+			margin = (std::min)(margin + MARGIN_STEP_FRAMES, MARGIN_MAX_FRAMES);
+			lastMargin.store(margin, std::memory_order_relaxed);
+			primed = false;
+			primedFlag.store(0, std::memory_order_relaxed);
+			silence();
 			return;
 		}
-		const uint64_t read = readFrame.load(std::memory_order_relaxed);
-		const uint64_t write = writeFrame.load(std::memory_order_acquire);
-		const uint64_t available = write > read ? write - read : 0;
-		const uint32_t count = static_cast<uint32_t>(std::min<uint64_t>(available, frames));
-		for (uint32_t frame = 0; frame < count; ++frame)
+		if (fill < windowMinFill) windowMinFill = static_cast<int32_t>(fill);
+
+		// Cubic Hermite interpolation at the fractional read position. At ratios this close to 1 it is
+		// transparent for a guitar signal; linear interpolation would dull the top end as the phase drifts.
+		for (uint32_t frame = 0; frame < frames; ++frame)
 		{
-			const uint32_t slot = static_cast<uint32_t>((read + frame) % RING_FRAMES) * 2;
-			stereoSamples[frame * 2] = ring[slot];
-			stereoSamples[frame * 2 + 1] = ring[slot + 1];
+			const float x0 = At(readIndex - 1), x1 = At(readIndex), x2 = At(readIndex + 1), x3 = At(readIndex + 2);
+			const float t = static_cast<float>(readPhase);
+			const float c1 = 0.5f * (x2 - x0);
+			const float c2 = x0 - 2.5f * x1 + 2.0f * x2 - 0.5f * x3;
+			const float c3 = 0.5f * (x3 - x0) + 1.5f * (x1 - x2);
+			float value = ((c3 * t + c2) * t + c1) * t + x1;
+			if (fadeIn > 0) { value *= static_cast<float>(FADE_FRAMES - fadeIn) / FADE_FRAMES; --fadeIn; }
+			value = std::clamp(value, -1.0f, 1.0f);
+			const int32_t pcm = value >= 1.0f ? INT32_MAX : static_cast<int32_t>(value * 2147483647.0f);
+			stereoSamples[frame * 2] = pcm;
+			stereoSamples[frame * 2 + 1] = pcm;
+			readPhase += ratio;
+			const double whole = std::floor(readPhase);
+			readIndex += static_cast<uint64_t>(whole);
+			readPhase -= whole;
 		}
-		if (count < frames) std::memset(stereoSamples + count * 2, 0, static_cast<size_t>(frames - count) * 2 * sizeof(int32_t));
-		readFrame.store(read + count, std::memory_order_release);
-		ringBusy.clear(std::memory_order_release);
+		readFrame.store(readIndex - 1, std::memory_order_release);   // keep x0 of the next block readable
+
+		// Drift servo, once per ~250 ms: steer the fill minimum to the target. Positive error = too much
+		// buffered = consume slightly faster. PI: the integral learns the cable-vs-PC clock offset (tens to
+		// hundreds of ppm), the proportional term removes the residual. 3000 ppm is ~5 cents at the clamp;
+		// in steady state it sits at the clock offset, far below audibility.
+		windowFrames += frames;
+		if (windowFrames >= SERVO_WINDOW_FRAMES && windowMinFill != INT32_MAX)
+		{
+			const double error = static_cast<double>(windowMinFill - target);
+			integralPpm = std::clamp(integralPpm + 0.5 * error, -1500.0, 1500.0);
+			correctionPpm = std::clamp(integralPpm + 6.0 * error, -3000.0, 3000.0);
+			windowMinFill = INT32_MAX;
+			windowFrames = 0;
+			lastPpm.store(static_cast<int32_t>(std::lround(correctionPpm)), std::memory_order_relaxed);
+		}
+	}
+
+	VirtualCableCapture::Stats VirtualCableCapture::GetStats() const
+	{
+		Stats stats;
+		stats.underruns = underruns.load(std::memory_order_relaxed);
+		stats.overflowDrops = overflowDrops.load(std::memory_order_relaxed);
+		stats.skips = skips.load(std::memory_order_relaxed);
+		stats.deviceGlitches = deviceGlitches.load(std::memory_order_relaxed);
+		stats.fillFrames = lastFill.load(std::memory_order_relaxed);
+		stats.correctionPpm = lastPpm.load(std::memory_order_relaxed);
+		stats.primed = primedFlag.load(std::memory_order_relaxed);
+		stats.marginFrames = lastMargin.load(std::memory_order_relaxed);
+		return stats;
 	}
 
 	void VirtualCableCapture::InjectForTest(const int32_t* stereoSamples, uint32_t frames)
 	{
-		if (stereoSamples && frames) Push(stereoSamples, frames);
-	}
-
-	void VirtualCableCapture::Push(const int32_t* stereoSamples, uint32_t frames)
-	{
 		if (!stereoSamples || !frames) return;
-		if (ringBusy.test_and_set(std::memory_order_acquire)) return;
-		if (frames > RING_FRAMES) { stereoSamples += static_cast<size_t>(frames - RING_FRAMES) * 2; frames = RING_FRAMES; }
-		const uint64_t write = writeFrame.load(std::memory_order_relaxed);
-		const uint64_t read = readFrame.load(std::memory_order_acquire);
-		if (write + frames - read > RING_FRAMES) readFrame.store(write + frames - RING_FRAMES, std::memory_order_release);
-		for (uint32_t frame = 0; frame < frames; ++frame)
-		{
-			const uint32_t slot = static_cast<uint32_t>((write + frame) % RING_FRAMES) * 2;
-			ring[slot] = stereoSamples[frame * 2]; ring[slot + 1] = stereoSamples[frame * 2 + 1];
-		}
-		writeFrame.store(write + frames, std::memory_order_release);
-		ringBusy.clear(std::memory_order_release);
-	}
-
-	void VirtualCableCapture::PushFloat(const float* samples, uint32_t frames, bool silent)
-	{
 		uint32_t offset = 0;
 		while (offset < frames)
 		{
-		const uint32_t count = (std::min)(MAX_PACKET_FRAMES, frames - offset);
+			const uint32_t count = (std::min)(MAX_PACKET_FRAMES, frames - offset);
 			for (uint32_t frame = 0; frame < count; ++frame)
-			{
-				float value = silent ? 0.0f : samples[offset + frame];
-				if (!std::isfinite(value)) value = 0.0f;
-				value = std::clamp(value, -1.0f, 1.0f);
-				const int32_t pcm = value >= 1.0f ? INT32_MAX : static_cast<int32_t>(value * 2147483647.0f);
-				packet[frame * 2] = pcm; packet[frame * 2 + 1] = pcm;
-			}
-			Push(packet.data(), count);
+				packet[frame] = static_cast<float>(stereoSamples[(offset + frame) * 2] / 2147483648.0);
+			PushMono(packet.data(), count);
 			offset += count;
 		}
+	}
+
+	// Writer side (capture thread, or the test injector; never both). Lock-free: publish writeFrame after
+	// the samples are in place. A full ring drops the incoming packet rather than touching the reader's
+	// position; the reader's backlog jump recovers the latency afterwards.
+	void VirtualCableCapture::PushMono(const float* samples, uint32_t frames)
+	{
+		if (!samples || !frames) return;
+		// Typical packet size for the reader's start margin: grows at once, shrinks back after ~100 packets
+		// (about a second of 10 ms packets), so one oversized burst does not raise latency for good.
+		packetWindowMax = (std::max)(packetWindowMax, frames);
+		if (++packetWindowCount >= 100) { largestPacket.store(packetWindowMax, std::memory_order_relaxed); packetWindowMax = 0; packetWindowCount = 0; }
+		else if (frames > largestPacket.load(std::memory_order_relaxed)) largestPacket.store(frames, std::memory_order_relaxed);
+		const uint64_t write = writeFrame.load(std::memory_order_relaxed);
+		const uint64_t read = readFrame.load(std::memory_order_acquire);
+		if (write - read + frames > RING_FRAMES - 8)
+		{
+			overflowDrops.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
+		for (uint32_t frame = 0; frame < frames; ++frame)
+			ring[static_cast<uint32_t>(write + frame) & RING_MASK] = samples[frame];
+		writeFrame.store(write + frames, std::memory_order_release);
 	}
 
 	bool VirtualCableCapture::OpenDevice()
@@ -210,7 +306,7 @@ namespace AsioProxy
 		WAVEFORMATEX format{ WAVE_FORMAT_IEEE_FLOAT, 1, 48000, 48000 * 4, 4, 32, 0 };
 		HRESULT result = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
 			AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-			100000, 0, &format, nullptr);
+			300000, 0, &format, nullptr);   // 30 ms engine buffer: headroom for a late wake, no added latency
 		if (SUCCEEDED(result)) result = client->SetEventHandle(captureEvent);
 		ComPtr<IAudioCaptureClient> captureClient;
 		if (SUCCEEDED(result)) result = client->GetService(IID_PPV_ARGS(&captureClient));
@@ -243,7 +339,21 @@ namespace AsioProxy
 			if (frames)
 			{
 				if (!data && !(flags & AUDCLNT_BUFFERFLAGS_SILENT)) { captureClient->ReleaseBuffer(frames); return false; }
-				PushFloat(reinterpret_cast<const float*>(data), frames, (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0);
+				if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) deviceGlitches.fetch_add(1, std::memory_order_relaxed);
+				const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+				const float* source = reinterpret_cast<const float*>(data);
+				uint32_t offset = 0;
+				while (offset < frames)
+				{
+					const uint32_t count = (std::min)(MAX_PACKET_FRAMES, frames - offset);
+					for (uint32_t frame = 0; frame < count; ++frame)
+					{
+						const float value = silent ? 0.0f : source[offset + frame];
+						packet[frame] = std::isfinite(value) ? std::clamp(value, -1.0f, 1.0f) : 0.0f;
+					}
+					PushMono(packet.data(), count);
+					offset += count;
+				}
 			}
 			if (FAILED(captureClient->ReleaseBuffer(frames))) return false;
 		}
@@ -253,6 +363,8 @@ namespace AsioProxy
 	void VirtualCableCapture::Run()
 	{
 		const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+		DWORD taskIndex = 0;
+		HANDLE task = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
 		ComPtr<IMMDeviceEnumerator> enumerator;
 		ComPtr<Notifications> notifications;
 		if (SUCCEEDED(com) || com == RPC_E_CHANGED_MODE)
@@ -276,9 +388,29 @@ namespace AsioProxy
 			const uint64_t now = GetTickCount64();
 			if (!testMode.load(std::memory_order_acquire) && !backend && enumerator && now >= nextOpenTick) { if (OpenDevice()) nextOpenTick = 0; else nextOpenTick = now + 1000; }
 			if (capture && !DrainDevice()) { CloseDevice(); nextOpenTick = now + 1000; }
+			LogStatsIfChanged();
 		}
 		if (enumerator && notifications) enumerator->UnregisterEndpointNotificationCallback(notifications.Get());
 		CloseDevice();
+		if (task) AvRevertMmThreadCharacteristics(task);
 		if (SUCCEEDED(com)) CoUninitialize();
+	}
+
+	// Capture thread: one line to RocksmithAudioBridge-log.txt every 30 s while capturing, and at once
+	// when a glitch counter moves, so a session log shows whether the input ever dropped a block.
+	void VirtualCableCapture::LogStatsIfChanged()
+	{
+		if (!logFn || !physicalCapture.load(std::memory_order_acquire)) return;
+		const Stats now = GetStats();
+		const bool glitch = now.underruns != lastLogged.underruns || now.overflowDrops != lastLogged.overflowDrops
+			|| now.skips != lastLogged.skips || now.deviceGlitches != lastLogged.deviceGlitches;
+		const uint64_t tick = GetTickCount64();
+		if (!glitch && tick < nextLogTick) return;
+		nextLogTick = tick + 30000;
+		lastLogged = now;
+		logFn("cable input: fill %ld frames (margin %ld), drift correction %ld ppm, underruns %lu, overflow drops %lu, skips %lu, device discontinuities %lu%s",
+			static_cast<long>(now.fillFrames), static_cast<long>(now.marginFrames), static_cast<long>(now.correctionPpm), static_cast<unsigned long>(now.underruns),
+			static_cast<unsigned long>(now.overflowDrops), static_cast<unsigned long>(now.skips),
+			static_cast<unsigned long>(now.deviceGlitches), now.primed ? "" : " (priming)");
 	}
 }

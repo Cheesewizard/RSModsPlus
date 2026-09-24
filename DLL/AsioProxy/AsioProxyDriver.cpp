@@ -30,6 +30,10 @@
 #include <mutex>
 #include <cstdarg>
 #include <cstdio>
+#include <avrt.h>
+
+#pragma comment(lib, "avrt.lib")
+#pragma comment(lib, "winmm.lib")
 
 // {7B2E5C10-9F3A-4D6B-A1C8-2E4F6A8B0D31}
 static const CLSID CLSID_RocksmithAudioBridge =
@@ -259,7 +263,7 @@ class AsioProxyDriver : public IAsioDriver
 {
 public:
 	static AsioProxyDriver* s_active;   // ASIO callbacks carry no context; only one driver is active
-	AsioProxyDriver() { m_virtualCable.SetTestMode(g_virtualCaptureTestMode.load(std::memory_order_acquire)); }
+	AsioProxyDriver() { m_virtualCable.SetTestMode(g_virtualCaptureTestMode.load(std::memory_order_acquire)); m_virtualCable.SetLog(&ProxyLog); }
 	int OutputModeValue() const
 	{
 		if (!m_callbackSeen.load(std::memory_order_acquire)) return 0;
@@ -269,6 +273,7 @@ public:
 		const uint64_t lastCallback = m_lastCallbackTick.load(std::memory_order_acquire);
 		return lastCallback != 0 && GetTickCount64() - lastCallback > 800 ? 3 : 2;
 	}
+	AsioProxy::VirtualCableCapture::Stats VirtualInputStats() const { return m_virtualCable.GetStats(); }
 	int InputModeValue() const
 	{
 		if (!m_streamRunning.load(std::memory_order_acquire) || m_inputCount == 0) return 0;
@@ -340,8 +345,26 @@ public:
 		return m_real ? m_real->stop() : -1;
 	}
 	ASIOError getChannels(long* in, long* out) override { if (m_mode.load() == OutputMode::Virtual) { if (in) *in = 2; if (out) *out = 2; return 0; } return m_real ? m_real->getChannels(in, out) : -1; }
-	ASIOError getLatencies(long* in, long* out) override { if (m_mode.load() == OutputMode::Virtual) { if (in) *in = kVirtualFrames; if (out) *out = kVirtualFrames; return 0; } return m_real ? m_real->getLatencies(in, out) : -1; }
-	ASIOError getBufferSize(long* mn, long* mx, long* pref, long* gran) override { if (m_mode.load() == OutputMode::Virtual) { if (mn) *mn = kVirtualFrames; if (mx) *mx = kVirtualFrames; if (pref) *pref = kVirtualFrames; if (gran) *gran = 0; return 0; } return m_real ? m_real->getBufferSize(mn, mx, pref, gran) : -1; }
+	ASIOError getLatencies(long* in, long* out) override { if (m_mode.load() == OutputMode::Virtual) { const long frames = m_bufferSize > 0 ? m_bufferSize : kVirtualPreferredFrames; if (in) *in = frames; if (out) *out = frames; return 0; } return m_real ? m_real->getLatencies(in, out) : -1; }
+	ASIOError getBufferSize(long* mn, long* mx, long* pref, long* gran) override
+	{
+		if (m_mode.load() == OutputMode::Virtual)
+		{
+			// RS_ASIO picks the buffer size (driver preferred / host / custom, clamped to this range) BEFORE
+			// createBuffers, i.e. while the proxy is still Virtual. When the real device is going to be bound
+			// at createBuffers, answer with the real device's own limits, so the chosen size is one the
+			// hardware accepts. Otherwise a size the hardware refuses would drop a connected interface into
+			// speaker mode. With no device (speaker mode) the virtual range applies.
+			if (ProbeRealBeforeBind())
+			{
+				const ASIOError e = m_real->getBufferSize(mn, mx, pref, gran);
+				if (e == 0) return e;
+			}
+			if (mn) *mn = kVirtualMinFrames; if (mx) *mx = kVirtualMaxFrames; if (pref) *pref = kVirtualPreferredFrames; if (gran) *gran = 1;
+			return 0;
+		}
+		return m_real ? m_real->getBufferSize(mn, mx, pref, gran) : -1;
+	}
 	ASIOError canSampleRate(ASIOSampleRate r) override { if (m_mode.load() == OutputMode::Virtual) return r == 48000.0 ? 0 : -1; return m_real ? m_real->canSampleRate(r) : -1; }
 	ASIOError getSampleRate(ASIOSampleRate* r) override { if (m_mode.load() == OutputMode::Virtual) { if (r) *r = 48000.0; return 0; } const ASIOError e = m_real ? m_real->getSampleRate(r) : -1; if (r && e == 0) m_sampleRate = *r; return e; }
 	ASIOError setSampleRate(ASIOSampleRate r) override { if (m_mode.load() == OutputMode::Virtual) { if (r != 48000.0) return -1; m_sampleRate = r; return 0; } if (!m_real) return -1; const ASIOError e = m_real->setSampleRate(r); if (e == 0) m_sampleRate = r; return e; }
@@ -382,8 +405,12 @@ public:
 			const bool preferReal = PreferRealOutput();
 			ProxyLog("createBuffers: %ld channel(s) (%ld in, %ld out), %ld frames; PreferReal=%d",
 				numChannels, inputs, numChannels - inputs, bufferSize, preferReal ? 1 : 0);
-			// Stay virtual unless the user prefers the real device AND it binds cleanly.
-			if (!preferReal || BindReal(std::wstring(), bufferInfos, numChannels, bufferSize) != 0)
+			// Stay virtual unless the user prefers the real device AND it binds cleanly. A device that already
+			// refused to load or init during the buffer-size query this boot is not retried (saves ~0.4 s).
+			const bool knownAbsent = m_realProbeFailed;
+			m_realProbeFailed = false;
+			if (knownAbsent && preferReal) ProxyLog("createBuffers: real device unavailable at the buffer-size query; not retrying");
+			if (!preferReal || knownAbsent || BindReal(std::wstring(), bufferInfos, numChannels, bufferSize) != 0)
 			{
 				const ASIOError virtualResult = CreateVirtualBuffers(bufferInfos, numChannels, bufferSize, callbacks);
 				ProxyLog("createBuffers: staying Virtual -> %ld", virtualResult);
@@ -403,7 +430,20 @@ public:
 	}
 
 private:
-	static const long kVirtualFrames = 128;
+	// Virtual (speaker-mode) buffer sizes. The virtual clock is software, so any size works: advertise a wide
+	// range with granularity 1 so RS_ASIO's BufferSizeMode (driver / host / custom) gets the size the player
+	// configured instead of being clamped. It used to report 128 as min = max = preferred, which silently
+	// forced every setup to 128 frames. Preferred stays 128 (the long-standing default). The max matches the
+	// host input observer's MAX_BUFFER_FRAMES (AsioHook.cpp); larger blocks would bypass the input chain.
+	static const long kVirtualMinFrames = 32;
+	static const long kVirtualMaxFrames = 4096;
+	static const long kVirtualPreferredFrames = 128;
+	// createBuffers itself takes any size up to this: the size may have come from the real device's range
+	// (a bind that then failed), and refusing it would leave the player with no audio at all. Below
+	// kVirtualMinFrames the software clock cannot wake that often and delivers buffers in small bursts
+	// (rate still holds); above 4096 the host's input chain skips the blocks.
+	static const long kVirtualHardMaxFrames = 16384;
+	static const long kVirtualSampleRate = 48000;
 
 	void ActivateVirtual() { m_mode.store(OutputMode::Virtual); m_callbackSeen.store(false); m_lastCallbackTick.store(0); m_virtualSamplePosition.store(0); m_sampleRate = 48000.0; }
 
@@ -452,6 +492,32 @@ private:
 		}
 		else ProxyLog("BindReal: real createBuffers(%ld channels, %ld frames) OK at %.0f Hz", numChannels, bufferSize, m_sampleRate);
 		return e;
+	}
+
+	// Load + init the real driver early, at the host's buffer-size query, so getBufferSize can report the
+	// hardware's limits. Only before the first createBuffers (no buffers yet) and only when the real device
+	// is wanted. BindReal then reuses the already-initialised driver. A failure is remembered so
+	// createBuffers does not pay for a second attempt in the same boot.
+	bool ProbeRealBeforeBind()
+	{
+		if (m_real) return !m_bufferInfos;
+		if (m_bufferInfos || m_realProbeFailed || !PreferRealOutput()) return false;
+		if (LoadReal() && m_real->init(m_sysHandle))
+		{
+			long mn = 0, mx = 0, pref = 0, gran = 0;
+			m_real->getBufferSize(&mn, &mx, &pref, &gran);
+			ProxyLog("getBufferSize: real device answers %ld..%ld preferred %ld granularity %ld", mn, mx, pref, gran);
+			return true;
+		}
+		if (m_real)
+		{
+			char message[128]{};
+			m_real->getErrorMessage(message);
+			ProxyLog("getBufferSize: real device refused init (%s); reporting the virtual range", message);
+		}
+		ReleaseReal();
+		m_realProbeFailed = true;
+		return false;
 	}
 
 	// Bookkeeping once the real driver owns the buffers: remember the layout, switch to Real mode, cache the
@@ -522,7 +588,8 @@ private:
 
 	ASIOError CreateVirtualBuffers(ASIOBufferInfo* infos, long numChannels, long bufferSize, ASIOCallbacks* callbacks)
 	{
-		if (!infos || numChannels <= 0 || !callbacks || !callbacks->bufferSwitch || bufferSize != kVirtualFrames) return -1;
+		if (!infos || numChannels <= 0 || !callbacks || !callbacks->bufferSwitch
+			|| bufferSize < 1 || bufferSize > kVirtualHardMaxFrames) return -1;
 		long inputs = 0, outputs = 0;
 		bool inputChannels[2]{};
 		bool outputChannels[2]{};
@@ -538,11 +605,12 @@ private:
 		if (inputs > 2 || outputs > 2) return -1;
 		m_bufferInfos = infos; m_numChannels = numChannels; m_bufferSize = bufferSize;
 		m_hostCallbacks = *callbacks; m_outputCount = 0; m_inputCount = 0; m_virtualBuffers.clear();
+		m_inputScratch.assign(static_cast<size_t>(bufferSize) * 2, 0);   // sized here, never on the audio thread
 		for (long i = 0; i < numChannels; ++i)
 		{
 			for (int d = 0; d < 2; ++d)
 			{
-				void* buffer = calloc(static_cast<size_t>(kVirtualFrames), sizeof(int32_t));
+				void* buffer = calloc(static_cast<size_t>(bufferSize), sizeof(int32_t));
 				if (!buffer) { FreeVirtualBuffers(); return -1; }
 				infos[i].buffers[d] = buffer; m_virtualBuffers.push_back(buffer);
 			}
@@ -557,23 +625,87 @@ private:
 		return 0;
 	}
 
+	// The virtual (speaker-mode) clock: plays the part of the sound card by calling the host's bufferSwitch
+	// once per buffer. In speaker mode the speakers are fed by the host's WASAPI route, whose rate matcher
+	// follows THIS clock, so its steadiness is what the player hears.
+	//
+	// 2026-09-24: the old loop was a normal-priority std::thread doing sleep_until on a microsecond period
+	// truncated to an integer (2666 us for 128 frames = 0.025% fast). Windows sleeps are ~1 ms granular, so
+	// it woke late, then fired buffers back to back to catch up: RS_ASIO logged ~500 "{ASIO Out} xrun" in
+	// 22 minutes and the route crackled on the speakers, while the wet recording (tapped inside the
+	// callback, blind to timing) stayed clean. Now:
+	//   - deadlines are computed from the frame count on the QPC clock (exact, no accumulated drift, any
+	//     buffer size),
+	//   - the wait is a high-resolution waitable timer (Win10 1803+; falls back to a normal waitable timer
+	//     with a 1 ms system timer resolution),
+	//   - the thread registers with MMCSS "Pro Audio" like every other real-time audio thread here,
+	//   - a stall longer than a few buffers resyncs instead of bursting a backlog of callbacks at the host.
 	ASIOError StartVirtual()
 	{
-		if (m_virtualRunning || !m_bufferInfos) return -1;
+		if (m_virtualRunning || !m_bufferInfos || m_bufferSize <= 0) return -1;
 		m_virtualRunning = true;
-		m_virtualThread = std::thread([this]
+		const long frames = m_bufferSize;
+		m_virtualThread = std::thread([this, frames]
 		{
+			DWORD taskIndex = 0;
+			HANDLE task = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
+			if (!task) SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+			HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+			const bool highResolution = timer != nullptr;
+			if (!timer) timer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+			if (!highResolution) timeBeginPeriod(1);
+			ProxyLog("virtual clock: %ld frames at %ld Hz, %s timer, MMCSS %s", frames, kVirtualSampleRate,
+				highResolution ? "high-resolution" : "standard", task ? "Pro Audio" : "unavailable");
+
+			LARGE_INTEGER frequency{}, now{};
+			QueryPerformanceFrequency(&frequency);
+			QueryPerformanceCounter(&now);
+			int64_t origin = now.QuadPart;
+			uint64_t framesDue = 0;   // frames the clock has delivered since origin
+			const int64_t periodTicks = frequency.QuadPart * frames / kVirtualSampleRate;
+			// Resync only after a real stall: four buffers or 20 ms, whichever is longer. Tiny buffers need the
+			// slack, because a timer wake-up (~0.5-1.5 ms) spans several of their periods.
+			const int64_t resyncTicks = std::max<int64_t>(periodTicks * 4, frequency.QuadPart / 50);
 			long index = 0;
-			const auto period = std::chrono::microseconds(1000000 * kVirtualFrames / 48000);
-			auto deadline = std::chrono::steady_clock::now();
+			uint64_t resyncs = 0;
 			while (m_virtualRunning)
 			{
 				OnBufferSwitch(index);
-				m_virtualSamplePosition.fetch_add(kVirtualFrames, std::memory_order_release);
+				m_virtualSamplePosition.fetch_add(static_cast<uint64_t>(frames), std::memory_order_release);
 				index ^= 1;
-				deadline += period;
-				std::this_thread::sleep_until(deadline);
+				framesDue += static_cast<uint64_t>(frames);
+				// Rebase every minute (exact: whole seconds of frames and ticks) so framesDue * frequency
+				// never overflows, even with a GHz-rate QPC.
+				if (framesDue >= static_cast<uint64_t>(kVirtualSampleRate) * 60)
+				{
+					framesDue -= static_cast<uint64_t>(kVirtualSampleRate) * 60;
+					origin += frequency.QuadPart * 60;
+				}
+
+				// Exact deadline for the next buffer: origin + framesDue / rate, in QPC ticks.
+				const int64_t deadline = origin + static_cast<int64_t>(framesDue * static_cast<uint64_t>(frequency.QuadPart) / kVirtualSampleRate);
+				QueryPerformanceCounter(&now);
+				if (now.QuadPart - deadline > resyncTicks)
+				{
+					// Stalled for several buffers (debugger, system hitch): start a fresh timeline instead
+					// of firing the missed buffers back to back, which the host cannot absorb.
+					origin = now.QuadPart; framesDue = 0;
+					if ((++resyncs & (resyncs - 1)) == 0) ProxyLog("virtual clock: stalled, resynced (%llu so far)", resyncs);
+					continue;
+				}
+				const int64_t remaining = deadline - now.QuadPart;
+				if (remaining <= 0) continue;
+				if (timer)
+				{
+					LARGE_INTEGER due{};
+					due.QuadPart = -std::max<int64_t>(1, remaining * 10000000 / frequency.QuadPart);   // relative, 100 ns units
+					if (SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0)) { WaitForSingleObject(timer, 1000); continue; }
+				}
+				std::this_thread::sleep_for(std::chrono::microseconds(remaining * 1000000 / frequency.QuadPart));
 			}
+			if (timer) CloseHandle(timer);
+			if (!highResolution) timeEndPeriod(1);
+			if (task) AvRevertMmThreadCharacteristics(task);
 		});
 		return 0;
 	}
@@ -758,6 +890,7 @@ private:
 	void FillVirtualInputs(long index)
 	{
 		if (m_mode.load(std::memory_order_acquire) != OutputMode::Virtual || m_inputCount == 0 || m_bufferSize <= 0) return;
+		if (m_inputScratch.size() < static_cast<size_t>(m_bufferSize) * 2) return;
 		m_virtualCable.Read(m_inputScratch.data(), static_cast<uint32_t>(m_bufferSize));
 		for (long channel = 0; channel < m_numChannels; ++channel)
 		{
@@ -1064,13 +1197,14 @@ private:
 	std::thread m_virtualThread;
 	std::atomic<bool> m_virtualRunning{ false };
 	std::atomic<bool> m_callbackSeen{ false };
+	bool m_realProbeFailed = false;   // real device refused load/init at this boot's buffer-size query
 	std::atomic<bool> m_realCallbacksEnabled{ false };
 	std::atomic<uint32_t> m_realCallbacksInFlight{ 0 };
 	std::atomic<bool> m_streamRunning{ false };
 	std::atomic<uint64_t> m_lastCallbackTick{ 0 };
 	std::atomic<uint64_t> m_virtualSamplePosition{ 0 };
 	std::mutex m_transitionMutex;
-	std::array<int32_t, 256> m_inputScratch{};
+	std::vector<int32_t> m_inputScratch;   // interleaved stereo virtual-cable input, bufferSize * 2 samples
 	std::array<AsioInputChannel, 8> m_inputChannels{};
 	std::array<ASIOSampleType, 8> m_inputTypes{};
 	AsioProxy::VirtualCableCapture m_virtualCable;
@@ -1143,6 +1277,20 @@ extern "C" __declspec(dllexport) int RSModsAsio_GetInputMode()
 {
 	const AsioProxyDriver* active = AsioProxyDriver::s_active;
 	return active ? active->InputModeValue() : 0;
+}
+
+// Virtual-mode cable input health: underruns (silent blocks), overflow drops, backlog skips, WASAPI
+// discontinuities, current fill and drift correction. Out-array order matches the Stats fields.
+extern "C" __declspec(dllexport) int RSModsAsio_GetVirtualInputStats(long* values, long count)
+{
+	const AsioProxyDriver* active = AsioProxyDriver::s_active;
+	if (!active || !values || count <= 0) return 0;
+	const auto stats = active->VirtualInputStats();
+	const long all[] = { static_cast<long>(stats.underruns), static_cast<long>(stats.overflowDrops), static_cast<long>(stats.skips),
+		static_cast<long>(stats.deviceGlitches), stats.fillFrames, stats.correctionPpm, stats.primed, stats.marginFrames };
+	const long n = count < 8 ? count : 8;
+	for (long i = 0; i < n; ++i) values[i] = all[i];
+	return static_cast<int>(n);
 }
 
 extern "C" __declspec(dllexport) void RSModsAsio_SetVirtualCaptureTestMode(int enabled)

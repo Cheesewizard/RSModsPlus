@@ -15,6 +15,8 @@
 #include <chrono>
 #include <string>
 #include <vector>
+#include <cmath>
+#pragma comment(lib, "winmm.lib")
 
 // {7B2E5C10-9F3A-4D6B-A1C8-2E4F6A8B0D31} - the proxy under test.
 static const CLSID CLSID_Proxy =
@@ -154,6 +156,40 @@ typedef int(__cdecl* GetInputModeFn)();
 typedef void(__cdecl* InjectInputFn)(const int32_t*, long);
 typedef void(__cdecl* SetCaptureTestModeFn)(int);
 typedef void(__cdecl* SetStubFlagFn)(int);
+
+// Cable drift scenario: the host records virtual input channel 0 while a feeder injects a sine in
+// 480-frame packets on a clock that runs fast or slow against the proxy's.
+static ASIOBufferInfo* g_driftInfos = nullptr;
+static long g_driftFrames = 0;
+static std::vector<float> g_driftCapture;
+static void DriftHostBufferSwitch(long index, ASIOBool)
+{
+	const auto* in = reinterpret_cast<const int32_t*>(g_driftInfos[0].buffers[index]);
+	for (long f = 0; f < g_driftFrames; ++f) g_driftCapture.push_back(static_cast<float>(in[f] / 2147483648.0));
+}
+
+// Virtual clock scenario: any buffer size RS_ASIO asks for must run, at 48 kHz, without bursts or stalls.
+static std::atomic<long> g_clockSwitches{ 0 };
+static std::atomic<long long> g_clockMaxGapQpc{ 0 };
+static long long g_clockLastQpc = 0;
+static ASIOBufferInfo* g_clockInfos = nullptr;
+static long g_clockFrames = 0;
+static void ClockHostBufferSwitch(long index, ASIOBool)
+{
+	LARGE_INTEGER now{}; QueryPerformanceCounter(&now);
+	if (g_clockLastQpc && g_clockSwitches.load() > 2)   // skip startup
+	{
+		const long long gap = now.QuadPart - g_clockLastQpc;
+		if (gap > g_clockMaxGapQpc.load()) g_clockMaxGapQpc.store(gap);
+	}
+	g_clockLastQpc = now.QuadPart;
+	for (long ch = 0; ch < 2; ++ch)
+	{
+		auto* buffer = reinterpret_cast<int32_t*>(g_clockInfos[ch].buffers[index]);
+		for (long f = 0; f < g_clockFrames; ++f) buffer[f] = f;   // touches every frame: an undersized buffer shows up here
+	}
+	g_clockSwitches.fetch_add(1);
+}
 
 // Create a fresh proxy driver instance, drive it through some buffer switches, dispose. Counters are
 // reset here so each scenario is independent. `armProbe` (optional) is called just before start.
@@ -369,9 +405,11 @@ int wmain(int argc, wchar_t** argv)
 		printf("FAIL [input-only]: virtual capture was not silent and paced\n");
 		return Cleanup(1);
 	}
-	std::vector<int32_t> injected(kFrames * 2, 0);
-	for (long frame = 0; frame < kFrames; ++frame) { injected[frame * 2] = 100000 + frame; injected[frame * 2 + 1] = -100000 - frame; }
-	injectInput(injected.data(), kFrames);
+	// Enough to prime the reader's safety margin (one block + margin + one packet) and play out.
+	const long injectFrames = kFrames * 8;
+	std::vector<int32_t> injected(injectFrames * 2, 0);
+	for (long frame = 0; frame < injectFrames; ++frame) { injected[frame * 2] = 100000 + frame; injected[frame * 2 + 1] = -100000 - frame; }
+	for (long offset = 0; offset < injectFrames; offset += kFrames) injectInput(injected.data() + offset * 2, kFrames);   // packet-sized, like the cable
 	std::this_thread::sleep_for(std::chrono::milliseconds(30));
 	if (g_virtualInputNonZero.load() == 0)
 	{
@@ -569,6 +607,201 @@ int wmain(int argc, wchar_t** argv)
 	virtualDriver->Release();
 	printf("[transitions] callbacks: %d, tapped blocks: %d, direct-target promotion, mode 3 stall, demotion, no auto-promotion, failed promotion, and explicit recovery verified\n", g_virtualSwitches.load(), g_virtualBlocks.load());
 	if (g_virtualSwitches.load() == 0 || g_virtualBlocks.load() == 0) { printf("FAIL [virtual]: callback/tap did not run\n"); return Cleanup(1); }
+
+	// Scenario 8: the virtual clock honours whatever buffer size the host picks (RS_ASIO BufferSizeMode
+	// driver / host / custom), keeps 48 kHz, and neither bursts nor stalls. Stub unregistered = speaker mode.
+	// PreferReal off: with it on and no test target the proxy would read the machine's real HKCU Target and
+	// load the developer's actual ASIO driver.
+	UnregisterStub();
+	SetEnvironmentVariableW(L"RSMODS_ASIO_PROXY_TEST_TARGET", L"RSMods Missing Test Driver");
+	SetEnvironmentVariableW(L"RSMODS_ASIO_PROXY_TEST_PREFER_REAL", L"0");
+	{
+		LARGE_INTEGER qpf{}; QueryPerformanceFrequency(&qpf);
+		const long sizes[] = { 32, 96, 128, 256, 441 };
+		for (long size : sizes)
+		{
+			IClassFactory* factory = nullptr;
+			IAsioDriver* driver = nullptr;
+			if (FAILED(getClassObject(CLSID_Proxy, IID_IClassFactory, reinterpret_cast<void**>(&factory))) || !factory) { printf("FAIL [clock]: class factory unavailable\n"); return Cleanup(1); }
+			const HRESULT created = factory->CreateInstance(nullptr, CLSID_Proxy, reinterpret_cast<void**>(&driver));
+			factory->Release();
+			if (FAILED(created) || !driver || !driver->init(nullptr)) { printf("FAIL [clock]: init failed\n"); return Cleanup(1); }
+			long mn = 0, mx = 0, pref = 0, gran = 0;
+			driver->getBufferSize(&mn, &mx, &pref, &gran);
+			if (size < mn || size > mx || gran != 1 || pref != 128)
+			{
+				printf("FAIL [clock]: virtual buffer range %ld..%ld pref %ld gran %ld does not admit %ld\n", mn, mx, pref, gran, size);
+				driver->Release(); return Cleanup(1);
+			}
+			ASIOBufferInfo infos[2]{};
+			infos[0].isInput = 0; infos[0].channelNum = 0;
+			infos[1].isInput = 0; infos[1].channelNum = 1;
+			g_clockInfos = infos; g_clockFrames = size; g_clockSwitches = 0; g_clockMaxGapQpc = 0; g_clockLastQpc = 0;
+			ASIOCallbacks callbacks{}; callbacks.bufferSwitch = &ClockHostBufferSwitch;
+			const ASIOError createResult = driver->createBuffers(infos, 2, size, &callbacks);
+			const ASIOError startResult = createResult == 0 ? driver->start() : -1;
+			if (createResult != 0 || startResult != 0)
+			{
+				printf("FAIL [clock]: virtual mode refused %ld frames (createBuffers %ld, start %ld)\n", size, createResult, startResult);
+				driver->disposeBuffers(); driver->Release(); return Cleanup(1);
+			}
+			const auto begin = std::chrono::steady_clock::now();
+			std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+			const long switches = g_clockSwitches.load();
+			const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+			const int mode = getOutputMode();
+			driver->stop(); driver->disposeBuffers(); driver->Release();
+			if (mode != 1) { printf("FAIL [clock]: %ld frames did not run in virtual mode (mode=%d)\n", size, mode); return Cleanup(1); }
+			const double rate = switches * static_cast<double>(size) / seconds;
+			const double periodMs = 1000.0 * size / 48000.0;
+			const double maxGapMs = 1000.0 * g_clockMaxGapQpc.load() / qpf.QuadPart;
+			printf("[clock]  %4ld frames: %.0f Hz effective, period %.2f ms, worst gap %.2f ms\n", size, rate, periodMs, maxGapMs);
+			if (rate < 48000.0 * 0.97 || rate > 48000.0 * 1.03) { printf("FAIL [clock]: %ld-frame virtual clock ran at %.0f Hz\n", size, rate); return Cleanup(1); }
+			if (maxGapMs > periodMs + 4.0) { printf("FAIL [clock]: %ld-frame virtual clock stalled %.2f ms\n", size, maxGapMs); return Cleanup(1); }
+		}
+	}
+
+	// Scenario 9: with the real device wanted and present, the buffer-size query (made while the proxy is
+	// still Virtual, before createBuffers) must answer with the REAL device's limits, so RS_ASIO picks a
+	// size the hardware accepts. The stub allows exactly 128, granularity 0; the virtual range differs.
+	RegisterStub(argv[2]);
+	SetEnvironmentVariableW(L"RSMODS_ASIO_PROXY_TEST_TARGET", kStubName);
+	SetEnvironmentVariableW(L"RSMODS_ASIO_PROXY_TEST_PREFER_REAL", L"1");
+	{
+		IClassFactory* factory = nullptr;
+		IAsioDriver* driver = nullptr;
+		if (FAILED(getClassObject(CLSID_Proxy, IID_IClassFactory, reinterpret_cast<void**>(&factory))) || !factory) { printf("FAIL [size-query]: class factory unavailable\n"); return Cleanup(1); }
+		const HRESULT created = factory->CreateInstance(nullptr, CLSID_Proxy, reinterpret_cast<void**>(&driver));
+		factory->Release();
+		if (FAILED(created) || !driver || !driver->init(nullptr)) { printf("FAIL [size-query]: init failed\n"); return Cleanup(1); }
+		long mn = 0, mx = 0, pref = 0, gran = -5;
+		driver->getBufferSize(&mn, &mx, &pref, &gran);
+		printf("[size-query] real device present: %ld..%ld preferred %ld granularity %ld\n", mn, mx, pref, gran);
+		if (mn != kFrames || mx != kFrames || pref != kFrames || gran != 0) { printf("FAIL [size-query]: query did not report the real device's limits\n"); driver->Release(); return Cleanup(1); }
+		ASIOBufferInfo infos[2]{};
+		infos[0].isInput = 0; infos[0].channelNum = 0;
+		infos[1].isInput = 0; infos[1].channelNum = 1;
+		g_clockInfos = infos; g_clockFrames = kFrames; g_clockSwitches = 0; g_clockLastQpc = 0;
+		ASIOCallbacks callbacks{}; callbacks.bufferSwitch = &ClockHostBufferSwitch;
+		const ASIOError bound = driver->createBuffers(infos, 2, pref, &callbacks);
+		if (bound == 0) driver->start();
+		std::this_thread::sleep_for(std::chrono::milliseconds(80));   // the mode is published on the first callback
+		const int mode = getOutputMode();
+		if (bound == 0) driver->stop();
+		driver->disposeBuffers(); driver->Release();
+		if (bound != 0 || mode != 2) { printf("FAIL [size-query]: real device did not bind at the size it reported (createBuffers %ld, mode %d)\n", bound, mode); return Cleanup(1); }
+	}
+
+	// Scenario 10: real device wanted but absent (speaker mode with PreferReal on, e.g. interface unplugged):
+	// the query falls back to the virtual range, and createBuffers takes even a size below the advertised
+	// minimum rather than leave the player without audio.
+	UnregisterStub();
+	SetEnvironmentVariableW(L"RSMODS_ASIO_PROXY_TEST_TARGET", L"RSMods Missing Test Driver");
+	{
+		IClassFactory* factory = nullptr;
+		IAsioDriver* driver = nullptr;
+		if (FAILED(getClassObject(CLSID_Proxy, IID_IClassFactory, reinterpret_cast<void**>(&factory))) || !factory) { printf("FAIL [size-absent]: class factory unavailable\n"); return Cleanup(1); }
+		const HRESULT created = factory->CreateInstance(nullptr, CLSID_Proxy, reinterpret_cast<void**>(&driver));
+		factory->Release();
+		if (FAILED(created) || !driver || !driver->init(nullptr)) { printf("FAIL [size-absent]: init failed\n"); return Cleanup(1); }
+		long mn = 0, mx = 0, pref = 0, gran = 0;
+		driver->getBufferSize(&mn, &mx, &pref, &gran);
+		printf("[size-absent] real device missing: %ld..%ld preferred %ld granularity %ld\n", mn, mx, pref, gran);
+		if (mn != 32 || mx != 4096 || pref != 128 || gran != 1) { printf("FAIL [size-absent]: expected the virtual range\n"); driver->Release(); return Cleanup(1); }
+		const long tiny = 16;
+		ASIOBufferInfo infos[2]{};
+		infos[0].isInput = 0; infos[0].channelNum = 0;
+		infos[1].isInput = 0; infos[1].channelNum = 1;
+		g_clockInfos = infos; g_clockFrames = tiny; g_clockSwitches = 0; g_clockLastQpc = 0;
+		ASIOCallbacks callbacks{}; callbacks.bufferSwitch = &ClockHostBufferSwitch;
+		if (driver->createBuffers(infos, 2, tiny, &callbacks) != 0 || driver->start() != 0) { printf("FAIL [size-absent]: virtual refused %ld frames\n", tiny); driver->disposeBuffers(); driver->Release(); return Cleanup(1); }
+		const auto begin = std::chrono::steady_clock::now();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		const double rate = g_clockSwitches.load() * static_cast<double>(tiny) / std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+		const int mode = getOutputMode();
+		driver->stop(); driver->disposeBuffers(); driver->Release();
+		printf("[size-absent] %ld frames in virtual: %.0f Hz effective, mode %d\n", tiny, rate, mode);
+		if (mode != 1 || rate < 48000.0 * 0.97 || rate > 48000.0 * 1.03) { printf("FAIL [size-absent]: sub-minimum buffer did not run at 48 kHz in virtual mode\n"); return Cleanup(1); }
+	}
+
+	// Scenario 11: the cable runs on its own clock. Feed a 440 Hz sine in 480-frame packets (the cable's
+	// 10 ms WASAPI packets) at +/-500 ppm against the proxy's clock, with real sleep jitter, and require a
+	// continuous signal: no silent blocks, no discontinuities, no underruns, bounded latency. The old
+	// spinlocked, uncontrolled ring dropped whole 128-frame blocks here.
+	{
+		auto getStats = reinterpret_cast<int(__cdecl*)(long*, long)>(GetProcAddress(proxy, "RSModsAsio_GetVirtualInputStats"));
+		if (!getStats) { printf("FAIL [drift]: RSModsAsio_GetVirtualInputStats not exported\n"); return Cleanup(1); }
+		SetEnvironmentVariableW(L"RSMODS_ASIO_PROXY_TEST_PREFER_REAL", L"0");
+		for (const double ppm : { 500.0, -500.0 })
+		{
+			IClassFactory* factory = nullptr;
+			IAsioDriver* driver = nullptr;
+			if (FAILED(getClassObject(CLSID_Proxy, IID_IClassFactory, reinterpret_cast<void**>(&factory))) || !factory) { printf("FAIL [drift]: class factory unavailable\n"); return Cleanup(1); }
+			const HRESULT created = factory->CreateInstance(nullptr, CLSID_Proxy, reinterpret_cast<void**>(&driver));
+			factory->Release();
+			if (FAILED(created) || !driver || !driver->init(nullptr)) { printf("FAIL [drift]: init failed\n"); return Cleanup(1); }
+			ASIOBufferInfo infos[3]{};
+			infos[0].isInput = 1; infos[0].channelNum = 0;
+			infos[1].isInput = 0; infos[1].channelNum = 0;
+			infos[2].isInput = 0; infos[2].channelNum = 1;
+			g_driftInfos = infos; g_driftFrames = kFrames;
+			g_driftCapture.clear(); g_driftCapture.reserve(48000 * 8);
+			ASIOCallbacks callbacks{}; callbacks.bufferSwitch = &DriftHostBufferSwitch;
+			if (driver->createBuffers(infos, 3, kFrames, &callbacks) != 0 || driver->start() != 0) { printf("FAIL [drift]: virtual stream did not start\n"); driver->disposeBuffers(); driver->Release(); return Cleanup(1); }
+
+			std::atomic<bool> feeding{ true };
+			std::thread feeder([&]
+			{
+				timeBeginPeriod(1);   // WASAPI capture events are ~10 ms regular; the default 15.6 ms timer would clump packets
+				const double rate = 48000.0 * (1.0 + ppm * 1e-6);
+				const long packet = 480;
+				std::vector<int32_t> samples(packet * 2);
+				double phase = 0.0;
+				const double step = 2.0 * 3.14159265358979323846 * 440.0 / 48000.0;   // the signal's own clock
+				const auto start = std::chrono::steady_clock::now();
+				for (long n = 1; feeding.load(); ++n)
+				{
+					for (long f = 0; f < packet; ++f)
+					{
+						const int32_t v = static_cast<int32_t>(0.5 * std::sin(phase) * 2147483647.0);
+						samples[f * 2] = v; samples[f * 2 + 1] = v;
+						phase += step;
+					}
+					injectInput(samples.data(), packet);
+					std::this_thread::sleep_until(start + std::chrono::microseconds(static_cast<long long>(n * packet * 1e6 / rate)));
+				}
+				timeEndPeriod(1);
+			});
+			std::this_thread::sleep_for(std::chrono::milliseconds(4000));
+			long stats[8]{};
+			getStats(stats, 8);
+			driver->stop();
+			feeding.store(false);
+			feeder.join();
+			driver->disposeBuffers(); driver->Release();
+
+			// Analyse from 20 ms after the signal first appears (past the fade-in) to the end.
+			size_t first = 0;
+			while (first < g_driftCapture.size() && g_driftCapture[first] == 0.0f) ++first;
+			const size_t from = first + 960;
+			float worstStep = 0.0f;
+			size_t zeroRun = 0, worstZeroRun = 0;
+			for (size_t i = from + 2; i < g_driftCapture.size(); ++i)
+			{
+				const float d2 = std::fabs(g_driftCapture[i] - 2.0f * g_driftCapture[i - 1] + g_driftCapture[i - 2]);
+				if (d2 > worstStep) worstStep = d2;
+				zeroRun = std::fabs(g_driftCapture[i]) < 1e-4f ? zeroRun + 1 : 0;
+				if (zeroRun > worstZeroRun) worstZeroRun = zeroRun;
+			}
+			const double analysedSeconds = g_driftCapture.size() > from ? (g_driftCapture.size() - from) / 48000.0 : 0.0;
+			printf("[drift]  cable %+.0f ppm: %.2f s analysed, worst 2nd-difference %.4f (clean sine ~0.0017), longest near-zero run %zu, underruns %ld, overflow drops %ld, skips %ld, fill %ld, margin %ld, correction %+ld ppm\n",
+				ppm, analysedSeconds, worstStep, worstZeroRun, stats[0], stats[1], stats[2], stats[4], stats[7], stats[5]);
+			if (analysedSeconds < 3.0) { printf("FAIL [drift]: the signal never started or stopped early\n"); return Cleanup(1); }
+			if (stats[0] != 0 || stats[1] != 0 || stats[2] != 0) { printf("FAIL [drift]: the reader dropped or skipped audio\n"); return Cleanup(1); }
+			if (worstStep > 0.01f || worstZeroRun > 8) { printf("FAIL [drift]: discontinuity in the captured signal\n"); return Cleanup(1); }
+			if (stats[4] > kFrames + 96 + 480 + 480) { printf("FAIL [drift]: latency crept (fill %ld frames)\n", stats[4]); return Cleanup(1); }
+		}
+	}
 
 	printf("PASS: proxy forwards, taps, injects a probe, gains/limits, meters, fans out, and handles live failure transitions.\n");
 	return Cleanup(0);
