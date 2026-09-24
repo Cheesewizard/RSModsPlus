@@ -140,6 +140,9 @@ namespace NoteByNoteNativeScoring
 	// readable template. Used by the desync logs.
 	bool TryDescribeSelectedChordTarget(uintptr_t record, char* buffer, size_t bufferLength);
 	bool TryDescribeChordTarget(uintptr_t noteAddress, char* buffer, size_t bufferLength);
+	// The chord's root note for the HUD's accept readout: from the authored name ("Dsus2" -> "D"), else the lowest tone.
+	bool TryDescribeChordLabel(uintptr_t noteAddress, const int* tones, int toneCount,
+		char* buffer, size_t bufferLength);
 	// Formats only the selected chord's six-string fingering for the compact HUD row and
 	// returns its lowest played string for the matching colour marker.
 	bool TryDescribeSelectedChordFingering(

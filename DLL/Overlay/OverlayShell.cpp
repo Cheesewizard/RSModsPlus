@@ -278,21 +278,23 @@ namespace Overlay
 				Settings::SetNoteByNoteCustomColours(custom);
 
 			ImGui::BeginDisabled(!custom);
-			// Only two colours are ever drawn: each readout line is green when it hears the target pitch and the text
-			// colour otherwise (no red or orange flashes; they strobed). The Partial and Rejected keys stay in
-			// RSMods.ini, unused, so older settings files still load.
-			static const char* const names[] = { "Text / target", "Confirmed" };
+			// Three colours are drawn: text, green when a readout line shows the target note, and (since 2026-09-24)
+			// Partial after a pass when that detector counted toward it but read a different note (native's +-1
+			// tolerance). No red is ever drawn; the Rejected key stays in RSMods.ini, unused, so older settings
+			// files still load.
+			static const char* const names[] = { "Text / target", "Confirmed", "Counted, read off" };
 			static const char* const hints[] = {
 				"The colour of the target and of a readout line that has not heard the target note.",
-				"A readout line turns this colour while it hears the target note.",
+				"A readout line turns this colour while it hears the target note, or after a pass when it read the passed note.",
+				"After a pass, a readout line turns this colour when that detector helped pass the note but read a slightly different pitch.",
 			};
-			for (int i = 0; i < 2; ++i) {
+			for (int i = 0; i < 3; ++i) {
 				const uint32_t rgb = Settings::GetNoteByNoteColor(i);
 				float color[3] = { ((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f };
 				bool saved = false;
 				if (ColorSwatch(names[i], color, &saved, hints[i])) Settings::SetNoteByNoteColor(i, PackRgb(color), false);
 				if (saved) Settings::SetNoteByNoteColor(i, PackRgb(color), true);
-				if (i < 1) ImGui::SameLine(0.0f, 18.0f);
+				if (i < 2) ImGui::SameLine(0.0f, 18.0f);
 			}
 
 			// Preview on a game-black strip, so colours are judged against what they will sit on.
@@ -302,7 +304,7 @@ namespace Overlay
 			list->AddRectFilled(start, ImVec2(start.x + width, start.y + height), IM_COL32(0, 0, 0, 255), 4.0f);
 			const NoteByNote::DetectionPalette palette = custom ? Settings::GetNoteByNoteDetectionPalette() : NoteByNote::DetectionPalette{};
 			const struct { const char* text; uint32_t argb; } samples[] = {
-				{ "[x/3/3/x/x/x]", palette.neutral }, { "Native:  E2", palette.confirmed },
+				{ "[x/3/3/x/x/x]", palette.neutral }, { "Native:  E2", palette.confirmed }, { "Native:  F2", palette.partial },
 			};
 			float x = start.x + 14.0f;
 			for (const auto& sample : samples) {
@@ -312,7 +314,7 @@ namespace Overlay
 			}
 			ImGui::Dummy(ImVec2(width, height));
 
-			if (Button("Reset colours", false, "Puts both colours back to the defaults."))
+			if (Button("Reset colours", false, "Puts the colours back to the defaults."))
 				Settings::ResetNoteByNoteColors();
 			ImGui::EndDisabled();
 			EndCard();

@@ -9128,6 +9128,11 @@ namespace
 								? DetectorRole::Confirmed : DetectorRole::Unused;
 							chordAcceptFeedback.mlRole = pitchConfirmation == ChordPitchConfirmation::MlStrings
 								? DetectorRole::Confirmed : DetectorRole::Unused;
+							// Name what was matched instead of a bare "chord" (Philip 2026-09-24).
+							NoteByNoteNativeScoring::TryDescribeChordLabel(reinterpret_cast<uintptr_t>(note),
+								researchChordTonesRecord == selectedRecord ? researchChordTones : nullptr,
+								researchChordTonesRecord == selectedRecord ? researchChordToneCount : 0,
+								chordAcceptFeedback.chordLabel, sizeof(chordAcceptFeedback.chordLabel));
 						}
 						char chordIdentity[64] = "?";
 						NoteByNoteNativeScoring::TryDescribeChordTarget(
@@ -9456,6 +9461,43 @@ bool NoteByNoteNativeScoring::TryDescribeChordTarget(
 	{
 		std::snprintf(buffer, bufferLength, "%s", fingering);
 	}
+	return true;
+}
+
+bool NoteByNoteNativeScoring::TryDescribeChordLabel(uintptr_t noteAddress, const int* tones, int toneCount,
+	char* buffer, size_t bufferLength)
+{
+	if (buffer == nullptr || bufferLength == 0) return false;
+	buffer[0] = '\0';
+	ChordTemplateView view = {};
+	if (TryReadChordTemplateView(noteAddress, view))
+	{
+		// Same rule as TryDescribeChordTarget: an unprintable name means a bad read, so it is dropped.
+		char name[sizeof(view.name) + 1] = {};
+		for (size_t i = 0; i < sizeof(view.name) && view.name[i] != '\0'; ++i)
+		{
+			if (view.name[i] < 0x20 || view.name[i] > 0x7E) { name[0] = '\0'; break; }
+			name[i] = view.name[i];
+		}
+		// Only the root note (Philip 2026-09-24): a D chord is an embellished D, so "Dsus2", "D/F#" and
+		// "Dmaj7" all read "D". The authored name's leading letter and accidental carry the chart's spelling.
+		const char* at = name;
+		while (*at == ' ') ++at;
+		if (*at >= 'A' && *at <= 'G')
+		{
+			char root[3] = { *at, '\0', '\0' };
+			if (at[1] == '#' || at[1] == 'b') root[1] = at[1];
+			std::snprintf(buffer, bufferLength, "%s", root);
+			return true;
+		}
+	}
+	// No usable name: the lowest tone (player's physical frame), the bass a player hears as the root.
+	if (tones == nullptr || toneCount <= 0) return false;
+	int lowest = -1;
+	for (int i = 0; i < (std::min)(toneCount, 6); ++i)
+		if (tones[i] >= 0 && tones[i] <= 127 && (lowest < 0 || tones[i] < lowest)) lowest = tones[i];
+	if (lowest < 0) return false;
+	std::snprintf(buffer, bufferLength, "%s", NoteByNote::FormatPitch(lowest).c_str());
 	return true;
 }
 

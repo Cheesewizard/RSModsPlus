@@ -29,6 +29,9 @@ namespace NoteByNote
 		int targetMidi = -1;
 		int stringIndex = -1;
 		int fret = -1;
+		// A passed chord's root note for the readout rows of the detectors that matched it ("Dsus2" and
+		// "D/F#" both read "D"; unnamed chords use the lowest tone). Empty for single notes.
+		char chordLabel[24] = {};
 	};
 
 	inline bool MatchesDetectorTarget(int midi, int targetMidi, float confidence = 1.0f)

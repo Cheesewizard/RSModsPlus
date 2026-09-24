@@ -826,10 +826,13 @@ void GameOverlay::DisplayMlStringFretOverlay()
 			heard = toPlayerFrame(state.detectorLoudestMidi);
 		if (!showDecision && targetString >= 0 && NoteByNote::MatchesDetectorTarget(heard, matchingMidi))
 			nativeMatchesLive = true;
-		// A chord has no single pitch to show for a pass without a reading; name the pass instead.
+		// After a chord pass, a detector that matched the chord shows the chord's root note ("D" for a D chord)
+		// instead of the bare word "chord" or native's single loudest note (Philip 2026-09-24). A detector
+		// that did not match it keeps showing what it heard.
 		auto decisionText = [&](int midi, NoteByNote::DetectorRole role) {
-			return midi >= 0 ? NoteByNote::FormatPitch(midi)
-				: role == NoteByNote::DetectorRole::Confirmed ? std::string("chord") : std::string("--");
+			if (feedback.stringIndex < 0 && role == NoteByNote::DetectorRole::Confirmed)
+				return feedback.chordLabel[0] != '\0' ? std::string(feedback.chordLabel) : std::string("chord");
+			return midi >= 0 ? NoteByNote::FormatPitch(midi) : std::string("--");
 		};
 		const std::string nativeText = showDecision
 			? decisionText(heard, feedback.nativeRole) : NoteByNote::FormatPitch(heard);
@@ -853,9 +856,14 @@ void GameOverlay::DisplayMlStringFretOverlay()
 			for (int stringIndex = 0; stringIndex < 6; ++stringIndex)
 			{
 				const int midi = NoteByNote::GetStringFretMidi(stringIndex, sample.fret[stringIndex]);
+				// ML hears the post-shifter audio, the same frame as native and the target, so its text
+				// needs no shift and it matches on the target alone. This used to also accept the
+				// physical-frame alias (target - appliedShift): under Drop Pedal E->Eb that is exactly a
+				// note fretted one ABOVE the target, so a wrong fret read green on the ML row while native
+				// showed a different note. The pass logic dropped the same alias on 2026-09-15
+				// (NoteByNoteHostServices.cpp EvaluateMlNote); the readout now agrees with it.
 				if (targetString >= 0 && sample.shift == appliedShift
-					&& (NoteByNote::MatchesDetectorTarget(midi, matchingMidi, sample.conf[stringIndex])
-						|| NoteByNote::MatchesDetectorTarget(midi, matchingMidi - appliedShift, sample.conf[stringIndex])))
+					&& NoteByNote::MatchesDetectorTarget(midi, matchingMidi, sample.conf[stringIndex]))
 				{
 					mlMatchesLive = true;
 				}
@@ -875,26 +883,50 @@ void GameOverlay::DisplayMlStringFretOverlay()
 		//   note, which is why the accept green almost never showed.
 		// A short hold keeps each row's text and colour on screen together so a flickering live reading
 		// does not strobe; they refresh and expire as one unit.
-		const bool nativeMatch = showDecision
-			? feedback.nativeRole == NoteByNote::DetectorRole::Confirmed : nativeMatchesLive;
-		const bool enhancedMatch = showDecision && feedback.enhancedRole == NoteByNote::DetectorRole::Confirmed;
-		const bool mlMatch = showDecision
-			? feedback.mlRole == NoteByNote::DetectorRole::Confirmed : mlMatchesLive;
+		// 2026-09-24 (Philip: "Native B, Enhanced Bb, ML G, all green - can't be correct"): a detector
+		// that helped pass the note is only GREEN when the pitch its row shows IS the passed note. The
+		// pass logic lets native count from +-1 semitone (NativeCorroboratesPick, the Speaker Mode
+		// frame slip) and one fallback marks native used without looking at its read, so a role alone
+		// painted "B" green on a Bb note. Counted-but-read-off is amber (partial): honest about both
+		// facts. A chord pass has no single pitch ("chord"), so its role stands alone.
+		auto decisionColor = [&](NoteByNote::DetectorRole role, int shownMidi) -> uint32_t {
+			if (role != NoteByNote::DetectorRole::Confirmed && role != NoteByNote::DetectorRole::Partial)
+				return palette.neutral;
+			// A chord row that matched shows the chord's name, not a pitch to compare: its role is the truth.
+			if (feedback.stringIndex < 0 || shownMidi < 0 || shownMidi == feedback.targetMidi)
+				return role == NoteByNote::DetectorRole::Confirmed ? palette.confirmed : palette.partial;
+			return palette.partial;
+		};
+		const uint32_t nativeColorNow = showDecision ? decisionColor(feedback.nativeRole, heard)
+			: nativeMatchesLive ? palette.confirmed : palette.neutral;
+		const uint32_t enhancedColorNow = showDecision ? decisionColor(feedback.enhancedRole, feedback.enhancedMidi)
+			: palette.neutral;
+		const uint32_t mlColorNow = showDecision ? decisionColor(feedback.mlRole, feedback.mlMidi)
+			: mlMatchesLive ? palette.confirmed : palette.neutral;
 		struct RowHold { std::string text = "--"; uint32_t color = 0; uint64_t tick = 0; };
 		static RowHold holds[3];
+		// The hold must never mix the two paths: when the accept readout expires, a row with no live
+		// reading kept the ACCEPTED note's text+green for 300 ms while ML already showed a live read of
+		// the NEXT target, so the three rows described two different notes on one frame.
+		static bool holdsFromDecision = false;
+		if (holdsFromDecision != showDecision)
+		{
+			for (auto& hold : holds) hold = {};
+			holdsFromDecision = showDecision;
+		}
 		constexpr uint64_t ROW_HOLD_MS = 300;
-		auto resolveRow = [&](int index, const std::string& text, bool match, bool hasReading)
+		auto resolveRow = [&](int index, const std::string& text, uint32_t color, bool hasReading)
 			-> std::pair<std::string, uint32_t> {
-			if (hasReading) holds[index] = { text, match ? palette.confirmed : palette.neutral, now };
+			if (hasReading) holds[index] = { text, color, now };
 			else if (holds[index].tick && now - holds[index].tick > ROW_HOLD_MS)
 				holds[index] = { "--", palette.neutral, 0 };
 			return holds[index].tick
 				? std::pair<std::string, uint32_t>{ holds[index].text, holds[index].color }
 				: std::pair<std::string, uint32_t>{ std::string("--"), palette.neutral };
 		};
-		const auto nativeRow = resolveRow(0, nativeText, nativeMatch, nativeText != "--");
-		const auto enhancedRow = resolveRow(1, enhancedText, enhancedMatch, enhancedText != "--");
-		const auto mlRow = resolveRow(2, mlText, mlMatch, mlText != "--");
+		const auto nativeRow = resolveRow(0, nativeText, nativeColorNow, nativeText != "--");
+		const auto enhancedRow = resolveRow(1, enhancedText, enhancedColorNow, enhancedText != "--");
+		const auto mlRow = resolveRow(2, mlText, mlColorNow, mlText != "--");
 		const std::string values[] = { nativeRow.first, enhancedRow.first, mlRow.first };
 		const uint32_t colors[] = { nativeRow.second, enhancedRow.second, mlRow.second };
 		const char* labels[] = { "Native:", "Enhanced:", "ML:" };
