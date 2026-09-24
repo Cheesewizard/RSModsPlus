@@ -185,6 +185,11 @@ namespace Audio::SharedOutput
 	// routing 21/22). The single shared op whose TARGET differs is the loudness guard (16): the session
 	// applies it in its owned backend, passthrough in the proxy driver, so the caller passes that in.
 	// Returns true when the op was recognised and response.result is set.
+	HRESULT RouteStop();
+	// True while op 25 binds a virtual proxy to the real interface; RefreshProxyOutput stands aside meanwhile so it
+	// cannot re-create a managed route in the gap between the route stop and the bind.
+	std::atomic<bool> g_proxyPromotionRunning{ false };
+
 	static bool HandleSharedControl(const ControlRequest& request, ControlResponse& response,
 		const std::function<bool(bool limiterOn, float ceilingLin, bool agcOn, float targetRms)>& configureGuard)
 	{
@@ -320,7 +325,20 @@ namespace Audio::SharedOutput
 			const int mode = OutputTap::ProxyOutputMode();
 			const bool bound = mode == 2 || mode == 3;
 			if (bound) LOG_INFO("(AUDIO ROUTING) Apply on a bound ASIO device: releasing and rebinding it" << std::endl);
-			const bool ok = bound ? OutputTap::TryRebindProxyOutput(request.value) : OutputTap::TryPromoteProxyOutput(request.value);
+			bool ok = false;
+			if (bound) ok = OutputTap::TryRebindProxyOutput(request.value);
+			else
+			{
+				// A virtual proxy is playing through a WASAPI route, often to the interface's own Windows endpoint
+				// (it is not protected while the proxy is virtual). Stop the route BEFORE the ASIO driver opens:
+				// a shared stream on that endpoint during the bind silences the ASIO device (2026-09-16). The
+				// promotion binds input and output together, so the guitar moves off the Real Tone Cable too.
+				g_proxyPromotionRunning.store(true, std::memory_order_release);
+				RouteStop();
+				ok = OutputTap::TryPromoteProxyOutput(request.value);
+				g_proxyPromotionRunning.store(false, std::memory_order_release);
+				LOG_INFO("(AUDIO ROUTING) Binding the ASIO interface for input and output: " << (ok ? "bound" : "failed, staying virtual") << std::endl);
+			}
 			response.result = ok ? S_OK : HRESULT_FROM_WIN32(ERROR_NOT_READY);
 			return true;
 		}
@@ -1559,6 +1577,7 @@ namespace Audio::SharedOutput
 		const uint64_t now = GetTickCount64();
 		uint64_t lastRefresh = g_lastProxyRefreshTick.load(std::memory_order_acquire);
 		if (now - lastRefresh < 250 || !g_lastProxyRefreshTick.compare_exchange_strong(lastRefresh, now)) return;
+		if (g_proxyPromotionRunning.load(std::memory_order_acquire)) return;
 		const int mode = OutputTap::ProxyOutputMode();
 		bool routeExists = false;
 		bool routeManaged = false;
@@ -1626,6 +1645,7 @@ namespace Audio::SharedOutput
 		{
 			const std::wstring& target = action == ProxyRouteAction::ReplaceLostManagedRoute && !survivingEndpoint.empty()
 				? survivingEndpoint : endpoint;
+			if (g_proxyPromotionRunning.load(std::memory_order_acquire)) return;
 			if (SUCCEEDED(RouteStart(target)))
 			{
 				std::lock_guard<std::mutex> guard(g_routeMutex);

@@ -26,6 +26,7 @@ namespace Audio::OutputDevices
 		std::string name;          // UTF-8 friendly name for display
 		bool isDefault = false;    // Windows default playback device
 		bool isProtected = false;  // belongs to the interface RS_ASIO is bound to; never switch to it
+		bool isAsioTwin = false;   // Windows endpoint of the ASIO interface in RS_ASIO.ini, bound or not; the overlay hides it
 	};
 
 	struct Snapshot

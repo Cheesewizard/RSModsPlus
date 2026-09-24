@@ -600,8 +600,15 @@ namespace Overlay
 			DeviceCache& cache = Devices();
 			{
 				std::lock_guard<std::mutex> lock(cache.mutex);
-				if (cache.busy) return;
+				static ULONGLONG busySince = 0;
+				static bool stuckLogged = false;
+				if (cache.busy) {
+					// Diagnostic (2026-09-24): a hung scan would freeze the list on an old snapshot.
+					if (!stuckLogged && GetTickCount64() - busySince > 5000) { stuckLogged = true; LOG_WARNING("(OUTPUT DEVICES) device scan has not finished in 5 s; the Output list is stale" << std::endl); }
+					return;
+				}
 				cache.busy = true;
+				busySince = GetTickCount64();
 			}
 			std::thread([] {
 				Audio::OutputDevices::Snapshot snapshot = Audio::OutputDevices::Enumerate();
@@ -618,6 +625,7 @@ namespace Overlay
 		{
 			bool active = false;
 			bool route = false;            // op 21 route (proxy) vs op 4 session switch
+			bool promote = false;          // op 25: bind the ASIO interface itself (see PromoteToAsio)
 			std::wstring target, previous; // previous: session device to go back to (op 4 only)
 			std::string name;
 			ULONGLONG started = 0;
@@ -628,10 +636,47 @@ namespace Overlay
 
 		void OutputSay(const std::string& text, bool error) { g_outputMessage = text; g_outputMessageIsError = error; }
 
+		// Picking the ASIO entry while the proxy runs on its virtual clock (the game booted with the interface
+		// unplugged, so input is the Real Tone Cable and the mix is routed to a Windows device). Stopping the
+		// route (op 22) alone is not enough: the host re-creates its managed route on the next refresh and the
+		// proxy never touches the interface, so input stays on the cable (2026-09-24, Philip: cable boot, plug
+		// the M-Track, pick ASIO -> "NO INPUT"). Op 25 binds the interface for input AND output in one step, the
+		// same call the old GUI's Apply made; then op 22 drops any route and forgets the remembered output, and
+		// PreferReal=1 makes the next launch start on the interface. Runs off the render thread because loading
+		// and initialising a real ASIO driver can take a second. 0 idle, 1 running, 2 bound, 3 failed.
+		std::atomic<int> g_promoteState{ 0 };
+
+		void PromoteToAsio(const std::wstring& driver)
+		{
+			g_promoteState.store(1);
+			std::thread([driver] {
+				const bool ok = SUCCEEDED(BridgeControl(25, driver.c_str()).result);
+				if (ok) {
+					BridgeControl(22);
+					HKEY key{};
+					if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\RSMods\\AsioProxy", 0, nullptr, 0, KEY_SET_VALUE | KEY_WOW64_32KEY, nullptr, &key, nullptr) == ERROR_SUCCESS) {
+						const DWORD one = 1;
+						RegSetValueExW(key, L"PreferReal", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one), sizeof(one));
+						RegCloseKey(key);
+					}
+				}
+				g_promoteState.store(ok ? 2 : 3);
+			}).detach();
+		}
+
 		void VerifySwitch(PendingSwitch& pending, const LiveState& live, const std::string& asioName)
 		{
 			if (!pending.active) return;
 			const ULONGLONG elapsed = GetTickCount64() - pending.started;
+			if (pending.promote) {
+				const int state = g_promoteState.load();
+				if (state == 1) return;
+				if (state == 2) OutputSay("Now playing through " + asioName + ". Guitar input moved to it too.", false);
+				else OutputSay("Could not open " + asioName + ". Check it is plugged in and not used by another program. Sound stays on a Windows device and input on the cable.", true);
+				g_promoteState.store(0);
+				pending.active = false;
+				return;
+			}
 			if (pending.route) {
 				const HRESULT health = Audio::SharedOutput::RouteHealth();
 				if (health == S_OK) { OutputSay("Now playing through " + pending.name + ". Lasts until you close Rocksmith.", false); pending.active = false; return; }
@@ -674,7 +719,8 @@ namespace Overlay
 			const bool session = !endpoint.empty() && endpoint[0] != L'(';
 			std::wstring routedId;
 			if (routing) { const size_t close = endpoint.find(L')'); if (close != std::wstring::npos) routedId = endpoint.substr(close + 1); }
-			std::string asioName = Utf8(ReadPassthroughOutputName());
+			const std::wstring asioDriver = ReadPassthroughOutputName();
+			std::string asioName = Utf8(asioDriver);
 			if (asioName.empty()) asioName = "your ASIO device";
 
 			VerifySwitch(pending, live, asioName);
@@ -718,15 +764,31 @@ namespace Overlay
 			const bool unidentified = snapshot.asioUnidentified;
 			ImGui::BeginDisabled(pending.active);
 			if (canRoute) {
-				// The ASIO interface itself: stops any route so the game plays straight out of it again.
+				// The ASIO interface itself. Bound already: stop any route so the game plays straight out of it
+				// again. Virtual (booted without it): bind it for input and output, see PromoteToAsio.
+				const bool virtualProxy = Audio::OutputTap::ProxyOutputMode() == 1;
 				const std::string asioLabel = asioName + "##asio";
-				if (ChoiceRow("asio", asioLabel.c_str(), "ASIO, lowest latency", !routing) && routing) {
+				const bool asioClicked = ChoiceRow("asio", asioLabel.c_str(), "ASIO, lowest latency", !routing && !virtualProxy);
+				if (asioClicked && virtualProxy && !asioDriver.empty()) {
+					pending = PendingSwitch{};
+					pending.active = true;
+					pending.promote = true;
+					pending.name = asioName;
+					pending.started = GetTickCount64();
+					OutputSay("Opening " + asioName + " for input and output...", false);
+					PromoteToAsio(asioDriver);
+				}
+				else if (asioClicked && routing) {
 					BridgeControl(22);
 					OutputSay("Back on " + asioName + ".", false);
 				}
 			}
 			ImGui::BeginDisabled(unidentified && !snapshot.asioDrivers.empty());
 			for (const auto& device : snapshot.devices) {
+				// The ASIO interface is listed once, as the ASIO entry above; its Windows endpoint is the same box and
+				// is hidden, bound or not (Philip 2026-09-24: "no duplicates"). While bound it would silence the
+				// interface; while unbound the ASIO entry is the right pick because it moves the input too.
+				if (canRoute && device.isAsioTwin) continue;
 				const bool selected = routing ? device.id == routedId : (session && device.id == endpoint);
 				std::string caption = device.isDefault ? "Windows default" : "";
 				ImGui::BeginDisabled(device.isProtected);

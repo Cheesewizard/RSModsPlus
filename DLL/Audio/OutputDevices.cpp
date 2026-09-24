@@ -134,7 +134,7 @@ namespace Audio::OutputDevices
 		// our proxy resolved to the hardware it wraps. The proxy only holds real hardware while it runs on the real
 		// ASIO clock (mode 2); on its virtual clock (interface absent at boot) the hardware is free. Empty when
 		// RS_ASIO is not loaded, i.e. Cable mode.
-		std::vector<std::wstring> BoundAsioDrivers()
+		std::vector<std::wstring> BoundAsioDrivers(bool requireBound = true)
 		{
 			std::vector<std::wstring> drivers;
 			if (!GetModuleHandleW(L"RS_ASIO.dll")) return drivers;
@@ -149,7 +149,7 @@ namespace Audio::OutputDevices
 				std::wstring driver = Trim(value);
 				if (driver.empty()) continue;
 				if (IsProxyDriver(driver)) {
-					if (OutputTap::ProxyOutputMode() != 2) continue;
+					if (requireBound && OutputTap::ProxyOutputMode() != 2) continue;
 					driver = Trim(ReadProxyTarget());
 					if (driver.empty()) continue;
 				}
@@ -208,6 +208,9 @@ namespace Audio::OutputDevices
 		std::set<std::wstring> protectedIds;
 		snapshot.asioUnidentified = !Protect(drivers, endpoints, protectedIds);
 		for (const std::wstring& driver : drivers) snapshot.asioDrivers.push_back(Utf8(driver));
+		// The same hardware's Windows endpoints, bound or not: the overlay lists the interface once, as its ASIO entry.
+		std::set<std::wstring> twinIds;
+		Protect(BoundAsioDrivers(false), endpoints, twinIds);
 
 		std::wstring defaultId;
 		ComPtr<IMMDevice> defaultDevice;
@@ -222,10 +225,25 @@ namespace Audio::OutputDevices
 			device.name = Utf8(endpoint.friendlyName.empty() ? endpoint.id : endpoint.friendlyName);
 			device.isDefault = endpoint.id == defaultId;
 			device.isProtected = protectedIds.count(endpoint.id) != 0;
+			device.isAsioTwin = twinIds.count(endpoint.id) != 0;
 			snapshot.devices.push_back(std::move(device));
 		}
 		std::stable_partition(snapshot.devices.begin(), snapshot.devices.end(), [](const Device& d) { return d.isDefault; });
 		snapshot.ok = true;
+
+		// Diagnostic (2026-09-24): after a live cable->ASIO promotion the interface's own Windows endpoint was still
+		// offered as a switch target. Log the inputs to the protection decision whenever they change.
+		{
+			std::ostringstream line;
+			line << "rsasio=" << (GetModuleHandleW(L"RS_ASIO.dll") ? 1 : 0) << " proxyMode=" << OutputTap::ProxyOutputMode()
+				<< " drivers=" << snapshot.asioDrivers.size();
+			for (const std::string& driver : snapshot.asioDrivers) line << " [" << driver << "]";
+			line << " endpoints=" << endpoints.size() << " protected=" << protectedIds.size() << " unidentified=" << snapshot.asioUnidentified;
+			static std::mutex logMutex;
+			static std::string lastLine;
+			std::lock_guard<std::mutex> guard(logMutex);
+			if (line.str() != lastLine) { lastLine = line.str(); LOG_INFO("(OUTPUT DEVICES) " << lastLine << std::endl); }
+		}
 		return snapshot;
 	}
 
