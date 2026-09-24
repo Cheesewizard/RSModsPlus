@@ -9,7 +9,7 @@
   process keeps using the parked copy until it restarts; nothing is killed here.
 
   Skip with -p:DeployToGame=false. Point elsewhere with -p:RocksmithInstallDir=... . Never runs for the
-  "Release Public" configuration (that is the installer payload, not a dev deploy).
+  "Master" configuration (that is the installer payload, not a dev deploy).
 -->
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
@@ -18,7 +18,7 @@
   </PropertyGroup>
 
   <Target Name="DeployToGame" AfterTargets="Build"
-          Condition="'$(DeployToGame)'=='true' And Exists('$(RocksmithInstallDir)') And '$(Configuration)'!='Release Public'">
+          Condition="'$(DeployToGame)'=='true' And Exists('$(RocksmithInstallDir)') And '$(Configuration)'!='Master'">
     <Error Condition="'@(GameDeployFile)'==''" Text="DeployToGame: this project declares no GameDeployFile items." />
     <Error Condition="!Exists('%(GameDeployFile.Identity)')" Text="DeployToGame: build output is missing: %(GameDeployFile.Identity)" />
     <!-- Park whatever is live. Failures here only mean nothing was there or a stale .previous is itself

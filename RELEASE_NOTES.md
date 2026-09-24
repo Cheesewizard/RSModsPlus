@@ -10,7 +10,7 @@
 ## Feature list
 
 ### New name: Rocksmith Audio Bridge
-- RSModsPlus is now called **Rocksmith Audio Bridge**, because the old name was easily mistaken for Rocksmith+. The Audio Bridge icon is the product logo. The settings window title reads "Rocksmith Audio Bridge (RSMods 1.2.8.3)", its tab and footer use the new name, and the in-game watermark and overlay show it too. The in-game overlay shows the version (v4) in its bottom-right corner, and the log header reads "Rocksmith Audio Bridge v4".
+- RSModsPlus is now called **Rocksmith Audio Bridge**, because the old name was easily mistaken for Rocksmith+. The Audio Bridge icon is the product logo. The settings window title reads "Rocksmith Audio Bridge 4.0 (based on RSMods 1.2.8.3)", its tab and footer use the new name, and the in-game watermark and overlay show it too. The in-game overlay shows the version (4.0) in its bottom-right corner, and the log header reads "Rocksmith Audio Bridge 4.0".
 - The package is now four files in the Rocksmith folder: `xinput1_3.dll`, `RocksmithAudioBridge.dll`, `RocksmithAudioBridgeAsio.dll` and `RSMods.exe`. The `%LOCALAPPDATA%\RSModsPlus` logs folder, the default `Videos\RSModsPlus` recordings folder, `RSMods.ini` settings and the registry entries are unchanged.
 
 ### Audio Bridge (new)
@@ -90,11 +90,11 @@ Severity / impact should be set per entry. Issue numbers reference github.com/Ch
 
 ## Test checklist
 
-Tick each item on the final release build (Release Public, installed from the package, not a dev deploy).
+Tick each item on the final release build (Master, installed from the package, not a dev deploy).
 
 ### Install and branding
 - [ ] Upgrade over v3.2.1: the 4-file package (`xinput1_3.dll`, `RocksmithAudioBridge.dll`, `RocksmithAudioBridgeAsio.dll`, `RSMods.exe`) installs into the game folder and the old `RSMods\RSMods.exe` does not conflict.
-- [ ] Game boots, log header reads "Rocksmith Audio Bridge v4".
+- [ ] Game boots, log header reads "Rocksmith Audio Bridge 4.0".
 - [ ] RSMods window title "Rocksmith Audio Bridge (RSMods 1.2.8.3)", tab and footer use the new name.
 - [ ] In-game watermark and overlay show the new name; overlay shows "v4" bottom right.
 - [ ] Existing `RSMods.ini` settings from v3.2.1 are still picked up after upgrading.

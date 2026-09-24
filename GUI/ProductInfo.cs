@@ -8,7 +8,7 @@ namespace RSMods
 		// rsmodsplus.dll -> RocksmithAudioBridge.dll, and the ASIO driver -> RocksmithAudioBridgeAsio.dll.
 		public const string PRODUCT_NAME = "Rocksmith Audio Bridge";
 		// Keep VERSION in step with DLL/ProductVersion.hpp VERSION.
-		public const string VERSION = "v4";
+		public const string VERSION = "4.0";
 		public const string DISPLAY_NAME = PRODUCT_NAME + " " + VERSION;
 
 		// Title of the desktop audio bridge window. This is a cross-process contract: the game DLL finds the

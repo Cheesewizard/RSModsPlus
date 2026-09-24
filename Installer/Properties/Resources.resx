@@ -338,13 +338,13 @@
     <value>..\Resources\RSModsGUI\X360.dll;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
   <data name="xinput1_3" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\Release Public\xinput1_3.dll;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+    <value>..\Resources\Master\xinput1_3.dll;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
   <data name="RocksmithAudioBridge" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\Release\RocksmithAudioBridgeAsio.dll;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
   <data name="xinput1_3_pdb" type="System.Resources.ResXFileRef, System.Windows.Forms">
-    <value>..\Resources\Release Public\xinput1_3.pdb;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+    <value>..\Resources\Master\xinput1_3.pdb;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
   <data name="zlib_net" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\RSModsGUI\zlib.net.dll;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>

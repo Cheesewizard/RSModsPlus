@@ -45,7 +45,7 @@ namespace RSMods.Tests
 				}
 				using (var window = (Form)Activator.CreateInstance(windowType, Path.GetFullPath(arguments[1])))
 				{
-					if (window.Text != "Rocksmith Audio Bridge 4 · Desktop mixer") throw new Exception("Audio bridge title does not identify the matching Rocksmith Audio Bridge version.");
+					if (window.Text != "Rocksmith Audio Bridge 4.0 · Desktop mixer") throw new Exception("Audio bridge title does not identify the matching Rocksmith Audio Bridge version.");
 					var panel = (Control)windowType.GetField("panel", PRIVATE_INSTANCE).GetValue(window);
 					var panelType = panel.GetType();
 					var diagnosticsOverlay = panelType.GetField("diagnosticsOverlayCheck", PRIVATE_INSTANCE).GetValue(panel);

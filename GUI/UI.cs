@@ -181,7 +181,7 @@ namespace RSMods
 			InitializeComponent();
 			InitializeRsModsPlusPages();
 			AddProductVersionLabel();
-			Text = $"{ProductInfo.PRODUCT_NAME} (RSMods {Assembly.GetExecutingAssembly().GetName().Version})"; // Product name plus the upstream RSMods version it is based on.
+			Text = $"{ProductInfo.DISPLAY_NAME} (based on RSMods {Assembly.GetExecutingAssembly().GetName().Version})"; // Our version, plus the upstream RSMods version it is based on.
 		}
 
         private void AddProductVersionLabel()

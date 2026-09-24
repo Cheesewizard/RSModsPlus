@@ -973,12 +973,19 @@ namespace Overlay
 			EndCard();
 		}
 
-		// Development builds only: the public ("Release Public", RSMODS_PUBLIC_RELEASE) build has no Debug page,
-		// since its only tool, the Note by Note probe reload, is for iterating on the detector.
-#ifdef RSMODS_PUBLIC_RELEASE
+		// Three build types (Philip, 2026-09-24): Debug and Release are probe builds (they build and deploy the Note by
+		// Note probe) and name themselves in the header, in amber, so a test build is never mistaken for the release.
+		// Master ("Master" configuration, RSMODS_PUBLIC_RELEASE) is what users get: no probe, no Debug page, no label.
+		// The upstream RSMods "with Wwise Logging" configurations count as Debug / Release.
+#if defined(RSMODS_PUBLIC_RELEASE)
 		constexpr bool kDebugPage = false;
+		constexpr const char* kBuildLabel = "";
+#elif defined(_DEBUG)
+		constexpr bool kDebugPage = true;
+		constexpr const char* kBuildLabel = "Debug + probe";
 #else
 		constexpr bool kDebugPage = true;
+		constexpr const char* kBuildLabel = "Release + probe";
 #endif
 
 		void DebugPage()
@@ -1056,6 +1063,13 @@ namespace Overlay
 			ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(Color::Muted));
 			ImGui::TextUnformatted("In-game controls");
 			ImGui::PopStyleColor();
+			if (kBuildLabel[0] != '\0') {
+				// Non-public builds say what they are, in amber so a test build is never mistaken for the release.
+				ImGui::SameLine(0.0f, 10.0f);
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(Color::Warn));
+				ImGui::TextUnformatted(kBuildLabel);
+				ImGui::PopStyleColor();
+			}
 			ImGui::PopFont();
 			ImGui::EndGroup();
 
@@ -1171,11 +1185,12 @@ namespace Overlay
 
 			// Product version in the bottom-right corner, drawn straight onto the window so it takes no layout space.
 			ImGui::PushFont(GetFonts().caption);
-			const ImVec2 versionSize = ImGui::CalcTextSize(ProductVersion::VERSION);
+			static const std::string versionLabel = std::string("v") + ProductVersion::VERSION;
+			const ImVec2 versionSize = ImGui::CalcTextSize(versionLabel.c_str());
 			const ImVec2 windowPos = ImGui::GetWindowPos();
 			const ImVec2 windowSize = ImGui::GetWindowSize();
 			ImGui::GetWindowDrawList()->AddText(ImVec2(windowPos.x + windowSize.x - versionSize.x - 14.0f, windowPos.y + windowSize.y - versionSize.y - 10.0f),
-				Color::Faint, ProductVersion::VERSION);
+				Color::Muted, versionLabel.c_str());   // Muted, not Faint: Faint was too hard to read (Philip, 2026-09-24)
 			ImGui::PopFont();
 		}
 		lastPosition = ImGui::GetWindowPos();

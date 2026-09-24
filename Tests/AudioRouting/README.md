@@ -245,7 +245,7 @@ be described as proof that every ASIO interface works.
 ### Release gate
 
 - `Tests\AudioRouting\run.cmd` passes from the release candidate source.
-- A clean `Release Public` host, `Release` proxy, and `Release|x64` GUI/runtime build completes.
+- A clean `Master` host, `Release` proxy, and `Release|x64` GUI/runtime build completes.
 - The packaged four binaries have the expected architectures and match the artifacts installed for the
   live tests.
 - AB-01 through AB-12 have recorded results. AB-08 through AB-10 and AB-12 require actual hardware and

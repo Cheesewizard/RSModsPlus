@@ -25,7 +25,7 @@ function Get-PeMachine([string]$path) {
 }
 
 $expected = @{
-    xinput1_3 = Join-Path $repositoryRoot 'Installer\Resources\Release Public\xinput1_3.dll'
+    xinput1_3 = Join-Path $repositoryRoot 'Installer\Resources\Master\xinput1_3.dll'
     RocksmithAudioBridge = Join-Path $repositoryRoot 'Installer\Resources\Release\RocksmithAudioBridgeAsio.dll'
 }
 

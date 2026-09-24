@@ -4,7 +4,7 @@ $repo = Split-Path $PSScriptRoot
 $destinationPath = [IO.Path]::GetFullPath($Destination)
 if (Test-Path -LiteralPath $destinationPath) { throw 'Choose a new output directory; existing packages are never overwritten.' }
 $gui = Join-Path $repo 'Installer/Resources/RSModsGUI'
-$hostFile = Join-Path $repo 'Installer/Resources/Release Public/xinput1_3.dll'
+$hostFile = Join-Path $repo 'Installer/Resources/Master/xinput1_3.dll'
 $files = @{
     'xinput1_3.dll' = $hostFile
     'RocksmithAudioBridgeAsio.dll' = Join-Path $repo 'Installer/Resources/Release/RocksmithAudioBridgeAsio.dll'
