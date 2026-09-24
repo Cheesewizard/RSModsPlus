@@ -64,6 +64,40 @@ namespace RSMods.Audio
 			catch { return false; }
 		}
 
+		/// <summary>The DLL path the proxy's ASIO registration resolves to, the way a 32-bit ASIO host (RS_ASIO)
+		/// resolves it: HKLM\Software\ASIO\&lt;name&gt; CLSID, then that CLSID's InprocServer32 in the 32-bit classes
+		/// view (a per-user HKCU entry wins over the machine one, as it does for the host). "" when unregistered.</summary>
+		public static string RegisteredProxyPath()
+		{
+			try
+			{
+				string clsid;
+				using (var asio = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32).OpenSubKey(@"Software\ASIO\" + ProxyName))
+					clsid = asio?.GetValue("CLSID") as string;
+				if (string.IsNullOrEmpty(clsid)) return "";
+				foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
+					using (var inproc = RegistryKey.OpenBaseKey(hive, RegistryView.Registry32).OpenSubKey(@"Software\Classes\CLSID\" + clsid + @"\InprocServer32"))
+					{
+						string path = inproc?.GetValue("") as string;
+						if (!string.IsNullOrEmpty(path)) return path;
+					}
+			}
+			catch { }
+			return "";
+		}
+
+		/// <summary>True only when the registration points at the proxy DLL we ship (expectedDllPath) and that file
+		/// exists. Catches a stale registration: before the 2026-09-23 rename the proxy was RocksmithAudioBridge.dll,
+		/// which is now the main managed library, so an old registration made RS_ASIO load the wrong DLL, find no
+		/// device, and Rocksmith stopped at "No audio output device" while the GUI still said Installed.</summary>
+		public static bool IsProxyRegistrationCurrent(string expectedDllPath)
+		{
+			string registered = RegisteredProxyPath();
+			if (string.IsNullOrEmpty(registered) || !File.Exists(registered)) return false;
+			try { return string.Equals(Path.GetFullPath(registered), Path.GetFullPath(expectedDllPath), StringComparison.OrdinalIgnoreCase); }
+			catch { return false; }
+		}
+
 		/// <summary>Read-only: reports whether the user has pointed RS_ASIO's output at the bridge. Never writes
 		/// the ini; the user owns that file.</summary>
 		public static bool IsLinked(string gameDirectory)
@@ -82,9 +116,27 @@ namespace RSMods.Audio
 		{
 			if (!File.Exists(proxyDllPath)) throw new FileNotFoundException("The audio bridge driver file is missing from the game folder. Reinstall Rocksmith Audio Bridge to restore it.", proxyDllPath);
 			RunRegsvr32(proxyDllPath, unregister: false);
+			ClearUserOverride();
 		}
 
-		public static void Unregister(string proxyDllPath) => RunRegsvr32(proxyDllPath, unregister: true);
+		public static void Unregister(string proxyDllPath)
+		{
+			RunRegsvr32(proxyDllPath, unregister: true);
+			ClearUserOverride();
+		}
+
+		/// <summary>Removes the per-user InprocServer32 the game DLL writes when it finds a stale machine entry
+		/// (DLL/Audio/AsioProxyRegistration.cpp). After a fresh machine registration it is redundant, and after an
+		/// uninstall it must not linger, since a per-user entry wins over the machine one for 32-bit hosts.</summary>
+		private static void ClearUserOverride()
+		{
+			try
+			{
+				using (var classes = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry32).OpenSubKey(@"Software\Classes\CLSID", writable: true))
+					classes?.DeleteSubKeyTree(Clsid, throwOnMissingSubKey: false);
+			}
+			catch { /* nothing to clear, or not ours to clear */ }
+		}
 
 		private static void RunRegsvr32(string proxyDllPath, bool unregister)
 		{

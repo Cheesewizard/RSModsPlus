@@ -28,6 +28,7 @@
     <ClCompile Include="Audio\CableInput.cpp" />
     <ClCompile Include="Audio\MlAudioExporter.cpp" />
     <ClCompile Include="Audio\MlServiceLauncher.cpp" />
+    <ClCompile Include="Audio\AsioProxyRegistration.cpp" />
     <ClCompile Include="Audio\MlStringFretReader.cpp" />
     <ClCompile Include="Audio\RawPitchVerifier.cpp" />
     <ClCompile Include="Audio\SharedOutput.cpp" />
@@ -335,6 +336,7 @@
     <ClInclude Include="Audio\CableInput.hpp" />
     <ClInclude Include="Audio\MlAudioExporter.hpp" />
     <ClInclude Include="Audio\MlServiceLauncher.hpp" />
+    <ClInclude Include="Audio\AsioProxyRegistration.hpp" />
     <ClInclude Include="Audio\MlServiceControl.hpp" />
     <ClInclude Include="Audio\MlStringFretReader.hpp" />
     <ClInclude Include="Audio\MlFretDisplay.hpp" />

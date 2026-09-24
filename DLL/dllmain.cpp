@@ -4,6 +4,7 @@
 #include "Mods/RocksmithGate.hpp"
 #include "Research/ResearchBridge.hpp"
 #include "Audio/MlServiceLauncher.hpp"
+#include "Audio/AsioProxyRegistration.hpp"
 #include "Audio/AudioLifecycleTrace.hpp"
 #include "ProductVersion.hpp"
 #include "OverlayInputCapture.hpp"
@@ -267,6 +268,10 @@ unsigned WINAPI HandleEffectQueueThread() {
 /// </summary>
 /// <returns>NULL. Loops while game is open.</returns>
 unsigned WINAPI MainThread() {
+	// First: make sure RS_ASIO will resolve the bridge driver to the right DLL. RS_ASIO enumerates ~30 s into
+	// boot; a stale entry there leaves the game with no audio device at all (2026-09-24). See AsioProxyRegistration.hpp.
+	AsioProxyRegistration::Heal();
+
 	LOG_NOHEAD(ProductVersion::DISPLAY_NAME
 		<< " (based on RSMods " << ProductVersion::UPSTREAM_VERSION << "). DEBUG: "
 		<< std::boolalpha << debug << ". Wwise Logs: " << std::boolalpha << wwiseLogging << "."

@@ -306,22 +306,33 @@ namespace RSMods
 			string target = AsioProxySetup.ReadTarget();
 			string iniDriver = AsioProxySetup.ReadOutputDriver(GenUtil.GetRSDirectory());
 			bool registered = AsioProxySetup.IsProxyRegistered();
+			// Registered is not enough: the entry must resolve to the proxy DLL we ship. A stale entry (the pre-rename
+			// RocksmithAudioBridge.dll, now the managed library) makes RS_ASIO find no device at all, so it is shown
+			// as needing repair and the one button re-registers instead of offering Uninstall.
+			bool broken = registered && !AsioProxySetup.IsProxyRegistrationCurrent(ProxyDllPath);
 			bool linked = string.Equals(iniDriver, AsioProxySetup.ProxyName, StringComparison.OrdinalIgnoreCase);
 			var real = AsioProxySetup.ListRealDrivers();
-			asioDriverRegistered = registered;
+			asioDriverRegistered = registered && !broken;
 			asioResolvedDriver = ResolveBridgeInterface(real, target, iniDriver);
 
 			// Only relevant in ASIO mode; stays visible in cable mode while installed so it can be removed.
 			asioDriverRow.Visible = asioDriverDivider.Visible = asioMode || registered;
 
-			asioDriverButton.Text = registered ? "Uninstall" : "Install";
-			asioDriverButton.Kind = registered ? StudioButtonKind.Ghost : StudioButtonKind.Primary;
+			asioDriverButton.Text = broken ? "Repair" : registered ? "Uninstall" : "Install";
+			asioDriverButton.Kind = registered && !broken ? StudioButtonKind.Ghost : StudioButtonKind.Primary;
 			asioDriverButton.Enabled = !gameRunning && (registered || asioResolvedDriver != null);
 
 			// One short line, only saying something the user can act on or needs to know.
 			Color colour = OverlayLook.Muted;
 			string status;
-			if (!registered)
+			if (broken)
+			{
+				string points = AsioProxySetup.RegisteredProxyPath();
+				status = "Needs repair: the driver entry points at " + (string.IsNullOrEmpty(points) ? "a missing file" : Path.GetFileName(points))
+					+ ", so Rocksmith would find no audio device.";
+				colour = OverlayLook.Warn;
+			}
+			else if (!registered)
 			{
 				status = asioResolvedDriver == null ? "No ASIO drivers found." : "Not installed.";
 				if (asioResolvedDriver == null) colour = OverlayLook.Warn;

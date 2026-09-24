@@ -354,6 +354,9 @@
     <ClCompile Include="Audio\MlServiceLauncher.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Audio\AsioProxyRegistration.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Audio\SharedOutput.cpp">
       <Filter>Audio</Filter>
     </ClCompile>
@@ -768,6 +771,9 @@
       <Filter>Main Headers</Filter>
     </ClInclude>
     <ClInclude Include="Audio\MlServiceLauncher.hpp">
+      <Filter>Main Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Audio\AsioProxyRegistration.hpp">
       <Filter>Main Headers</Filter>
     </ClInclude>
     <ClInclude Include="Audio\MlServiceControl.hpp">
