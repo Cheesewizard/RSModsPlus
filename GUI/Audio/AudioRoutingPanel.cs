@@ -1312,7 +1312,7 @@ namespace RSMods.Audio
 			tips.SetToolTip(compressorEnableCheck, "Compresses the guitar input to even out level swings during sustained notes. Applies live.");
 			tips.SetToolTip(compressorSlider, "Compressor strength from 0 to 100%. Type an exact value in the box.");
 			tips.SetToolTip(compInput, "Compressor strength from 0 to 100%. Type an exact value or nudge by 1.");
-			tips.SetToolTip(humFilterCheck, "Notches out mains hum and its harmonics, continuously and even during notes. Applies live.");
+			tips.SetToolTip(humFilterCheck, "Measures your mains hum and buzz between notes, then removes only its lines (up to 8 kHz), continuously and even during notes. Applies live.");
 			tips.SetToolTip(humFilterSlider, "Mains frequency from 20 to 120 Hz. 50 Hz in the UK, EU and AU; 60 Hz in the US.");
 			tips.SetToolTip(humFilterInput, "Mains frequency from 20 to 120 Hz. Type an exact value or nudge by 1 Hz.");
 			tips.SetToolTip(rgEnableCheck, "Takes over Rocksmith's own amp noise gate so the game stops cutting a note as it decays. Applies live.");

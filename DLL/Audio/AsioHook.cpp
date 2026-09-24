@@ -9,6 +9,7 @@
 #include "RawPitchVerifier.hpp"
 #include "DrySignalRecording.hpp"
 #include "PersistentInput.hpp"
+#include "HumRemover.hpp"
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -953,81 +954,59 @@ namespace Audio::AsioHook
 			}
 		}
 
-		// Cascade of narrow (high-Q) notch biquads at the mains fundamental and its harmonics, run per
-		// channel over the RAW input (front of chain). Removes 50/60 Hz ground-loop hum - a stable harmonic
-		// comb a grounded interface injects but a single-USB Real Tone Cable does not. Narrow notches so the
-		// guitar tone is barely dented; linear and cheap (a handful of biquads per sample). Audio-thread only;
-		// state carries across packets and resets when the sample rate or base frequency changes.
-		struct HumNotch
+		// Adaptive mains hum / buzz remover (HumRemover.hpp): measures the hum between notes on a background
+		// thread and notches only the harmonics that are actually present, each ~1.5-5 Hz wide, up to 8 kHz.
+		// Replaced (2026-09-24) a fixed comb of constant-Q notches at exact 50 Hz multiples to 2 kHz, which cut
+		// the 1-2 kHz upper mids by 11-15 dB and left the audible buzz above 2 kHz untouched. The analysis
+		// thread starts the first time the filter is switched on.
+		Audio::HumRemover g_humRemover;
+		std::atomic<bool> g_humWorkerStarted{ false };
+
+		void HumAnalysisWorker()
 		{
-			static constexpr int MAX_NOTCHES = 40;      // fundamental + harmonics, capped by MAX_NOTCH_HZ
-			static constexpr float NOTCH_Q = 30.0f;     // narrow: bandwidth f0/Q, so ~1.7 Hz at 50 Hz
-			static constexpr float MAX_NOTCH_HZ = 2000.0f;
-
-			struct Biquad { float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f; };
-			struct State { float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f; };
-			Biquad biquads[MAX_NOTCHES];
-			int notchCount = 0;
-			uint32_t coeffRate = 0;
-			float coeffBaseHz = 0.0f;
-			std::array<std::array<State, MAX_NOTCHES>, MAX_FILTER_CHANNELS> channels{};
-
-			void Configure(uint32_t sampleRate, float baseHz)
+			Audio::HumRemover::Status logged{};
+			for (;;)
 			{
-				if (sampleRate == 0 || baseHz <= 0.0f) return;
-				if (sampleRate == coeffRate && baseHz == coeffBaseHz) return;
-				coeffRate = sampleRate;
-				coeffBaseHz = baseHz;
-				const double fs = static_cast<double>(sampleRate);
-				const double nyquist = fs * 0.5;
-				notchCount = 0;
-				for (int k = 1; k <= MAX_NOTCHES; ++k)
+				Sleep(50);
+				if (!g_humRemover.Analyze()) continue;
+				const auto status = g_humRemover.GetStatus();
+				const bool firstLock = logged.lines == 0 && status.lines > 0;
+				if (firstLock || std::abs(status.lines - logged.lines) >= 5 || std::fabs(status.fundamentalHz - logged.fundamentalHz) >= 0.02)
 				{
-					const double f0 = static_cast<double>(baseHz) * k;
-					if (f0 > MAX_NOTCH_HZ || f0 >= nyquist * 0.95) break;
-					const double w0 = 2.0 * 3.14159265358979323846 * f0 / fs;
-					const double cosw0 = std::cos(w0);
-					const double alpha = std::sin(w0) / (2.0 * NOTCH_Q);
-					const double a0 = 1.0 + alpha;
-					Biquad& bq = biquads[notchCount];
-					bq.b0 = static_cast<float>(1.0 / a0);
-					bq.b1 = static_cast<float>((-2.0 * cosw0) / a0);
-					bq.b2 = bq.b0;
-					bq.a1 = static_cast<float>((-2.0 * cosw0) / a0);
-					bq.a2 = static_cast<float>((1.0 - alpha) / a0);
-					++notchCount;
+					LOG_INFO("(HUM FILTER) " << (firstLock ? "locked" : "updated") << ": mains " << std::fixed << std::setprecision(3)
+						<< status.fundamentalHz << " Hz, notching " << status.lines << " line(s) up to " << std::setprecision(0)
+						<< status.highestHz << " Hz, strongest " << std::setprecision(1) << status.strongestDb << " dB above its surroundings" << std::endl);
+					logged = status;
 				}
-				channels = {};
 			}
+		}
 
-			inline float Process(size_t channel, float input)
-			{
-				float sample = input;
-				std::array<State, MAX_NOTCHES>& chan = channels[channel];
-				for (int i = 0; i < notchCount; ++i)
-				{
-					const Biquad& bq = biquads[i];
-					State& st = chan[i];
-					const float output = bq.b0 * sample + bq.b1 * st.x1 + bq.b2 * st.x2 - bq.a1 * st.y1 - bq.a2 * st.y2;
-					st.x2 = st.x1; st.x1 = sample;
-					st.y2 = st.y1; st.y1 = output;
-					sample = output;
-				}
-				return sample;
-			}
-		};
+		std::string HumStatusText()
+		{
+			if (g_humFilterBaseHz.load(std::memory_order_relaxed) <= 0.0f) return " | hum filter off";
+			const auto status = g_humRemover.GetStatus();
+			if (status.lines == 0) return " | hum filter measuring";
+			std::ostringstream text;
+			text << " | hum filter " << std::fixed << std::setprecision(3) << status.fundamentalHz << " Hz, "
+				<< status.lines << " line(s) to " << std::setprecision(0) << status.highestHz << " Hz";
+			return text.str();
+		}
 
-		HumNotch g_humNotch;
+		void EnsureHumWorker()
+		{
+			if (g_humWorkerStarted.exchange(true)) return;
+			std::thread(HumAnalysisWorker).detach();
+		}
 
-		// Notches the mains-hum comb out of the raw capture buffer in place, mirroring FilterBufferInPlace's
-		// format handling. Front of chain (before the gate), so every downstream stage and the game see the
-		// de-hummed signal. Runs only while a base frequency is set, so the feature-off path stays bit-exact.
+		// Runs the hum remover over the raw capture buffer in place, front of chain, so every downstream stage
+		// and the game see the de-hummed signal. Samples are always read (the analysis needs the quiet stretches)
+		// but only written once a hum has been measured, so until then the input stays bit-exact.
 		void ProcessHumFilterInPlace(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float baseHz)
 		{
 			const size_t channelCount = format.channelCount;
-			if (channelCount == 0 || channelCount > MAX_FILTER_CHANNELS) return;
-			g_humNotch.Configure(format.sampleRate, baseHz);
-			if (g_humNotch.notchCount == 0) return;
+			if (channelCount == 0 || channelCount > MAX_FILTER_CHANNELS || frameCount > Audio::HumRemover::MAX_BLOCK_FRAMES) return;
+			g_humRemover.BeginBlock(format.sampleRate, baseHz, channelCount);
+			const bool write = g_humRemover.Active();
 
 			switch (format.sampleFormat)
 			{
@@ -1038,7 +1017,8 @@ namespace Audio::AsioHook
 					for (size_t channel = 0; channel < channelCount; ++channel)
 					{
 						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
-						samples[index] = ClampSample(g_humNotch.Process(channel, samples[index]));
+						const float filtered = g_humRemover.Process(channel, samples[index]);
+						if (write) samples[index] = ClampSample(filtered);
 					}
 				break;
 			}
@@ -1049,8 +1029,8 @@ namespace Audio::AsioHook
 					for (size_t channel = 0; channel < channelCount; ++channel)
 					{
 						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
-						const float filtered = g_humNotch.Process(channel, static_cast<float>(samples[index]) * INT32_TO_FLOAT);
-						samples[index] = FloatToSignedInteger<int32_t, 32>(filtered);
+						const float filtered = g_humRemover.Process(channel, static_cast<float>(samples[index]) * INT32_TO_FLOAT);
+						if (write) samples[index] = FloatToSignedInteger<int32_t, 32>(filtered);
 					}
 				break;
 			}
@@ -1060,8 +1040,8 @@ namespace Audio::AsioHook
 					for (size_t channel = 0; channel < channelCount; ++channel)
 					{
 						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
-						const float filtered = g_humNotch.Process(channel, static_cast<float>(ReadInt24(packet + index * 3)) * INT24_TO_FLOAT);
-						WriteInt24(FloatToSignedInteger<int32_t, 24>(filtered), packet + index * 3);
+						const float filtered = g_humRemover.Process(channel, static_cast<float>(ReadInt24(packet + index * 3)) * INT24_TO_FLOAT);
+						if (write) WriteInt24(FloatToSignedInteger<int32_t, 24>(filtered), packet + index * 3);
 					}
 				break;
 			}
@@ -1072,14 +1052,15 @@ namespace Audio::AsioHook
 					for (size_t channel = 0; channel < channelCount; ++channel)
 					{
 						const size_t index = static_cast<size_t>(frame) * channelCount + channel;
-						const float filtered = g_humNotch.Process(channel, static_cast<float>(samples[index]) * INT16_TO_FLOAT);
-						samples[index] = FloatToSignedInteger<int16_t, 16>(filtered);
+						const float filtered = g_humRemover.Process(channel, static_cast<float>(samples[index]) * INT16_TO_FLOAT);
+						if (write) samples[index] = FloatToSignedInteger<int16_t, 16>(filtered);
 					}
 				break;
 			}
 			default:
 				break;
 			}
+			g_humRemover.EndBlock();
 		}
 
 		int FindCaptureRoute(IAudioCaptureClient* captureClient)
@@ -2000,7 +1981,7 @@ namespace Audio::AsioHook
 			<< " | silent-flagged packets: " << silentFlagged
 			<< " | replaced with silence: " << replaced
 			<< " | suppressor threshold " << std::fixed << std::setprecision(1) << GetNoiseGateThresholdDb()
-			<< " dBFS (opens 6 dB above it), gain " << GetInputGainDb() << " dB" << std::endl);
+			<< " dBFS (opens 6 dB above it), gain " << GetInputGainDb() << " dB" << HumStatusText() << std::endl);
 	}
 
 	void SetHumFilterBaseHz(float baseHz)
@@ -2008,6 +1989,7 @@ namespace Audio::AsioHook
 		// 0 (or <20) = off; else the mains fundamental (50 or 60). Clamped so a stray value can't build a
 		// nonsensical notch bank. Any positive base arms the front-of-chain notch cascade.
 		if (!std::isfinite(baseHz) || baseHz < 20.0f) { g_humFilterBaseHz.store(0.0f, std::memory_order_relaxed); return; }
+		EnsureHumWorker();
 		g_humFilterBaseHz.store(std::clamp(baseHz, 20.0f, 120.0f), std::memory_order_relaxed);
 	}
 

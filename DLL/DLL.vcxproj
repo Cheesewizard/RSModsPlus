@@ -347,6 +347,7 @@
     <ClInclude Include="Audio\OutputTap.hpp" />
     <ClInclude Include="Audio\GameAudioRecorder.hpp" />
     <ClInclude Include="Audio\DrySignalRecording.hpp" />
+    <ClInclude Include="Audio\HumRemover.hpp" />
     <ClInclude Include="Audio\AudioPacketQueue.hpp" />
     <ClInclude Include="Audio\AudioControl.hpp" />
     <ClInclude Include="Audio\CaptureFormat.h" />

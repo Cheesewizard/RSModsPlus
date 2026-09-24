@@ -555,8 +555,8 @@ namespace Overlay
 			if (SliderRow("Strength", &comp, 0.0f, 100.0f, "%.0f%%")) { compPct = static_cast<int>(comp + 0.5f); SendInt(20, compPct); }
 			ImGui::EndDisabled();
 
-			// Mains-hum notch (op 24, Hz; off = 0).
-			if (ToggleRow("Hum filter", "Notches out mains hum and its harmonics, even during notes.", &humOn)) SendInt(24, humOn ? humHz : 0);
+			// Adaptive mains hum / buzz remover (op 24, nominal Hz; off = 0). HumRemover.hpp.
+			if (ToggleRow("Hum filter", "Measures your mains hum between notes and removes only its lines, up to 8 kHz.", &humOn)) SendInt(24, humOn ? humHz : 0);
 			ImGui::BeginDisabled(!humOn);
 			static const char* const mains[] = { "50 Hz", "60 Hz" };
 			int mainsIndex = humHz >= 55 ? 1 : 0;
