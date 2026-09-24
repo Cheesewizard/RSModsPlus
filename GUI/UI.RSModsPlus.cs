@@ -7,92 +7,36 @@ namespace RSMods
 {
 	public partial class MainForm
 	{
-		private ListBox featureNavigation;
-		private readonly FlowLayoutPanel[] featurePages = new FlowLayoutPanel[3];
-
+		// The tab is one page: the game-closed audio setup (bridge power, input mode, ASIO bridge driver). Note by
+		// Note and Drop Pedal settings moved into the in-game overlay on 2026-09-23, so the old three-page sidebar
+		// (Note by Note / Drop Pedal / Audio bridge) was removed, along with UI.NoteByNote.cs and UI.MlService.cs.
 		private void InitializeRsModsPlusPages()
 		{
 			tab_RSModsPlus.SuspendLayout();
-			// The designer still places the old cable-input options and audio-status groups on this tab.
-			// Both moved into the audio bridge (its Diagnostics page), so take them off the tab; left in
-			// place they sat above the feature pages and drew over them.
+			// The designer still places the old cable-input options and audio-status groups on this tab; both moved
+			// into the overlay, so take them off. Left in place they drew over the page.
 			tab_RSModsPlus.Controls.Remove(groupBox_RSModsPlus_CableInput);
 			tab_RSModsPlus.Controls.Remove(groupBox_RSModsPlus_AudioStatus);
-			var navigation = new Panel { Dock = DockStyle.Left, Width = 208, BackColor = StudioTheme.Surface, Padding = new Padding(18, 24, 18, 12) };
-			navigation.Controls.Add(new Label { Text = "RSMODSPLUS", ForeColor = StudioTheme.Muted, Dock = DockStyle.Top, Height = 32, Font = StudioTheme.SectionFont });
-			featureNavigation = new ListBox
+			tab_RSModsPlus.BackColor = OverlayLook.Window;
+			tab_RSModsPlus.ForeColor = OverlayLook.Text;
+			var page = new FlowLayoutPanel
 			{
-				Location = new Point(12, 62), Size = new Size(184, 204), BorderStyle = BorderStyle.None,
-				Font = new Font("Segoe UI", 10), DrawMode = DrawMode.OwnerDrawFixed, ItemHeight = 56,
-				BackColor = StudioTheme.Surface, ForeColor = StudioTheme.Ink, IntegralHeight = false, AccessibleName = "RSModsPlus features"
+				Name = "audioBridgePage", Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
+				WrapContents = false, AutoScroll = true, BackColor = OverlayLook.Window, ForeColor = OverlayLook.Text, Font = StudioTheme.Body
 			};
-			featureNavigation.Items.AddRange(new object[] { "Note by Note", "Drop Pedal", "Audio bridge" });
-			featureNavigation.DrawItem += DrawFeatureNavigation;
-			featureNavigation.SelectedIndexChanged += SelectFeaturePage;
-			navigation.Controls.Add(featureNavigation);
-			var content = new Panel { Dock = DockStyle.Fill, BackColor = StudioTheme.Background };
-			tab_RSModsPlus.BackColor = StudioTheme.Background;
-			tab_RSModsPlus.ForeColor = StudioTheme.Ink;
-			tab_RSModsPlus.Controls.Add(content);
-			tab_RSModsPlus.Controls.Add(navigation);
-			for (var index = 0; index < featurePages.Length; index++)
-			{
-				featurePages[index] = new FlowLayoutPanel
-				{
-					Name = "featurePage" + index, Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
-					WrapContents = false, AutoScroll = true, Padding = new Padding(28, 24, 12, 18), BackColor = StudioTheme.Background, ForeColor = StudioTheme.Ink,
-					Font = StudioTheme.Body, Visible = false
-				};
-				content.Controls.Add(featurePages[index]);
-				featurePages[index].Controls.Add(new Label
-				{
-					Text = featureNavigation.Items[index].ToString(), AutoSize = true,
-					Font = StudioTheme.Display, ForeColor = StudioTheme.Ink, Margin = new Padding(0, 0, 0, 16)
-				});
-			}
-			InitializeNoteByNoteControls(featurePages[0]);
-			InitializeMlServiceControls(featurePages[0]);
-			InitializeDropPedalControls(featurePages[1]);
-			InitializeAudioBridgeSetup(featurePages[2]);
+			page.Padding = new Padding(page.LogicalToDeviceUnits(28), page.LogicalToDeviceUnits(22), page.LogicalToDeviceUnits(12), page.LogicalToDeviceUnits(18));
+			// Fill first, then Top: WinForms docks in reverse z-order, so the header must be added last.
+			tab_RSModsPlus.Controls.Add(page);
+			tab_RSModsPlus.Controls.Add(new BrandHeader { Dock = DockStyle.Top });
+			InitializeAudioBridgeSetup(page);
 			StyleFeatureControls(tab_RSModsPlus);
 			StudioTheme.EnableDoubleBuffering(tab_RSModsPlus);
-			featureNavigation.SelectedIndex = 0;
 			tab_RSModsPlus.ResumeLayout(true);
 		}
 
 		private static Label CreateFeatureDescription(string text)
 		{
 			return new Label { Text = text, Font = StudioTheme.Body, ForeColor = StudioTheme.Muted, AutoSize = true, MaximumSize = new Size(810, 0), Margin = new Padding(0, 0, 0, 16) };
-		}
-
-		private void SelectFeaturePage(object sender, EventArgs args)
-		{
-			for (var index = 0; index < featurePages.Length; index++)
-			{
-				featurePages[index].Visible = index == featureNavigation.SelectedIndex;
-			}
-		}
-
-		private void DrawFeatureNavigation(object sender, DrawItemEventArgs args)
-		{
-			if (args.Index < 0) return;
-			var selected = (args.State & DrawItemState.Selected) != 0;
-			using (var background = new SolidBrush(StudioTheme.Surface)) args.Graphics.FillRectangle(background, args.Bounds);
-			var bounds = new Rectangle(args.Bounds.X + 2, args.Bounds.Y + 3, args.Bounds.Width - 4, args.Bounds.Height - 6);
-			args.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-			if (selected)
-			{
-				using (var path = StudioTheme.RoundedRectangle(bounds, 7))
-				using (var fill = new SolidBrush(StudioTheme.Elevated)) args.Graphics.FillPath(fill, path);
-				using (var accent = new SolidBrush(StudioTheme.Accent)) args.Graphics.FillRectangle(accent, bounds.X, bounds.Y + 12, 3, bounds.Height - 24);
-			}
-			var title = new Rectangle(bounds.X + 14, bounds.Y + 5, bounds.Width - 20, 22);
-			TextRenderer.DrawText(args.Graphics, featureNavigation.Items[args.Index].ToString(), StudioTheme.Strong, title, StudioTheme.Ink,
-				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
-			var descriptions = new[] { "Practice & detection", "Pitch & display", "Input mode & power" };
-			TextRenderer.DrawText(args.Graphics, descriptions[args.Index], StudioTheme.Small,
-				new Rectangle(title.X, bounds.Y + 27, title.Width, 18), StudioTheme.Muted, TextFormatFlags.Left | TextFormatFlags.NoPrefix);
-			args.DrawFocusRectangle();
 		}
 
 		private static void StyleFeatureControls(Control parent)

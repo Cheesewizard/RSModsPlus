@@ -14,7 +14,7 @@ namespace RSMods.Audio
 
 	internal sealed class StudioButton : Control
 	{
-		private readonly StudioButtonKind kind;
+		private StudioButtonKind kind;
 		private readonly bool showDot;
 		private bool hovered;
 		private bool held;
@@ -37,6 +37,13 @@ namespace RSMods.Audio
 		}
 
 		public int MinimumTextWidth { get; set; }
+
+		// Settable so one button can switch look with its action (e.g. Install = Primary, Uninstall = Ghost).
+		public StudioButtonKind Kind
+		{
+			get { return kind; }
+			set { if (kind == value) return; kind = value; Invalidate(); }
+		}
 
 		public override string Text
 		{

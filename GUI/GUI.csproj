@@ -152,6 +152,7 @@
     <Compile Include="Audio\StudioNav.cs" />
     <Compile Include="Audio\StudioVolumeSlider.cs" />
     <Compile Include="Audio\WindowCaptureRecorder.cs" />
+    <Compile Include="Audio\VideoTakeHost.cs" />
     <Compile Include="Audio\StudioTheme.cs" />
     <Compile Include="Audio\StudioButton.cs" />
     <Compile Include="Audio\StatusChip.cs" />
@@ -174,7 +175,6 @@
     <Compile Include="Audio\StudioNumber.cs" />
     <Compile Include="UI.AudioRouting.cs" />
     <Compile Include="UI.AudioBridgeSetup.cs" />
-    <Compile Include="UI.NoteByNote.cs" />
     <Compile Include="UI.RSModsPlus.cs" />
     <Compile Include="Controls\ColourWheel.cs" />
     <Compile Include="Controls\ColourChip.cs" />
@@ -259,7 +259,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Assets\LogoX256.ico" />
-    <None Include="Assets\AudioBridge256.ico" />
+    <EmbeddedResource Include="Assets\AudioBridge256.ico">
+      <LogicalName>RSMods.AudioBridgeLogo.ico</LogicalName>
+    </EmbeddedResource>
     <Content Include="Lib\7z.dll" />
     <Content Include="Lib\ddc\ddc.exe" />
     <Content Include="Lib\ddc\ddc_chords_protector.xml" />
@@ -341,7 +343,6 @@
     </ProjectReference>
     <Compile Include="MlModelVerifier.cs" />
     <Compile Include="MlServiceHost.cs" />
-    <Compile Include="UI.MlService.cs" />
     <Compile Include="RuntimeBootstrap.cs" />
     <Reference Include="System.IO.Compression" />
     <EmbeddedResource Include="$(IntermediateOutputPath)BundledRuntime.zip">
@@ -354,7 +355,7 @@
   </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="PlaceMainGameLibrary" AfterTargets="Build">
-    <Copy SourceFiles="$(TargetDir)rsmodsplus.dll" DestinationFiles="$(TargetDir)..\rsmodsplus.dll" />
+    <Copy SourceFiles="$(TargetDir)RocksmithAudioBridge.dll" DestinationFiles="$(TargetDir)..\RocksmithAudioBridge.dll" />
   </Target>
   <!-- The GUI lives in TWO places in the game folder: the game root (what the installer writes and
        what the game DLL launches for the background bridge and the ML service) and <game>\RSMods
@@ -364,11 +365,11 @@
     <ItemGroup>
       <GameDeployFile Include="$(TargetPath)" Destination="$(RocksmithInstallDir)\RSMods.exe" />
       <GameDeployFile Include="$(TargetPath).config" Destination="$(RocksmithInstallDir)\RSMods.exe.config" />
-      <GameDeployFile Include="$(TargetDir)rsmodsplus.dll" Destination="$(RocksmithInstallDir)\rsmodsplus.dll" />
+      <GameDeployFile Include="$(TargetDir)RocksmithAudioBridge.dll" Destination="$(RocksmithInstallDir)\RocksmithAudioBridge.dll" />
       <GameDeployFile Include="$(TargetPath)" Destination="$(RocksmithInstallDir)\RSMods\RSMods.exe" />
       <GameDeployFile Include="$(TargetPath).config" Destination="$(RocksmithInstallDir)\RSMods\RSMods.exe.config" />
-      <GameDeployFile Include="$(TargetDir)rsmodsplus.dll" Destination="$(RocksmithInstallDir)\RSMods\rsmodsplus.dll" />
-      <GuiSupportFile Include="$(TargetDir)**\*" Exclude="$(TargetDir)RSMods.exe;$(TargetDir)RSMods.exe.config;$(TargetDir)rsmodsplus.dll;$(TargetDir)**\*.pdb" />
+      <GameDeployFile Include="$(TargetDir)RocksmithAudioBridge.dll" Destination="$(RocksmithInstallDir)\RSMods\RocksmithAudioBridge.dll" />
+      <GuiSupportFile Include="$(TargetDir)**\*" Exclude="$(TargetDir)RSMods.exe;$(TargetDir)RSMods.exe.config;$(TargetDir)RocksmithAudioBridge.dll;$(TargetDir)**\*.pdb" />
     </ItemGroup>
   </Target>
   <!-- Dependency DLLs and tools beside the main window's copy. Unchanged files are skipped, and a file a

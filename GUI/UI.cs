@@ -181,7 +181,7 @@ namespace RSMods
 			InitializeComponent();
 			InitializeRsModsPlusPages();
 			AddProductVersionLabel();
-			Text = $"{Text}-{Assembly.GetExecutingAssembly().GetName().Version}"; // Show version number in the title of the application.
+			Text = $"{ProductInfo.PRODUCT_NAME} (RSMods {Assembly.GetExecutingAssembly().GetName().Version})"; // Product name plus the upstream RSMods version it is based on.
 		}
 
         private void AddProductVersionLabel()
@@ -191,9 +191,9 @@ namespace RSMods
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
                 AutoSize = false,
                 Font = new Font(Font, FontStyle.Bold),
-                Location = new Point(ClientSize.Width - 172, ClientSize.Height - 26),
+                Location = new Point(ClientSize.Width - 232, ClientSize.Height - 26),
                 Name = "label_ProductVersion",
-                Size = new Size(160, 18),
+                Size = new Size(220, 18),
                 TabIndex = 100003,
                 Text = ProductInfo.DISPLAY_NAME,
                 TextAlign = ContentAlignment.MiddleRight
@@ -721,7 +721,6 @@ namespace RSMods
             }
 
             checkBox_DropPedal.Checked = ReadSettings.ProcessSettings(ReadSettings.DropPedalEnabledIdentifier) == "on";
-            LoadNoteByNoteControls();
 
             checkBox_MonitorOutput.Checked = ReadSettings.ProcessSettings(ReadSettings.MonitorOutputIdentifier) == "on";
             checkBox_AudioDiagnosticsOverlay.Checked = ReadSettings.ProcessSettings(ReadSettings.AudioDiagnosticsOverlayIdentifier) != "off";
