@@ -161,6 +161,38 @@ namespace Audio::AsioHook
 		std::array<bool, INPUT_ROUTE_COUNT> configuredInputs{ false, false };
 		std::array<std::atomic<bool>, INPUT_ROUTE_COUNT> inputReady;
 		std::atomic<bool> proxyInputSeen{ false };
+		// Player 1 input stage meters (2026-09-23): the (INPUT) level is measured AFTER the conditioner,
+		// so "-141 dBFS for minutes while Philip strummed" could not say whether audio never arrived or
+		// the conditioner removed it. These peaks bracket each stage; PollInputStageMeter logs them.
+		struct StagePeak
+		{
+			std::atomic<uint32_t> bits{ 0 };
+			std::atomic<uint32_t> buffers{ 0 };
+			void Note(float peak)
+			{
+				buffers.fetch_add(1, std::memory_order_relaxed);
+				if (!(peak > 0.0f)) return;
+				uint32_t current = bits.load(std::memory_order_relaxed);
+				float currentPeak;
+				std::memcpy(&currentPeak, &current, sizeof(currentPeak));
+				if (peak <= currentPeak) return;
+				uint32_t wanted;
+				std::memcpy(&wanted, &peak, sizeof(wanted));
+				bits.store(wanted, std::memory_order_relaxed);
+			}
+			float TakePeak()
+			{
+				const uint32_t taken = bits.exchange(0, std::memory_order_relaxed);
+				float peak;
+				std::memcpy(&peak, &taken, sizeof(peak));
+				return peak;
+			}
+		};
+		StagePeak stageProxyRaw;          // the real device's buffers inside the proxy, before RS_ASIO
+		StagePeak stageCaptureRaw;        // what RS_ASIO handed the game, before the conditioner
+		StagePeak stageAfterConditioner;  // what the game and detection actually hear
+		std::atomic<uint32_t> stageSilentFlagPackets{ 0 };      // game packets flagged silent by the capture
+		std::atomic<uint32_t> stageReplacedWithSilence{ 0 };    // packets this hook swapped for zeros
 		std::atomic<uint32_t> proxyInputRate{ 0 };
 		std::atomic<int> proxyInputSampleFormat{ static_cast<int>(SampleFormat::Unsupported) };
 		std::atomic<bool> bufferLayoutReady{ false };
@@ -405,6 +437,32 @@ namespace Audio::AsioHook
 			}
 		}
 
+		// Peak of the first channel, read straight from the packet. Allocation-free and buffer-free on
+		// purpose: the input stage meter runs before the route's conversion buffer exists (it is only
+		// allocated once input processing is prepared), and writing into it there crashed the game at
+		// startup (2026-09-23 17:51-18:16).
+		bool MeasureFirstChannelPeak(const BYTE* packet, const CaptureFormat& format, uint32_t frameCount, float& peak)
+		{
+			peak = 0.0f;
+			const size_t channelCount = format.channelCount;
+			if (packet == nullptr || channelCount == 0) return false;
+			for (uint32_t frame = 0; frame < frameCount; ++frame)
+			{
+				const size_t sampleIndex = static_cast<size_t>(frame) * channelCount;
+				float value = 0.0f;
+				switch (format.sampleFormat)
+				{
+				case SampleFormat::Float32: value = reinterpret_cast<const float*>(packet)[sampleIndex]; break;
+				case SampleFormat::Int32: value = static_cast<float>(reinterpret_cast<const int32_t*>(packet)[sampleIndex]) * INT32_TO_FLOAT; break;
+				case SampleFormat::Int24: value = static_cast<float>(ReadInt24(packet + sampleIndex * 3)) * INT24_TO_FLOAT; break;
+				case SampleFormat::Int16: value = static_cast<float>(reinterpret_cast<const int16_t*>(packet)[sampleIndex]) * INT16_TO_FLOAT; break;
+				default: return false;
+				}
+				if (std::isfinite(value)) peak = std::max(peak, std::fabs(value));
+			}
+			return true;
+		}
+
 		void CopyFloatToAllChannels(BYTE* packet, const CaptureFormat& format, uint32_t frameCount, const float* converted)
 		{
 			const size_t channelCount = format.channelCount;
@@ -487,7 +545,7 @@ namespace Audio::AsioHook
 			gainAttackCoef = static_cast<float>(1.0 - std::exp(-1.0 / (GAIN_ATTACK_SECONDS * fs)));
 			gainReleaseCoef = static_cast<float>(1.0 - std::exp(-1.0 / (GAIN_RELEASE_SECONDS * fs)));
 			rangeGain = std::pow(10.0f, EXPANDER_RANGE_DB / 20.0f);
-			attackThreshold = std::max(threshold, std::pow(10.0f, ATTACK_THRESHOLD_DB / 20.0f));
+			attackThreshold = threshold * std::pow(10.0f, ATTACK_ABOVE_THRESHOLD_DB / 20.0f);
 			openConfirmSamples = std::max<uint32_t>(1, static_cast<uint32_t>(std::lround(OPEN_CONFIRM_SECONDS * sampleRate)));
 			energy = 0.0f;
 			appliedGain = rangeGain;
@@ -1062,6 +1120,24 @@ namespace Audio::AsioHook
 				const SampleFormat sampleFormat = ReadProxySampleFormat(channels[index].type);
 				if (sampleFormat == SampleFormat::Unsupported) return;
 
+				{
+					// Stage meter 1: the real device's samples, before RS_ASIO and the game see them.
+					float peak = 0.0f;
+					for (long frame = 0; frame < frames; ++frame)
+					{
+						float value = 0.0f;
+						switch (sampleFormat)
+						{
+						case SampleFormat::Float32: value = static_cast<const float*>(channels[index].buffer)[frame]; break;
+						case SampleFormat::Int32: value = static_cast<float>(static_cast<const int32_t*>(channels[index].buffer)[frame]) * INT32_TO_FLOAT; break;
+						case SampleFormat::Int24: value = static_cast<float>(ReadInt24(static_cast<uint8_t*>(channels[index].buffer) + frame * 3)) * INT24_TO_FLOAT; break;
+						case SampleFormat::Int16: value = static_cast<const int16_t*>(channels[index].buffer)[frame] * INT16_TO_FLOAT; break;
+						default: break;
+						}
+						peak = std::max(peak, std::fabs(value));
+					}
+					stageProxyRaw.Note(peak);
+				}
 				proxyInputRate.store(static_cast<uint32_t>(sampleRate), std::memory_order_release);
 				proxyInputSampleFormat.store(static_cast<int>(sampleFormat), std::memory_order_release);
 				proxyInputSeen.store(true, std::memory_order_release);
@@ -1111,7 +1187,7 @@ namespace Audio::AsioHook
 		{
 			if (proxyInputObserverInstalled || GetTickCount64() < nextProxyInputObserverAttemptTick) return;
 			nextProxyInputObserverAttemptTick = GetTickCount64() + UNMARSHAL_HOOK_RETRY_INTERVAL_MILLISECONDS;
-			HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+			HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 			if (!proxy) return;
 			auto setObserver = reinterpret_cast<SetProxyInputObserver_t>(GetProcAddress(proxy, "RSModsAsio_SetInputObserver"));
 			if (!setObserver) return;
@@ -1156,6 +1232,7 @@ namespace Audio::AsioHook
 				{
 					routeLastBufferTick[routeIndex].store(0, std::memory_order_relaxed);
 					if (routeIndex == 0) AsioBufferState::lastPacket.store(0);
+					if (routeIndex == 0) stageReplacedWithSilence.fetch_add(1, std::memory_order_relaxed);
 					if (*frameCount <= MAX_BUFFER_FRAMES && routeFormats[routeIndex].IsUsable())
 					{
 						static const std::array<float, MAX_BUFFER_FRAMES> silence{};
@@ -1170,6 +1247,21 @@ namespace Audio::AsioHook
 			routeLastBufferTick[routeIndex].store(GetTickCount64(), std::memory_order_relaxed);
 			if (routeIndex == 0 && CableInput::IsAsioPath())
 				AsioBufferState::lastPacket.store(GetTickCount64());
+
+			// Stage meter 2: what RS_ASIO handed the game, BEFORE the conditioner below. Reads the packet
+			// directly: the conversion buffer does not exist yet this early (see MeasureFirstChannelPeak).
+			if (routeIndex == 0 && data && *data && *frameCount <= MAX_BUFFER_FRAMES
+				&& routeFormats[routeIndex].IsUsable())
+			{
+				if (flags && (*flags & AUDCLNT_BUFFERFLAGS_SILENT))
+					stageSilentFlagPackets.fetch_add(1, std::memory_order_relaxed);
+				else
+				{
+					float peak = 0.0f;
+					if (MeasureFirstChannelPeak(*data, routeFormats[routeIndex], *frameCount, peak))
+						stageCaptureRaw.Note(peak);
+				}
+			}
 
 			// Front-of-chain guitar input conditioner. Runs on every real packet, BEFORE the processing
 			// gate below, so it lifts/cleans the input globally (cable or RS_ASIO, Drop Pedal or not) and
@@ -1288,6 +1380,7 @@ namespace Audio::AsioHook
 					peak = std::max(peak, std::fabs(converted[index]));
 				}
 				CableInput::ReportTapPacket(peak, silent, *frameCount, routeFormats[routeIndex].sampleRate);
+				stageAfterConditioner.Note(silent ? 0.0f : peak);   // stage meter 3
 
 				// Latency loopback capture: copy the raw input (before any processor) while a measurement is armed.
 				const int latTarget = g_latencyTarget.load(std::memory_order_relaxed);
@@ -1874,6 +1967,40 @@ namespace Audio::AsioHook
 	float GetCompressorStrength()
 	{
 		return g_compressorStrength.load(std::memory_order_relaxed);
+	}
+
+	void PollInputStageMeter()
+	{
+		// One line every 10 s bracketing Player 1's input chain, so a dead stretch says WHERE the signal
+		// stopped: the device (proxy), RS_ASIO -> game, or the conditioner (suppressor/compressor/gain).
+		constexpr uint64_t INTERVAL_MS = 10000;
+		static uint64_t lastTick = 0;
+		const uint64_t now = GetTickCount64();
+		if (lastTick == 0) { lastTick = now; return; }
+		if (now - lastTick < INTERVAL_MS) return;
+		lastTick = now;
+		auto describe = [](StagePeak& stage)
+		{
+			const uint32_t buffers = stage.buffers.exchange(0, std::memory_order_relaxed);
+			const float peak = stage.TakePeak();
+			std::ostringstream text;
+			if (buffers == 0) text << "no buffers";
+			else if (!(peak > 0.0f)) text << "digital silence (" << buffers << " buffers)";
+			else text << std::fixed << std::setprecision(1) << 20.0 * std::log10(peak) << " dBFS peak (" << buffers << " buffers)";
+			return text.str();
+		};
+		const std::string proxyRaw = proxyInputObserverInstalled ? describe(stageProxyRaw) : std::string("n/a (no proxy observer)");
+		const std::string captureRaw = describe(stageCaptureRaw);
+		const std::string afterConditioner = describe(stageAfterConditioner);
+		const uint32_t silentFlagged = stageSilentFlagPackets.exchange(0, std::memory_order_relaxed);
+		const uint32_t replaced = stageReplacedWithSilence.exchange(0, std::memory_order_relaxed);
+		LOG_INFO("(INPUT STAGES) device raw (proxy): " << proxyRaw
+			<< " | game capture raw (from RS_ASIO): " << captureRaw
+			<< " | after conditioner: " << afterConditioner
+			<< " | silent-flagged packets: " << silentFlagged
+			<< " | replaced with silence: " << replaced
+			<< " | suppressor threshold " << std::fixed << std::setprecision(1) << GetNoiseGateThresholdDb()
+			<< " dBFS (opens 6 dB above it), gain " << GetInputGainDb() << " dB" << std::endl);
 	}
 
 	void SetHumFilterBaseHz(float baseHz)

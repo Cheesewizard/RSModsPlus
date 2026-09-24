@@ -580,6 +580,7 @@ int main(int argc, char** argv)
 		else if (test == "noise-tone") AudioCaptureTests::NoiseSuppressorOpensTone();
 		else if (test == "noise-tail") AudioCaptureTests::NoiseSuppressorKeepsLowTailOpen();
 		else if (test == "noise-decay") AudioCaptureTests::NoiseSuppressorClosesSmoothly();
+		else if (test == "noise-soft-after-pause") AudioCaptureTests::NoiseSuppressorOpensSoftNoteAfterPause();
 		else throw std::invalid_argument("Unknown test");
 		std::cout << "PASS " << test << '\n';
 		return 0;

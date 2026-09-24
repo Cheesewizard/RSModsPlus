@@ -29,7 +29,11 @@ namespace Audio::AsioHook
 			static constexpr float GAIN_RELEASE_SECONDS = 0.180f;
 			static constexpr float OPEN_CONFIRM_SECONDS = 0.003f;
 			static constexpr float CLOSE_HYSTERESIS = 0.65f;
-			static constexpr float ATTACK_THRESHOLD_DB = -30.0f;
+			// Opening level, relative to the configured threshold. It was an absolute -30 dBFS (commit
+			// 28b7e901), which hard-muted (-80 dB) every note whose RMS sat between the threshold and
+			// -30: after any pause the input stayed dead until one hit was loud enough (2026-09-23, the
+			// game heard -141 dBFS for minutes while Philip played). The 3 ms confirm still rejects spikes.
+			static constexpr float ATTACK_ABOVE_THRESHOLD_DB = 6.0f;
 
 			float energy = 0.0f;
 			float appliedGain = 0.0f;
@@ -72,6 +76,10 @@ namespace Audio::AsioHook
 	// onset, rejects idle noise and brief spikes, and closes gradually after notes. >= 0 dB = off.
 	void SetNoiseGateThresholdDb(float decibels);
 	float GetNoiseGateThresholdDb();
+
+	// Logs "(INPUT STAGES)" every 10 s: Player 1's peak at the device (proxy), at the game capture
+	// before the conditioner, and after it, so a dead input stretch shows which stage went silent.
+	void PollInputStageMeter();
 
 	// Input compressor strength (0..1, 0 = off). Flattens the natural string-beat wobble before the game
 	// amp so a quiet interface input doesn't warble the way a hot cable's compressed signal doesn't.

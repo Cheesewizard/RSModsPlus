@@ -1750,6 +1750,7 @@ namespace Audio::CableInput
 		static PollState outputState;
 		static PollState playerTwoState;
 		PollDirection(tapStats, inputState, "(INPUT)", "Input");
+		AsioHook::PollInputStageMeter();
 		PollDirection(outputStats, outputState, "(OUTPUT)", "Output");
 		PollDirection(playerTwoStats, playerTwoState, "(INPUT P2)", "Player 2 input");
 

@@ -7,7 +7,7 @@ param(
 		'rejected-format', 'buffer-results', 'active-shift', 'concurrent-players', 'late-attachment',
 		'lifecycle-forwarding', 'lifecycle-overflow', 'persistent-readiness', 'capture-timestamp-lag',
 		'noise-off-bit-exact', 'noise-floor', 'noise-spike', 'noise-fault', 'noise-tone',
-		'noise-tail', 'noise-decay'
+		'noise-tail', 'noise-decay', 'noise-soft-after-pause'
 	)
 )
 
