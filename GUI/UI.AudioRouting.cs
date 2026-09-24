@@ -14,7 +14,7 @@ namespace RSMods
 		// and writes them one line at a time, because the shared WriteINI rewrites the whole file from
 		// this window's in-memory table. Re-read every bridge-owned value on activation so the next full
 		// save from here does not overwrite what the bridge wrote.
-		internal static void SyncModernCableSettingFromDisk()
+		internal static void SyncBridgeOwnedSettingsFromDisk()
 		{
 			foreach (string identifier in ReadSettings.BridgeOwnedIdentifiers)
 			{
@@ -41,7 +41,7 @@ namespace RSMods
 		// window is activated, so a later full save from here cannot revert what the bridge wrote.
 		private void AddAudioRoutingButton()
 		{
-			Activated += (sender, args) => SyncModernCableSettingFromDisk();
+			Activated += (sender, args) => SyncBridgeOwnedSettingsFromDisk();
 		}
 	}
 }

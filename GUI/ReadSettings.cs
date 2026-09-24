@@ -50,7 +50,7 @@ namespace RSMods
                              DropPedalEnabled, DropPedalCustomOverlayColors,
                              DropPedalOverlayDownColor, DropPedalOverlayUpColor, DropPedalOverlayStatusColor,
                              DropPedalPlayer1AsioChannel, DropPedalPlayer2AsioChannel,
-							 ModernCableInput, CableForPlayerTwo, MonitorOutput, AudioDiagnosticsOverlay,
+							 CableForPlayerTwo, MonitorOutput, AudioDiagnosticsOverlay,
 
 
                              // String Colors
@@ -199,7 +199,6 @@ namespace RSMods
             DropPedalOverlayStatusColorIdentifier        = "OverlayStatusColor = ",
             DropPedalPlayer1AsioChannelIdentifier        = "Player1AsioChannel = ",
             DropPedalPlayer2AsioChannelIdentifier        = "Player2AsioChannel = ",
-			ModernCableInputIdentifier                   = "ModernCableInput = ",
 			CableForPlayerTwoIdentifier                  = "CableForPlayerTwo = ",
 			MonitorOutputIdentifier                      = "MonitorOutput = ",
             AudioDiagnosticsOverlayIdentifier            = "AudioDiagnosticsOverlay = ",
@@ -362,8 +361,6 @@ namespace RSMods
                 return "-1";
             if (identifierToGrab == DropPedalPlayer2AsioChannelIdentifier)
                 return "-1";
-			if (identifierToGrab == ModernCableInputIdentifier)
-				return "on";
 			if (identifierToGrab == RecordingHotkeyIdentifier)
 				return "VK_F9";
 			if (identifierToGrab == CableForPlayerTwoIdentifier)
@@ -390,11 +387,10 @@ namespace RSMods
 
         // RSMods.ini values the audio bridge process owns and writes one line at a time (its
         // WriteBridgeSetting). The main window's full-file save must not clobber them, so it re-reads
-        // exactly this list on activation (MainForm.SyncModernCableSettingFromDisk). A new bridge-owned
+        // exactly this list on activation (MainForm.SyncBridgeOwnedSettingsFromDisk). A new bridge-owned
         // setting is added HERE and nowhere else; the bridge asserts every write is on this list.
         public static readonly string[] BridgeOwnedIdentifiers =
         {
-            ModernCableInputIdentifier,
             CableForPlayerTwoIdentifier,
             AsioInputGainIdentifier,
             NoiseGateThresholdIdentifier,
@@ -682,8 +678,6 @@ namespace RSMods
                     return FillSettingVariable(NOTE_BY_NOTE_REJECTED_COLOR_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteRejectedColor);
                 if (IdentifierIsFound(currentLine, DropPedalEnabledIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalEnabledIdentifier, SettingType.ON_OFF, currentLine, out DropPedalEnabled);
-				if (IdentifierIsFound(currentLine, ModernCableInputIdentifier, identifierToGrab))
-					return FillSettingVariable(ModernCableInputIdentifier, SettingType.ON_OFF, currentLine, out ModernCableInput);
 				if (IdentifierIsFound(currentLine, CableForPlayerTwoIdentifier, identifierToGrab))
 					return FillSettingVariable(CableForPlayerTwoIdentifier, SettingType.ON_OFF, currentLine, out CableForPlayerTwo);
                 if (IdentifierIsFound(currentLine, MonitorOutputIdentifier, identifierToGrab))

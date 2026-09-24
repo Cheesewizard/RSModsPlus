@@ -244,7 +244,6 @@ namespace RSMods
                     { ReadSettings.RewindLeadupIdentifier, CreateDefaultOnOldINI(ReadSettings.RewindLeadupIdentifier, "2000") }, // Amount of time (in ms) to move the grey note timer back after rewinding.
                     { ReadSettings.CustomNSPTimeLimitIdentifier, CreateDefaultOnOldINI(ReadSettings.CustomNSPTimeLimitIdentifier, "10000") }, // Amount of time (in ms) to have Non-stop play wait until the next song.
                     { ReadSettings.OnScreenFontSizeIdentifier, CreateDefaultOnOldINI(ReadSettings.OnScreenFontSizeIdentifier, "24") },
-					{ ReadSettings.ModernCableInputIdentifier, CreateDefaultOnOldINI(ReadSettings.ModernCableInputIdentifier, "on") }, // Real Tone Cable through the modern WASAPI capture client (Rocksmith Audio Bridge tab). Ships enabled.
 					{ ReadSettings.CableForPlayerTwoIdentifier, CreateDefaultOnOldINI(ReadSettings.CableForPlayerTwoIdentifier, "off") }, // Insert the Rocksmith Audio Bridge Cable device after RS_ASIO inputs for multiplayer.
                     { ReadSettings.MonitorOutputIdentifier, CreateDefaultOnOldINI(ReadSettings.MonitorOutputIdentifier, "off") }, // Diagnostic output-stream monitor (Rocksmith Audio Bridge tab, experimental).
                     { ReadSettings.AudioDiagnosticsOverlayIdentifier, CreateDefaultOnOldINI(ReadSettings.AudioDiagnosticsOverlayIdentifier, "on") }, // In-game audio latency / signal overlay (Rocksmith Audio Bridge tab).

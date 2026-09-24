@@ -1447,7 +1447,7 @@ namespace Audio::CableInput
 					framesPerBuffer, streamFlags, streamCallback, userData);
 				if (result == 0)
 				{
-					SetStatus("legacy shared input (polled), ModernCableInput=off");
+					SetStatus("legacy shared input (polled)");
 					std::lock_guard<std::mutex> guard(statusMutex);
 					diagnostics.inputPath = "stock shared (polled)";
 					diagnostics.inputFormat.clear();
@@ -1464,20 +1464,20 @@ namespace Audio::CableInput
 			return result;
 		}
 
-		bool ReadModernInputSetting()
+		// The ModernCableInput switch was removed 2026-09-24: every path that reads the cable (the persistent
+		// Cable input in Cable mode, the Audio Bridge ASIO driver's reader under RS_ASIO) always converts any
+		// sample rate to 48 kHz and is event-driven, and the switch had stopped reaching the code that used it.
+		void ReadCableDisplaySettings()
 		{
 			char executablePath[MAX_PATH];
 			GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
 			const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
-			char value[16] = {};
-			GetPrivateProfileStringA("Mod Settings", "ModernCableInput", "on", value, sizeof(value), iniPath.c_str());
 			char monitor[16] = {};
 			GetPrivateProfileStringA("Mod Settings", "MonitorOutput", "off", monitor, sizeof(monitor), iniPath.c_str());
 			outputMonitorEnabled = _stricmp(monitor, "on") == 0;
 			char overlay[16] = {};
 			GetPrivateProfileStringA("Mod Settings", "AudioDiagnosticsOverlay", "on", overlay, sizeof(overlay), iniPath.c_str());
 			overlayEnabled = _stricmp(overlay, "off") != 0;
-			return _stricmp(value, "off") != 0;
 		}
 
 		bool ReadCableForPlayerTwoSetting(const std::filesystem::path& gameDirectory)
@@ -1572,7 +1572,7 @@ namespace Audio::CableInput
 			inputOwnedByAsio = true;
 			asioPath.store(true, std::memory_order_release);
 			SetStatus("RS_ASIO owns the input");
-			ReadModernInputSetting();   // still honours the overlay switch
+			ReadCableDisplaySettings();   // diagnostics HUD and output monitor switches
 			{
 				std::lock_guard<std::mutex> guard(statusMutex);
 				diagnostics.rsAsio = true;
@@ -1604,12 +1604,10 @@ namespace Audio::CableInput
 			return;
 		}
 
-		const bool requestedModernInput = ReadModernInputSetting();
-		modernInputEnabled = !inputOwnedByAsio && requestedModernInput;
+		ReadCableDisplaySettings();
+		modernInputEnabled = !inputOwnedByAsio;
 		if (inputOwnedByAsio)
-			LOG_INFO("(CABLE INPUT) RS_ASIO owns capture; ModernCableInput does not apply" << std::endl);
-		else if (!requestedModernInput)
-			LOG_INFO("(CABLE INPUT) Modern capture disabled; legacy shared input selected" << std::endl);
+			LOG_INFO("(CABLE INPUT) RS_ASIO owns capture; the Audio Bridge ASIO driver reads the cable itself" << std::endl);
 		auto* target = reinterpret_cast<byte*>(Offsets::func_PortAudioOpenStream.Get());
 		if (target == nullptr)
 		{
@@ -1651,14 +1649,14 @@ namespace Audio::CableInput
 		}
 
 		SetStatus(persistentInputEnabled ? "Persistent input: waiting for cable" : inputOwnedByAsio ? "ASIO input; shared output armed" :
-			(modernInputEnabled ? "armed, waiting for the game to open its input" : "legacy shared input (ModernCableInput=off)"));
+			(modernInputEnabled ? "armed, waiting for the game to open its input" : "legacy shared input"));
 		{
 			std::lock_guard<std::mutex> guard(statusMutex);
 			diagnostics.installed = true;
 			if (persistentInputEnabled) diagnostics.inputPath = "persistent Cable input";
 		}
 		LOG_INFO("(CABLE INPUT) Pa_OpenStream detoured; "
-			<< (persistentInputEnabled ? "persistent Cable input enabled" : modernInputEnabled ? "modern capture client enabled" : "ModernCableInput=off, legacy shared input only")
+			<< (persistentInputEnabled ? "persistent Cable input enabled" : modernInputEnabled ? "modern capture client enabled" : "legacy shared input only")
 			<< (persistentOutputEnabled ? "; permanent shared output enabled" : "; game output unchanged")
 			<< (outputMonitorEnabled ? "; output monitor ON (MonitorOutput=on)" : "; output monitor off")
 			<< std::endl);

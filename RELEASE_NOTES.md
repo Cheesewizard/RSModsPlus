@@ -5,7 +5,7 @@
 - **Build date:** `TBD` (set from the final verified build)
 - **Scope:** `Pre-release`
 
-> Note by Note is a **beta** feature toggled from the menu, and Modern Cable input is **experimental**.
+> Note by Note is a **beta** feature toggled from the menu, and USB cable compatibility is **experimental**.
 
 ## Feature list
 
@@ -39,11 +39,9 @@ The Audio Bridge has two places to control it: the **in-game overlay** (press `\
 - General: force update song list re-scans the dlc folder live, so Rocksmith picks up a psarc you just added without a restart.
 - Overlay changes to Note by Note, Drop Pedal, input conditioning and output protection are saved to `RSMods.ini` and survive a relaunch.
 
-### Modern Cable input (experimental)
-- Real Tone Cable style input path (PortAudio to shared-mode WASAPI) offered as an accessibility option, not an ASIO replacement.
-- Wider USB cable compatibility: Modern Cable Input uses Windows shared-mode conversion to present Rocksmith-compatible 48 kHz capture from supported devices whose native Windows format uses another sample rate.
-- The same compatibility mode uses WASAPI event-driven capture when available. That may reduce latency on some systems, but it is not guaranteed and no latency claim is made.
-- RS_ASIO stays in charge of the ASIO path; switching to Cable mode only renames the RS_ASIO files and never rewrites RS_ASIO.ini.
+### USB cable compatibility (experimental)
+- Converts the cable's sample rate to the 48 kHz Rocksmith expects, so a cable that runs at a different rate is still compatible.
+- Reads the cable as soon as Windows has new audio, instead of on a fixed timer, so the input delay stays consistent rather than changing with whatever else is running on the PC.
 
 ### Note by Note practice mode (beta; toggle in the menu)
 - In-process, per-note detection built as a single tuned blend of three components that always work together for accuracy: the game's native pitch/chord matcher, the enhanced raw-pitch verifier, and the FretNet ML detector. None of the three is optional; the bundled FretNet service is auto-launched as part of detection, and all three feed one accept decision.
@@ -160,7 +158,7 @@ Tick each item on the final release build (Master, installed from the package, n
 ### General / diagnostics
 - [ ] Force update song list picks up a newly copied psarc without a restart.
 
-### Modern Cable input (experimental)
+### USB cable compatibility (experimental)
 - [ ] Cable at a non-48 kHz native rate is captured and plays in game.
 - [ ] No exclusive-mode errors; Cable mode leaves `RS_ASIO.ini` untouched.
 

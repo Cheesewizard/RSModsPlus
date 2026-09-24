@@ -2113,8 +2113,7 @@ namespace RSMods
                 bool running = System.Diagnostics.Process.GetProcessesByName("Rocksmith2014").Length > 0;
                 report.AppendLine("Rocksmith: " + (running ? "RUNNING" : "not running"));
                 report.AppendLine("RS_ASIO.dll: " + (File.Exists(Path.Combine(rsDir, "RS_ASIO.dll")) ? "present (input managed by RS_ASIO; standalone cable option unused)" : "absent (cable input; bridge ASIO output is independent)"));
-				SyncModernCableSettingFromDisk();
-				report.AppendLine("Standalone cable capture preference: " + (ReadSettings.ProcessSettings(ReadSettings.ModernCableInputIdentifier) == "off" ? "legacy shared" : "modern compatibility path") + " (set in the audio bridge; used only without the bridge or RS_ASIO input).");
+				SyncBridgeOwnedSettingsFromDisk();
 				report.AppendLine("Audio bridge: uses its own cable capture, or RS_ASIO input when enabled. Output is selected separately in the bridge.");
 
                 string rocksmithIni = Path.Combine(rsDir, "Rocksmith.ini");

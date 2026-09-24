@@ -73,11 +73,8 @@ namespace RSMods.Audio
 		private readonly StudioSelector recordingHotkeySelector = new StudioSelector { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "In-game recording hotkey" };
 		private bool syncingRecordingHotkey;
 		private readonly SegmentedControl inputSelector = new SegmentedControl("Real Tone Cable", "ASIO interface");
-		private readonly StudioCheck eventDrivenCaptureCheck = new StudioCheck("Improve USB cable compatibility") { Margin = new Padding(0, 10, 0, 0) };
-		private readonly Label eventDrivenCaptureHint = StudioTheme.Hint("Lets Rocksmith use more USB guitar cables by converting supported Windows input formats to the 48 kHz format the game expects. Also uses Windows audio events when available. Restart Rocksmith after changing it.");
 		private readonly StudioCheck cableForPlayerTwoCheck = new StudioCheck("Use the Real Tone Cable for Player 2") { Margin = new Padding(0, 10, 0, 0) };
 		private readonly Label cableForPlayerTwoHint = StudioTheme.Hint("Adds the cable as a second input after the ASIO interface for multiplayer. RS_ASIO.ini is not changed. Applies live while Rocksmith is connected.");
-		private bool syncingEventDrivenCapture;
 		private bool syncingCableForPlayerTwo;
 		// Guitar input make-up gain. A Real Tone Cable carries a hot built-in preamp; an interface
 		// through RS_ASIO arrives much quieter, so the game's level-sensitive note gate mutes sustains
@@ -285,11 +282,6 @@ namespace RSMods.Audio
 			syncingRecordingHotkey = true;
 			recordingHotkeySelector.SelectedItem = savedRecordingHotkey;
 			syncingRecordingHotkey = false;
-			// The event-driven cable capture preference lives in RSMods.ini (shared with the game DLL),
-			// not this window's AudioRouting.ini. Ships enabled, so anything but "off" reads as on.
-			syncingEventDrivenCapture = true;
-			eventDrivenCaptureCheck.Checked = RSMods.ReadSettings.ProcessSettings(RSMods.ReadSettings.ModernCableInputIdentifier) != "off";
-			syncingEventDrivenCapture = false;
 			syncingCableForPlayerTwo = true;
 			cableForPlayerTwoCheck.Checked = RSMods.ReadSettings.ProcessSettings(RSMods.ReadSettings.CableForPlayerTwoIdentifier) == "on";
 			syncingCableForPlayerTwo = false;
@@ -918,14 +910,11 @@ namespace RSMods.Audio
 		{
 			var ex = new StudioExpander("Guitar input");
 			ex.SetSummary("How Rocksmith hears the guitar.");
-			ex.Add(StudioTheme.Hint("How Rocksmith hears the guitar. ASIO uses RS_ASIO and your interface for the lowest latency; the cable uses the Windows audio path."));
+			ex.Add(StudioTheme.Hint("How Rocksmith hears the guitar. ASIO uses RS_ASIO and your interface for the lowest latency; the cable uses the Windows audio path. Any USB guitar cable or interface works at any sample rate: it is converted to the 48 kHz the game expects."));
 			inputSelector.Margin = new Padding(0, 2, 0, 4);
 			ex.Add(inputSelector);
 			inputModeLabel.Margin = new Padding(0, 8, 0, 2);
 			ex.Add(inputModeLabel);
-			ex.Add(eventDrivenCaptureCheck);
-			eventDrivenCaptureHint.Margin = new Padding(0, 0, 0, 2);
-			ex.Add(eventDrivenCaptureHint);
 			ex.Add(cableForPlayerTwoCheck);
 			cableForPlayerTwoHint.Margin = new Padding(0, 0, 0, 2);
 			ex.Add(cableForPlayerTwoHint);
@@ -1202,7 +1191,6 @@ namespace RSMods.Audio
 			outputSelector.DropDown += (sender, args) => RefreshDevices();
 			inputSelector.SelectedIndexChanged += (sender, args) => { if (!syncingInputMode) SwitchInputMode(inputSelector.SelectedIndex == 1); };
 			UpdateOutputHint();
-			eventDrivenCaptureCheck.CheckedChanged += (sender, args) => { if (!syncingEventDrivenCapture) SaveEventDrivenCapture(); };
 			cableForPlayerTwoCheck.CheckedChanged += (sender, args) => { if (!syncingCableForPlayerTwo) SaveCableForPlayerTwo(); };
 			limiterCheck.CheckedChanged += (sender, args) =>
 			{
@@ -1301,7 +1289,6 @@ namespace RSMods.Audio
 			tips.SetToolTip(browseButton, "Choose the folder takes are saved to.");
 			tips.SetToolTip(captureMode, "Both formats record wet + dry WAVs. MP4 also records the Rocksmith window.");
 			tips.SetToolTip(inputSelector, "ASIO uses RS_ASIO and your interface for the lowest latency. The Real Tone Cable uses the Windows audio path.");
-			tips.SetToolTip(eventDrivenCaptureCheck, "Improves compatibility with USB guitar cables that do not natively use Rocksmith's 48 kHz input format. Windows audio events may also reduce latency on some machines. Restart Rocksmith after changing it.");
 			tips.SetToolTip(cableForPlayerTwoCheck, "Adds the Rocksmith Audio Bridge Real Tone Cable device after the configured ASIO input. RS_ASIO.ini is not changed. Applies live while Rocksmith is connected.");
 			tips.SetToolTip(inputGainEnableCheck, "Adds gain to the guitar signal before Rocksmith hears it. 0 dB leaves the input unchanged. Applies live.");
 			tips.SetToolTip(inputGainSlider, "Input gain from 0 to +20 dB. Type an exact value in the box or nudge by 0.1 dB.");
@@ -2282,10 +2269,6 @@ namespace RSMods.Audio
 				else
 					inputChip.Set(mode == AudioInputMode.Asio ? "ASIO input" : mode == AudioInputMode.Cable ? "Cable input" : "RS_ASIO not installed",
 						mode == AudioInputMode.Unavailable ? ChipTone.Warn : ChipTone.Info);
-				// The event-driven option only affects the plain cable path, so hide it under ASIO
-				// (RS_ASIO owns capture there) rather than showing an inert control.
-				eventDrivenCaptureCheck.Visible = mode == AudioInputMode.Cable;
-				eventDrivenCaptureHint.Visible = mode == AudioInputMode.Cable;
 				cableForPlayerTwoCheck.Visible = mode == AudioInputMode.Asio;
 				cableForPlayerTwoHint.Visible = mode == AudioInputMode.Asio;
 				inputModeLabel.Text = mode == AudioInputMode.Unavailable
@@ -2303,25 +2286,10 @@ namespace RSMods.Audio
 				syncingInputMode = false;
 				syncingCableForPlayerTwo = false;
 				inputSelector.Enabled = false;
-				eventDrivenCaptureCheck.Visible = false;
-				eventDrivenCaptureHint.Visible = false;
 				cableForPlayerTwoCheck.Visible = false;
 				cableForPlayerTwoHint.Visible = false;
 				inputChip.Set("Input files conflict", ChipTone.Bad);
 				inputModeLabel.Text = error.Message;
-			}
-		}
-
-		private void SaveEventDrivenCapture()
-		{
-			try
-			{
-				WriteModernCableInput(eventDrivenCaptureCheck.Checked);
-				SetStatus("USB cable compatibility mode " + (eventDrivenCaptureCheck.Checked ? "on" : "off") + ". Restart Rocksmith to apply.", ChipTone.Good);
-			}
-			catch (Exception error)
-			{
-				SetStatus("Could not save the cable capture setting: " + error.Message, ChipTone.Bad);
 			}
 		}
 
@@ -2357,13 +2325,6 @@ namespace RSMods.Audio
 				isCommandRunning = false;
 				UpdateState();
 			}
-		}
-
-		// The bridge writes only its own key and always keeps it in [Mod Settings], where the game DLL
-		// reads it. This preserves every unrelated line without relying on the main window's settings table.
-		private static void WriteModernCableInput(bool enabled)
-		{
-			WriteModSetting(RSMods.ReadSettings.ModernCableInputIdentifier, enabled);
 		}
 
 		private static void WriteModSetting(string identifier, bool enabled)
@@ -2785,7 +2746,7 @@ namespace RSMods.Audio
 			File.WriteAllLines(iniPath, lines);
 		}
 
-		// Surgical single-line write, like WriteModernCableInput: this runs in the bridge process, which
+		// Surgical single-line write, like WriteModSetting: this runs in the bridge process, which
 		// never loads the main window's settings table, so a full rewrite would wipe every other setting.
 		private static void WriteInputGain(int tenths)
 		{
@@ -2862,7 +2823,7 @@ namespace RSMods.Audio
 			catch (Exception error) { SetStatus("Could not save the ceiling: " + error.Message, ChipTone.Bad); }
 		}
 
-		// Surgical single-line write shared by the bridge-owned RSMods.ini settings (see WriteModernCableInput).
+		// Surgical single-line write shared by the bridge-owned RSMods.ini settings (see WriteModSetting).
 		private static void WriteBridgeSetting(string identifier, string value)
 		{
 			WriteModSetting(identifier, value);
