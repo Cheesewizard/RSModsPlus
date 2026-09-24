@@ -1,13 +1,13 @@
-# RSModsPlus runtime package
+# Rocksmith Audio Bridge runtime package
 
 This package contains exactly four runtime binaries:
 
 - `xinput1_3.dll` in the Rocksmith installation directory
-- `rsmodsplus.dll` in the Rocksmith installation directory
 - `RocksmithAudioBridge.dll` in the Rocksmith installation directory
+- `RocksmithAudioBridgeAsio.dll` in the Rocksmith installation directory
 - `RSMods.exe` in the Rocksmith installation directory
 
-The FretNet model and its CQT filters are embedded inside `rsmodsplus.dll` in the main game folder.
+The FretNet model and its CQT filters are embedded inside `RocksmithAudioBridge.dll` in the main game folder.
 The settings application's background mode runs inference automatically while
 the game is open. There is no Python dependency, loose model, model download,
 or manual service-start step. Supporting native/managed runtime DLLs and tools are embedded in RSMods.exe and
@@ -20,7 +20,7 @@ readme file. RSMods.exe embeds and verifies its supporting runtime payload.
 
 Close Rocksmith and the settings application, back up the files being replaced,
 then extract the complete package into the Rocksmith 2014 installation directory.
-Keep all four binaries from the same package. `RocksmithAudioBridge.dll` is used
+Keep all four binaries from the same package. `RocksmithAudioBridgeAsio.dll` is used
 only for optional ASIO output routing. Public builds need no research probe or
 developer DLL.
 

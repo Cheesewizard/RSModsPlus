@@ -21,7 +21,7 @@ namespace RSMods.Tests
 				File.WriteAllText(driver, "driver fixture");
 				File.WriteAllText(settings,
 					"[Config]\r\nEnableWasapiInputs=0\r\nEnableAsio=1\r\n\r\n"
-					+ "[Asio.Output]\r\nDriver=Rocksmith Audio Bridge\r\n\r\n"
+					+ "[Asio.Output]\r\nDriver=Rocksmith Audio Bridge ASIO\r\n\r\n"
 					+ "[Asio.Input.0]\r\nDriver=M-Audio M-Track Solo and Duo ASIO\r\nChannel=0\r\n\r\n"
 					+ "[Asio.Input.1]\r\nDriver=\r\n\r\n[Asio.Input.Mic]\r\nDriver=\r\n");
 

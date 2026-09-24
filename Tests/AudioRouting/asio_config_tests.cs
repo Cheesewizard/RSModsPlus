@@ -42,7 +42,7 @@ namespace RSMods.Tests
 				Require(File.ReadAllText(path) == original, "Reading link state must not modify RS_ASIO.ini.");
 
 				// An ini the user pointed at the bridge reads back as linked, and stays untouched.
-				string linked = "[Config]\r\nEnableWasapiOutputs=0\r\nEnableAsio=1\r\n[Asio.Output]\r\nDriver=Rocksmith Audio Bridge\r\nBaseChannel=2\r\n[Asio.Input.0]\r\nDriver=Rocksmith Audio Bridge\r\nChannel=1\r\n";
+				string linked = "[Config]\r\nEnableWasapiOutputs=0\r\nEnableAsio=1\r\n[Asio.Output]\r\nDriver=Rocksmith Audio Bridge ASIO\r\nBaseChannel=2\r\n[Asio.Input.0]\r\nDriver=Rocksmith Audio Bridge ASIO\r\nChannel=1\r\n";
 				File.WriteAllText(path, linked);
 				Require(AsioProxySetup.IsLinked(directory), "An ini pointed at the bridge must report as linked.");
 				Require(File.ReadAllText(path) == linked, "Reading link state must not modify a linked RS_ASIO.ini.");

@@ -96,23 +96,23 @@ on the same installation is not an isolated clean-machine test.
 ### Evidence to capture for every case
 
 - Test ID, date, Windows version, input device, output device, and whether Rocksmith/RSMods ran elevated.
-- SHA-256 hashes of `xinput1_3.dll`, `RSMods.exe`, `rsmodsplus.dll`, and `RocksmithAudioBridge.dll` from
+- SHA-256 hashes of `xinput1_3.dll`, `RSMods.exe`, `RocksmithAudioBridge.dll`, and `RocksmithAudioBridgeAsio.dll` from
   the release package and installed game folder.
 - Before/after SHA-256 of `RS_ASIO.ini`. Any case that does not explicitly ask the tester to edit it
   must leave it byte-for-byte unchanged.
-- Presence of the 32-bit `HKLM\Software\ASIO\Rocksmith Audio Bridge` registration and the selected
+- Presence of the 32-bit `HKLM\Software\ASIO\Rocksmith Audio Bridge ASIO` registration and the selected
   per-user proxy target.
 - Relevant Audio Bridge status text, `RSMods-log.txt`, `RS_ASIO-log.txt`, and a short audible/gameplay
   observation. A created WAV is not sufficient: play it and confirm the expected source is present.
 
 ### AB-01 — Install without opting into the ASIO proxy
 
-Start from a clean VM/Sandbox with no `Rocksmith Audio Bridge` ASIO registration. Install the release,
+Start from a clean VM/Sandbox with no `Rocksmith Audio Bridge ASIO` registration. Install the release,
 then launch Rocksmith without pressing **Apply output** on an ASIO device.
 
 Expected:
 
-- All four matching runtime binaries are installed, including `RocksmithAudioBridge.dll`.
+- All four matching runtime binaries are installed, including `RocksmithAudioBridgeAsio.dll`.
 - The proxy is not registered and no administrator prompt appears during installation or ordinary launch.
 - Rocksmith and non-ASIO Bridge features remain usable; the desktop Bridge starts in the background and
   has a taskbar button.
@@ -131,12 +131,12 @@ Expected:
 
 ### AB-03 — Driver file missing from a partial/broken install
 
-In a disposable install, move `RocksmithAudioBridge.dll` out of the game folder before pressing
+In a disposable install, move `RocksmithAudioBridgeAsio.dll` out of the game folder before pressing
 **Apply output** for an ASIO-capable device. Restore it after the test.
 
 Expected:
 
-- The UI says the driver file is missing and asks for RSModsPlus to be reinstalled.
+- The UI says the driver file is missing and asks for Rocksmith Audio Bridge to be reinstalled.
 - No registry or `RS_ASIO.ini` change occurs and the desktop Bridge stays responsive.
 
 ### AB-04 — Proxy registered but RS_ASIO not linked to it
@@ -146,7 +146,7 @@ Complete registration but leave `RS_ASIO.ini` pointed at the real ASIO driver.
 Expected:
 
 - Apply records the selected real driver and gives explicit instructions to set the relevant output and
-  paired input `Driver` entries to `Rocksmith Audio Bridge`.
+  paired input `Driver` entries to `Rocksmith Audio Bridge ASIO`.
 - It does not claim that the Bridge is already in the running game's signal chain.
 - ASIO game-mix recording remains unavailable until the INI is configured and Rocksmith is relaunched.
 
@@ -185,7 +185,7 @@ Expected:
 ### AB-08 — Fully configured first launch
 
 Register the proxy, select the real ASIO target, set the relevant RS_ASIO output and paired input drivers
-to `Rocksmith Audio Bridge`, then launch Rocksmith with the interface connected.
+to `Rocksmith Audio Bridge ASIO`, then launch Rocksmith with the interface connected.
 
 Expected: input and output use the real ASIO device, the Bridge reports the proxy as loaded, audible
 playback works, and a played-back game-mix take contains both game and instrument audio.

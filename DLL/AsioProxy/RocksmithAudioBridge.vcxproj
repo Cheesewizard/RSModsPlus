@@ -11,7 +11,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration"><ConfigurationType>DynamicLibrary</ConfigurationType><PlatformToolset>v143</PlatformToolset><UseDebugLibraries>false</UseDebugLibraries></PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <PropertyGroup><TargetName>RocksmithAudioBridge</TargetName><OutDir>$(ProjectDir)..\..\Installer\Resources\$(Configuration)\</OutDir><IntDir>$(ProjectDir)..\..\build\AsioProxy\$(Configuration)\</IntDir></PropertyGroup>
+  <PropertyGroup><TargetName>RocksmithAudioBridgeAsio</TargetName><OutDir>$(ProjectDir)..\..\Installer\Resources\$(Configuration)\</OutDir><IntDir>$(ProjectDir)..\..\build\AsioProxy\$(Configuration)\</IntDir></PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile><LanguageStandard>stdcpp17</LanguageStandard><RuntimeLibrary>MultiThreaded</RuntimeLibrary><Optimization>MaxSpeed</Optimization><PrecompiledHeader>NotUsing</PrecompiledHeader><PreprocessorDefinitions>WIN32;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
     <Link><ModuleDefinitionFile>RocksmithAudioBridge.def</ModuleDefinitionFile><AdditionalDependencies>ole32.lib;advapi32.lib;propsys.lib;%(AdditionalDependencies)</AdditionalDependencies><GenerateDebugInformation>true</GenerateDebugInformation></Link>
@@ -23,7 +23,7 @@
        driver is registered by path, so replacing the file in place keeps the registration. -->
   <Target Name="CollectGameDeployFiles" BeforeTargets="DeployToGame">
     <ItemGroup>
-      <GameDeployFile Include="$(TargetPath)" Destination="$(RocksmithInstallDir)\RocksmithAudioBridge.dll" />
+      <GameDeployFile Include="$(TargetPath)" Destination="$(RocksmithInstallDir)\RocksmithAudioBridgeAsio.dll" />
     </ItemGroup>
   </Target>
   <Import Project="$(MSBuildThisFileDirectory)..\..\DeployToGame.targets" />

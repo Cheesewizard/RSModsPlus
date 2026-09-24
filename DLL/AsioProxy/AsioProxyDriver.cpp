@@ -1,6 +1,6 @@
-// Rocksmith Audio Bridge - a proxy ASIO driver.
+// Rocksmith Audio Bridge ASIO - the proxy ASIO driver of Rocksmith Audio Bridge.
 //
-// It presents itself to RS_ASIO as an ASIO driver named "Rocksmith Audio Bridge", loads the user's
+// It presents itself to RS_ASIO as an ASIO driver named "Rocksmith Audio Bridge ASIO", loads the user's
 // real ASIO driver (the one they were using), and forwards every IAsioDriver call to it unchanged -
 // so playback is still true ASIO with negligible added latency. In the buffer callback it copies the
 // output channels to a sink (the RSModsPlus host records the wet mix from there). This is the only
@@ -201,10 +201,8 @@ namespace
 			RegCloseKey(key);
 		}
 		if (buffer[0] != L'\0') return buffer;
-		// The wrapped driver name comes only from HKCU Target (set by the GUI's Apply output). We deliberately
-		// do NOT fall back to reading RS_ASIO.ini: that file is the user's to own, and the old
-		// OriginalOutputDriver.RSMods stash was written by the same GUI link/unlink machinery that could silently
-		// revert the user's ini, so it is gone. An empty Target means the GUI setup was never run.
+		// The wrapped driver name comes only from HKCU Target (set by the GUI's Install driver). An empty
+		// Target means the GUI setup was never run.
 		return std::wstring();
 	}
 
@@ -316,7 +314,7 @@ public:
 		ProxyLog("init: host handle %p; starting Virtual (real device binds at createBuffers when PreferReal=1)", sysHandle);
 		return 1;
 	}
-	void getDriverName(char* name) override { if (name) strcpy_s(name, 32, "Rocksmith Audio Bridge"); }
+	void getDriverName(char* name) override { if (name) strcpy_s(name, 32, "Rocksmith Audio Bridge ASIO"); }
 	long getDriverVersion() override { return m_real ? m_real->getDriverVersion() : 1; }
 	void getErrorMessage(char* string) override { if (m_real) m_real->getErrorMessage(string); else if (string) string[0] = 0; }
 	ASIOError start() override
@@ -515,7 +513,7 @@ private:
 		}
 		ASIOSampleRate current = 0.0;
 		if (m_real->getSampleRate(&current) == 0) m_sampleRate = current;
-		const std::string message = "[Rocksmith Audio Bridge] Real ASIO device stayed at "
+		const std::string message = "[Rocksmith Audio Bridge ASIO] Real ASIO device stayed at "
 			+ std::to_string(static_cast<long>(m_sampleRate))
 			+ " Hz instead of 48000; game audio will be pitched and input capture may not start.\n";
 		OutputDebugStringA(message.c_str());
@@ -1204,7 +1202,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
 
 namespace
 {
-	const wchar_t* kAsioName = L"Rocksmith Audio Bridge";
+	// The ASIO list name (what RS_ASIO.ini Driver= matches) must equal getDriverName() and
+	// AsioProxySetup.ProxyName in the GUI, and fit ASIO's 32-byte driver name buffer.
+	const wchar_t* kAsioName = L"Rocksmith Audio Bridge ASIO";
 	const wchar_t* kClsidString = L"{7B2E5C10-9F3A-4D6B-A1C8-2E4F6A8B0D31}";
 
 	LSTATUS SetValue(HKEY root, const wchar_t* sub, const wchar_t* name, const wchar_t* value)

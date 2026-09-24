@@ -35,7 +35,7 @@ namespace RSModsPlus.Tests
 			var serviceDirectory = directory;
 			Directory.CreateDirectory(serviceDirectory);
 			File.Copy(arguments[0], Path.Combine(serviceDirectory, "RSMods.exe"), true);
-			File.WriteAllText(Path.Combine(directory, "rsmodsplus.dll"), "isolated launcher fixture");
+			File.WriteAllText(Path.Combine(directory, "RocksmithAudioBridge.dll"), "isolated launcher fixture");
 			using (var host = Process.Start(new ProcessStartInfo(arguments[0]) { UseShellExecute = false, CreateNoWindow = true }))
 			{
 				try
@@ -72,11 +72,11 @@ namespace RSModsPlus.Tests
 						output.Write(4, 99u);
 						Require(MlServiceConnection.Read(host.Id, ".TestControl").Message.Contains("mismatch"), "Protocol mismatch is explicit");
 					}
-					File.Delete(Path.Combine(directory, "rsmodsplus.dll"));
+					File.Delete(Path.Combine(directory, "RocksmithAudioBridge.dll"));
 					MlServiceConnection.RequestRestart(host.Id);
 					WaitUntil(() => MlServiceConnection.Read(host.Id).Message.Contains("files missing"));
 					Require(File.ReadAllLines(starts).Length == 3, "Missing package reports failure without starting a child");
-					File.WriteAllText(Path.Combine(directory, "rsmodsplus.dll"), "isolated launcher fixture");
+					File.WriteAllText(Path.Combine(directory, "RocksmithAudioBridge.dll"), "isolated launcher fixture");
 					MlServiceConnection.RequestRestart(host.Id);
 					WaitUntil(() => File.ReadAllLines(starts).Length == 4);
 					Require(true, "Manual restart recovers after missing package is restored");

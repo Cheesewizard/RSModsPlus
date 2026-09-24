@@ -9,7 +9,7 @@
 		<OutputPath>bin\$(Configuration)\</OutputPath>
 		<Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
 		<Deterministic>true</Deterministic>
-		<AssemblyName>rsmodsplus</AssemblyName>
+		<AssemblyName>RocksmithAudioBridge</AssemblyName>
 		<RootNamespace>RSModsPlus</RootNamespace>
 		<PlatformTarget>x64</PlatformTarget>
 		<LangVersion>7.3</LangVersion>

@@ -5149,7 +5149,7 @@
             this.tab_RSModsPlus.Name = "tab_RSModsPlus";
             this.tab_RSModsPlus.Size = new System.Drawing.Size(1150, 513);
             this.tab_RSModsPlus.TabIndex = 10;
-            this.tab_RSModsPlus.Text = "RSModsPlus";
+            this.tab_RSModsPlus.Text = "Rocksmith Audio Bridge";
             //
             // groupBox_RSModsPlus_CableInput
             //

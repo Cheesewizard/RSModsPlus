@@ -9,7 +9,7 @@ Get-ChildItem (Join-Path $ProjectDirectory 'Lib') -Recurse -File | Where-Object 
 	$files[$relative]=$_.FullName
 }
 foreach ($file in [IO.File]::ReadAllLines($References)) {
-	if ([IO.Path]::GetFileName($file) -ne 'RSModsPlus.dll' -and [IO.Path]::GetExtension($file) -eq '.dll') { $files[[IO.Path]::GetFileName($file)]=$file }
+	if ([IO.Path]::GetFileName($file) -ne 'RocksmithAudioBridge.dll' -and [IO.Path]::GetExtension($file) -eq '.dll') { $files[[IO.Path]::GetFileName($file)]=$file }
 }
 $onnx=Join-Path $env:USERPROFILE '.nuget/packages/microsoft.ml.onnxruntime/1.24.4'
 Get-ChildItem (Join-Path $onnx 'runtimes/win-x64/native') -Filter '*.dll' | ForEach-Object { $files[$_.Name]=$_.FullName }

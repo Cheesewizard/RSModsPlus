@@ -10,20 +10,21 @@ using Microsoft.Win32;
 namespace RSMods.Audio
 {
 	/// <summary>
-	/// Installs the "Rocksmith Audio Bridge" proxy ASIO driver and records which real device it forwards to.
+	/// Installs the "Rocksmith Audio Bridge ASIO" proxy driver and records which real device it forwards to.
 	/// It does exactly two things: register the proxy machine-wide (HKLM, one elevation prompt, because ASIO
 	/// hosts enumerate drivers only from HKLM) and store the wrapped driver name in
 	/// HKCU\Software\RSMods\AsioProxy\Target so the proxy can resolve the real device at boot.
 	///
 	/// It NEVER edits RS_ASIO.ini. Pointing RS_ASIO at the bridge (Output and Input Driver=Rocksmith Audio
-	/// Bridge) is left entirely to the user, so the GUI can never silently revert an ini the user configured.
+	/// Bridge ASIO) is left entirely to the user, so the GUI can never silently revert an ini the user configured.
 	/// The old Link/Unlink machinery did exactly that on the bridge power toggle and stranded users on the raw
 	/// driver, which then failed to boot when the interface was absent. IsLinked only READS the ini to report
 	/// whether the user has pointed it at the bridge; nothing here writes it.
 	/// </summary>
 	internal static class AsioProxySetup
 	{
-		public const string ProxyName = "Rocksmith Audio Bridge";
+		// Must match kAsioName / getDriverName() in DLL/AsioProxy/AsioProxyDriver.cpp.
+		public const string ProxyName = "Rocksmith Audio Bridge ASIO";
 		private const string TargetKey = @"Software\RSMods\AsioProxy";
 		// Must match CLSID_RocksmithAudioBridge in DLL/AsioProxy/AsioProxyDriver.cpp.
 		private const string Clsid = "{7B2E5C10-9F3A-4D6B-A1C8-2E4F6A8B0D31}";
@@ -79,7 +80,7 @@ namespace RSMods.Audio
 		/// declines the elevation prompt.</summary>
 		public static void Register(string proxyDllPath)
 		{
-			if (!File.Exists(proxyDllPath)) throw new FileNotFoundException("The audio bridge driver file is missing from the game folder. Reinstall RSModsPlus to restore it.", proxyDllPath);
+			if (!File.Exists(proxyDllPath)) throw new FileNotFoundException("The audio bridge driver file is missing from the game folder. Reinstall Rocksmith Audio Bridge to restore it.", proxyDllPath);
 			RunRegsvr32(proxyDllPath, unregister: false);
 		}
 
@@ -136,6 +137,14 @@ namespace RSMods.Audio
 			using (var key = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry32)
 				.CreateSubKey(TargetKey))
 				key.SetValue("PreferReal", preferReal ? 1 : 0, RegistryValueKind.DWord);
+		}
+
+		/// <summary>Read-only: RS_ASIO.ini's [Asio.Output] Driver, or "" when the file or line is missing.</summary>
+		public static string ReadOutputDriver(string gameDirectory)
+		{
+			if (string.IsNullOrWhiteSpace(gameDirectory)) return "";
+			string ini = Path.Combine(Path.GetFullPath(gameDirectory), "RS_ASIO.ini");
+			return File.Exists(ini) ? ReadDriver(ini) : "";
 		}
 
 		// RS_ASIO reads its .ini itself; we only ever READ it, to report link state. We never write it.

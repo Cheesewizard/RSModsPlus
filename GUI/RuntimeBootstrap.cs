@@ -57,11 +57,11 @@ namespace RSMods
 			}
 			AppDomain.CurrentDomain.AssemblyResolve += ResolveAssembly;
 			var gameDirectory = AppDomain.CurrentDomain.BaseDirectory;
-			var libraryPath = Path.Combine(gameDirectory, "rsmodsplus.dll");
-			if (!File.Exists(libraryPath)) throw new FileNotFoundException("rsmodsplus.dll must be installed in the main game folder.", libraryPath);
-			assemblies["RSModsPlus"] = libraryPath;
+			var libraryPath = Path.Combine(gameDirectory, "RocksmithAudioBridge.dll");
+			if (!File.Exists(libraryPath)) throw new FileNotFoundException("RocksmithAudioBridge.dll must be installed in the main game folder.", libraryPath);
+			assemblies["RocksmithAudioBridge"] = libraryPath;
 			var library = Assembly.LoadFrom(libraryPath);
-			if (!string.Equals(library.Location, libraryPath, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("rsmodsplus.dll was loaded from an unexpected location.");
+			if (!string.Equals(library.Location, libraryPath, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("RocksmithAudioBridge.dll was loaded from an unexpected location.");
 			foreach (var name in new[] { "soxr.dll", "onnxruntime.dll", "rswindowcapture.dll" })
 			{
 				if (LoadLibraryEx(Path.Combine(DirectoryPath, name), IntPtr.Zero, 0x1100) == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot load bundled " + name);

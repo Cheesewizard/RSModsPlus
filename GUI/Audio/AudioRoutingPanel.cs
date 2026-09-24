@@ -1109,7 +1109,7 @@ namespace RSMods.Audio
 			{
 				try
 				{
-					AsioProxySetup.Unregister(Path.Combine(gameDirectory, "RocksmithAudioBridge.dll"));
+					AsioProxySetup.Unregister(Path.Combine(gameDirectory, "RocksmithAudioBridgeAsio.dll"));
 					RefreshEnvironment();
 					UpdateOutputHint();
 					SetStatus("Audio bridge driver removed. Point RS_ASIO.ini back at your real ASIO device, then relaunch Rocksmith.", ChipTone.Good);
@@ -1302,7 +1302,7 @@ namespace RSMods.Audio
 			tips.SetToolTip(captureMode, "Both formats record wet + dry WAVs. MP4 also records the Rocksmith window.");
 			tips.SetToolTip(inputSelector, "ASIO uses RS_ASIO and your interface for the lowest latency. The Real Tone Cable uses the Windows audio path.");
 			tips.SetToolTip(eventDrivenCaptureCheck, "Improves compatibility with USB guitar cables that do not natively use Rocksmith's 48 kHz input format. Windows audio events may also reduce latency on some machines. Restart Rocksmith after changing it.");
-			tips.SetToolTip(cableForPlayerTwoCheck, "Adds the RSModsPlus Real Tone Cable device after the configured ASIO input. RS_ASIO.ini is not changed. Applies live while Rocksmith is connected.");
+			tips.SetToolTip(cableForPlayerTwoCheck, "Adds the Rocksmith Audio Bridge Real Tone Cable device after the configured ASIO input. RS_ASIO.ini is not changed. Applies live while Rocksmith is connected.");
 			tips.SetToolTip(inputGainEnableCheck, "Adds gain to the guitar signal before Rocksmith hears it. 0 dB leaves the input unchanged. Applies live.");
 			tips.SetToolTip(inputGainSlider, "Input gain from 0 to +20 dB. Type an exact value in the box or nudge by 0.1 dB.");
 			tips.SetToolTip(gainInput, "Input gain from 0 to +20 dB. Type an exact value or nudge by 0.1 dB.");
@@ -2021,9 +2021,9 @@ namespace RSMods.Audio
 						return;
 					}
 					if (!AsioProxySetup.IsProxyRegistered())
-						AsioProxySetup.Register(Path.Combine(gameDirectory, "RocksmithAudioBridge.dll"));
+						AsioProxySetup.Register(Path.Combine(gameDirectory, "RocksmithAudioBridgeAsio.dll"));
 					// Record which real device the proxy forwards to (HKCU Target). We do NOT touch RS_ASIO.ini:
-					// the user points RS_ASIO's Output and Input Driver at "Rocksmith Audio Bridge" themselves.
+					// the user points RS_ASIO's Output and Input Driver at "Rocksmith Audio Bridge ASIO" themselves.
 					// The shared bridge host is what lets an interface that is absent at launch be adopted later
 					// (the proxy boots virtually, RS_ASIO keeps its device), but that only holds while the ini
 					// names the bridge, so leaving it to the user means we can never silently revert it.

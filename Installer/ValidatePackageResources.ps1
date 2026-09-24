@@ -26,7 +26,7 @@ function Get-PeMachine([string]$path) {
 
 $expected = @{
     xinput1_3 = Join-Path $repositoryRoot 'Installer\Resources\Release Public\xinput1_3.dll'
-    RocksmithAudioBridge = Join-Path $repositoryRoot 'Installer\Resources\Release\RocksmithAudioBridge.dll'
+    RocksmithAudioBridge = Join-Path $repositoryRoot 'Installer\Resources\Release\RocksmithAudioBridgeAsio.dll'
 }
 
 foreach ($name in $expected.Keys) {
@@ -45,9 +45,10 @@ foreach ($name in $expected.Keys) {
     Write-Output ("PASS: {0} -> {1} ({2})" -f $name, $authoritative, $hash)
 }
 
+# Installer\Resources\RocksmithAudioBridge.dll is no longer a legacy proxy copy: since the 2026-09-23 file
+# rename it is the managed runtime (RSMods GUI build output), so it is not compared against the proxy.
 $legacyInputs = @(
-    (Join-Path $repositoryRoot 'Installer\Resources\xinput1_3.dll'),
-    (Join-Path $repositoryRoot 'Installer\Resources\RocksmithAudioBridge.dll')
+    (Join-Path $repositoryRoot 'Installer\Resources\xinput1_3.dll')
 )
 foreach ($legacyInput in $legacyInputs) {
     if (Test-Path -LiteralPath $legacyInput -PathType Leaf) {

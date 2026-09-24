@@ -17,7 +17,7 @@ namespace RS2014_Mod_Installer
                 // on-demand opt-in from the audio bridge GUI when they open a feature that needs it. Placing the
                 // file at install (instead of the GUI writing it out at runtime) keeps this out of dropper-style
                 // antivirus heuristics.
-                File.WriteAllBytes(Path.Combine(@rocksmithLocation, "RocksmithAudioBridge.dll"), Properties.Resources.RocksmithAudioBridge);
+                File.WriteAllBytes(Path.Combine(@rocksmithLocation, "RocksmithAudioBridgeAsio.dll"), Properties.Resources.RocksmithAudioBridge);
 
                 if (File.Exists(Path.Combine(@rocksmithLocation, "D3DX9_42.dll")) && new FileInfo(Path.Combine(@rocksmithLocation, "D3DX9_42.dll")).Length >= 300000)
                     File.Delete(Path.Combine(@rocksmithLocation, "D3DX9_42.dll"));

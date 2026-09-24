@@ -1,4 +1,4 @@
-LIBRARY RocksmithAudioBridge
+LIBRARY RocksmithAudioBridgeAsio
 EXPORTS
 	DllGetClassObject   PRIVATE
 	DllCanUnloadNow     PRIVATE
