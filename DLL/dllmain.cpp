@@ -117,6 +117,15 @@ const bool ensureForcedTopMode = false;
 /// <param name="lParam"> - Data Sent</param>
 /// <returns>Verification that message was sent.</returns>
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM keyPressed, LPARAM lParam) {
+	// Overlay key picker: every key goes to the picker (none reaches the game or fires a hotkey) until one is
+	// released. Closing the overlay cancels it.
+	if (Keybindings::IsCapturingKey()) {
+		if (!Menu::audioBridgeMenuEnabled) Keybindings::CancelKeyCapture();
+		else if (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_CHAR) {
+			if (msg == WM_KEYUP || msg == WM_SYSKEYUP) Keybindings::CaptureKey(keyPressed);
+			return true;
+		}
+	}
 	// The overlay toggle is owned by RSModsPlus. Consume it before ImGui's general keyboard capture so
 	// keyboard navigation inside the focused panel cannot prevent the same key from closing the panel.
 	if (GameState::GameLoaded && keyPressed == VK_OEM_5 && (msg == WM_KEYDOWN || msg == WM_KEYUP)) {

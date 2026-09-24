@@ -176,6 +176,34 @@ namespace Keybindings {
 		}
 	}
 
+	namespace
+	{
+		std::atomic<bool> capturingKey{ false };
+		std::atomic<unsigned int> capturedKey{ 0 };
+	}
+
+	void BeginKeyCapture() { capturedKey = 0; capturingKey = true; }
+	void CancelKeyCapture() { capturingKey = false; }
+	bool IsCapturingKey() { return capturingKey.load(); }
+
+	void CaptureKey(WPARAM keyPressed)
+	{
+		// Modifiers alone are not bindable (the hotkey system matches one key); keep waiting.
+		if (keyPressed == VK_SHIFT || keyPressed == VK_CONTROL || keyPressed == VK_MENU
+			|| keyPressed == VK_LSHIFT || keyPressed == VK_RSHIFT || keyPressed == VK_LCONTROL
+			|| keyPressed == VK_RCONTROL || keyPressed == VK_LMENU || keyPressed == VK_RMENU
+			|| keyPressed == VK_LWIN || keyPressed == VK_RWIN) return;
+		capturingKey = false;
+		if (keyPressed == VK_ESCAPE || keyPressed == VK_OEM_5) return;   // cancel
+		capturedKey = static_cast<unsigned int>(keyPressed);
+	}
+
+	bool TakeCapturedKey(unsigned int& vk)
+	{
+		vk = capturedKey.exchange(0);
+		return vk != 0;
+	}
+
 	void HandleKeyUp(WPARAM keyPressed)
 	{
 		if (!GameState::GameLoaded) return; // Game must not be on the startup videos or it will crash

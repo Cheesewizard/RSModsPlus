@@ -117,7 +117,72 @@ namespace Overlay
 				wchar_t name[64]{};
 				if (scan && GetKeyNameTextW(static_cast<LONG>(scan << 16), name, 64) > 0) return Utf8(name);
 			}
-			return "F9";
+			return "not set";
+		}
+
+		// Record hotkey picker. Keys the game, Windows or Steam already own are refused, and so is any key another
+		// RSMods binding uses (a shared key fires both: F9 used to start a recording AND cycle base tuning).
+		const char* ReservedKeyReason(unsigned int vk)
+		{
+			switch (vk) {
+			case VK_F8: return "F8 has known issues in Rocksmith (per the RSMods developer).";
+			case VK_F10: return "F10 is a Windows menu key.";
+			case VK_F11: return "F11 is Rocksmith's fullscreen key (Alt+Enter also sends it).";
+			case VK_F12: return "F12 is Steam's screenshot key.";
+			case VK_RETURN: case VK_SPACE: case VK_TAB: case VK_BACK:
+			case VK_UP: case VK_DOWN: case VK_LEFT: case VK_RIGHT:
+				return "That key drives Rocksmith's menus.";
+			default: return nullptr;
+			}
+		}
+
+		// "DropPedalBaseTuningKey" -> "Drop Pedal base tuning": the ini name without "Key", split into words, with
+		// the few names whose split reads badly spelled out.
+		std::string KeyBindDisplayName(const std::string& name)
+		{
+			static const std::map<std::string, std::string, std::less<>> spelled = {
+				{ "DropPedalBaseTuningKey", "Drop Pedal base tuning" }, { "DropPedalToggleKey", "Drop Pedal on/off" },
+				{ "DropPedalPitchDownKey", "Drop Pedal pitch down" }, { "DropPedalPitchUpKey", "Drop Pedal pitch up" },
+				{ "RRSpeedKey", "Riff Repeater speed" }, { "SFXVolumeKey", "Effects volume" },
+				{ "CustomSongListTitles", "custom song list titles" }, { "MenuToggleKey", "the RSMods menu" },
+			};
+			if (const auto found = spelled.find(name); found != spelled.end()) return found->second;
+			std::string base = name.size() > 3 && name.compare(name.size() - 3, 3, "Key") == 0 ? name.substr(0, name.size() - 3) : name;
+			std::string words;
+			for (size_t i = 0; i < base.size(); ++i) {
+				const char c = base[i];
+				if (i > 0 && std::isupper(static_cast<unsigned char>(c)) && !std::isupper(static_cast<unsigned char>(base[i - 1]))) words += ' ';
+				words += (i > 0 && std::isupper(static_cast<unsigned char>(c))) ? static_cast<char>(std::tolower(static_cast<unsigned char>(c))) : c;
+			}
+			return words;
+		}
+
+		void RecordHotkeyPicker()
+		{
+			static std::string message;
+			unsigned int vk = 0;
+			if (Keybindings::TakeCapturedKey(vk)) {
+				const std::string clash = Settings::FindKeyBindUsing(vk, "RecordingHotkey");
+				if (const char* reason = ReservedKeyReason(vk)) message = reason;
+				else if (!clash.empty()) message = "That key is already used by " + KeyBindDisplayName(clash) + ". Pick another, or rebind that one in RSMods, Keybindings.";
+				else if (!Settings::SetKeyBind("RecordingHotkey", vk, true)) message = "That key can't be used as a hotkey.";
+				else message.clear();
+			}
+			const bool capturing = Keybindings::IsCapturingKey();
+			// Label on its own line and the button under it, so it lines up with Open folder above.
+			ImGui::TextUnformatted(capturing ? "Record hotkey: press a key (Esc cancels)" : ("Record hotkey: " + RecordHotkeyName()).c_str());
+			if (capturing) {
+				if (Button("Cancel")) Keybindings::CancelKeyCapture();
+			}
+			else if (Button("Change key", false, "Press this, then the key you want. Keys the game, Windows, Steam or another RSMods shortcut already use are refused.")) {
+				message.clear();
+				Keybindings::BeginKeyCapture();
+			}
+			if (!message.empty()) {
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(Color::Warn));
+				ImGui::TextWrapped("%s", message.c_str());
+				ImGui::PopStyleColor();
+			}
 		}
 
 		std::string FormatTime(double seconds)
@@ -1007,7 +1072,8 @@ namespace Overlay
 				std::filesystem::create_directories(folder, ec);
 				ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 			}
-			Caption(("Record hotkey: " + RecordHotkeyName() + ". Uses the format chosen above. Change the folder in RSMods, Rocksmith Audio Bridge page.").c_str());
+			RecordHotkeyPicker();
+			Caption("The hotkey uses the format chosen above. Change the folder in RSMods, Rocksmith Audio Bridge page.");
 			EndCard();
 		}
 

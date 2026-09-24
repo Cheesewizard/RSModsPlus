@@ -25,6 +25,14 @@ namespace Keybindings {
     void ToggleAudioBridgeRecording();
     void ToggleAudioBridgeRecording(bool video);
 
+    // Overlay key picker (Record page): while capturing, the next key released is handed to the overlay instead
+    // of acting as a hotkey. Esc and the overlay key cancel. The overlay polls TakeCapturedKey once per frame.
+    void BeginKeyCapture();
+    void CancelKeyCapture();
+    bool IsCapturingKey();
+    void CaptureKey(WPARAM keyPressed);
+    bool TakeCapturedKey(unsigned int& vk);
+
     void DispatchCommand(WPARAM keyPressed, const std::map<std::string, ModCommand, std::less<>>& commands);
 
     void HandleKeyUp(WPARAM keyPressed);

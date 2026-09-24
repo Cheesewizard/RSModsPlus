@@ -57,6 +57,10 @@ namespace Settings {
 
 	// Return INI Settings
 	unsigned int GetKeyBind(const std::string& name);
+	// Rebind a [Keybinds] entry from the overlay: live at once, saved to RSMods.ini when persist is set.
+	bool SetKeyBind(const char* name, unsigned int vk, bool persist);
+	// The keybind (other than except) already on vk, or "" if none; for the overlay picker's clash check.
+	std::string FindKeyBindUsing(unsigned int vk, const char* except);
 	int GetModSetting(const std::string& name);
 	std::string ReturnSettingValue(const std::string& name);
 	std::string ReturnNotewayColor(const std::string& name);

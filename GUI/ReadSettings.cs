@@ -362,7 +362,7 @@ namespace RSMods
             if (identifierToGrab == DropPedalPlayer2AsioChannelIdentifier)
                 return "-1";
 			if (identifierToGrab == RecordingHotkeyIdentifier)
-				return "VK_F9";
+				return "VK_F6";
 			if (identifierToGrab == CableForPlayerTwoIdentifier)
 				return "off";
             if (identifierToGrab == MonitorOutputIdentifier)

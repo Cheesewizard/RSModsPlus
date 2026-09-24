@@ -278,7 +278,7 @@ namespace RSMods.Audio
 			Keys savedRecordingHotkey;
 			if (!Enum.TryParse(RSMods.ReadSettings.ProcessSettings(RSMods.ReadSettings.RecordingHotkeyIdentifier), out savedRecordingHotkey)
 				|| Array.IndexOf(recordingHotkeys, savedRecordingHotkey) < 0)
-				savedRecordingHotkey = Keys.F9;
+				savedRecordingHotkey = Keys.F6;
 			syncingRecordingHotkey = true;
 			recordingHotkeySelector.SelectedItem = savedRecordingHotkey;
 			syncingRecordingHotkey = false;

@@ -237,7 +237,7 @@ void Settings::Initialize()
 		{"DropPedalPitchUpKey", "VK_OEM_PERIOD"},
 		{"DropPedalToggleKey", "VK_F7"},
 		{"DropPedalBaseTuningKey", "VK_F9"},
-		{"RecordingHotkey", "VK_F9"},
+		{"RecordingHotkey", "VK_F6"},
 
 		{"MasterVolumeKey", "5"},
 		{"SongVolumeKey", "6"},
@@ -422,7 +422,7 @@ void Settings::ReadKeyBinds() {
 		{ "DropPedalPitchUpKey", reader.GetValue("Keybinds", "DropPedalPitchUpKey", "VK_OEM_PERIOD")},
 		{ "DropPedalToggleKey", reader.GetValue("Keybinds", "DropPedalToggleKey", "VK_F7")},
 		{ "DropPedalBaseTuningKey", reader.GetValue("Keybinds", "DropPedalBaseTuningKey", "VK_F9")},
-		{ "RecordingHotkey", reader.GetValue("Keybinds", "RecordingHotkey", "VK_F9")},
+		{ "RecordingHotkey", reader.GetValue("Keybinds", "RecordingHotkey", "VK_F6")},
 
 		{ "MasterVolumeKey", reader.GetValue("Audio Keybindings", "MasterVolumeKey", "5") },
 		{ "SongVolumeKey", reader.GetValue("Audio Keybindings", "SongVolumeKey", "6") },
@@ -435,6 +435,19 @@ void Settings::ReadKeyBinds() {
 		{ "MutePlayer1Key", reader.GetValue("Audio Keybindings", "MutePlayer1Key", "X")},
 		{ "MutePlayer2Key", reader.GetValue("Audio Keybindings", "MutePlayer2Key", "C")}
 	};
+
+	// The recording hotkey shipped defaulting to F9, the Drop Pedal base-tuning key's default since before
+	// it existed, so every F9 press toggled a recording and base tuning looked broken (Philip 2026-09-24).
+	// Base tuning keeps its key; a recording key on the same key moves to F6 (the new default; F8 has known
+	// issues per the RSMods dev, F11 is the game's fullscreen key) and is saved, or is left unbound if base
+	// tuning itself is on F6. The overlay's Record page can rebind it.
+	if (modSettings["RecordingHotkey"] == modSettings["DropPedalBaseTuningKey"]) {
+		const bool f6Free = modSettings["DropPedalBaseTuningKey"] != "VK_F6";
+		LOG_WARNING("RecordingHotkey " << modSettings["RecordingHotkey"] << " collides with DropPedalBaseTuningKey; recording "
+			<< (f6Free ? "moved to VK_F6." : "left unbound; pick a key in the overlay's Record page.") << std::endl);
+		if (f6Free) SetKeyBind("RecordingHotkey", 0x75, true);   // VK_F6
+		else modSettings["RecordingHotkey"] = "";
+	}
 }
 
 /// <summary>
@@ -739,6 +752,43 @@ std::string Settings::ReturnSettingValue(const std::string& name) {
 /// </summary>
 /// <param name="vkString"> - std::map[key]</param>
 /// <returns></returns>
+namespace
+{
+	// Every entry ReadKeyBinds loads (Keybinds and Audio Keybindings), for the overlay picker's clash check.
+	const char* const kAllKeyBindNames[] = {
+		"ToggleLoftKey", "CustomSongListTitles", "ShowSongTimerKey", "ForceReEnumerationKey", "MenuToggleKey",
+		"RainbowStringsKey", "RainbowNotesKey", "RemoveLyricsKey", "RRSpeedKey", "TuningOffsetKey",
+		"ToggleExtendedRangeKey", "LoopStartKey", "LoopEndKey", "RewindKey", "DropPedalPitchDownKey",
+		"DropPedalPitchUpKey", "DropPedalToggleKey", "DropPedalBaseTuningKey", "RecordingHotkey",
+		"MasterVolumeKey", "SongVolumeKey", "Player1VolumeKey", "Player2VolumeKey", "MicrophoneVolumeKey",
+		"VoiceOverVolumeKey", "SFXVolumeKey", "DisplayMixerKey", "MutePlayer1Key", "MutePlayer2Key",
+	};
+}
+
+bool Settings::SetKeyBind(const char* name, unsigned int vk, bool persist) {
+	// The ini stores names ("VK_F6", "T"); prefer the VK_ spelling when the table has both.
+	std::string value;
+	for (const auto& [text, code] : keyMap) {
+		if (code != vk) continue;
+		if (value.empty() || (text.rfind("VK_", 0) == 0 && value.rfind("VK_", 0) != 0)) value = text;
+	}
+	if (value.empty()) return false;
+	modSettings[name] = value;
+	if (!persist) return true;
+	char executablePath[MAX_PATH]{};
+	GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
+	const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
+	if (WritePrivateProfileStringA("Keybinds", name, value.c_str(), iniPath.c_str())) return true;
+	LOG_ERROR("[SETTINGS] Could not persist " << name << std::endl);
+	return false;
+}
+
+std::string Settings::FindKeyBindUsing(unsigned int vk, const char* except) {
+	for (const char* name : kAllKeyBindNames)
+		if (std::string_view(name) != except && GetKeyBind(name) == vk) return name;
+	return "";
+}
+
 int Settings::GetVKCodeForString(const std::string& vkString) {
 	return keyMap[vkString];
 }
