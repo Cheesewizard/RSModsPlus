@@ -1,110 +1,24 @@
 #include "stdafx.h"
 #include "Keybindings.hpp"
 #include "Mods/DropPedal/DropPedalInput.hpp"
+#include "Audio/TakeRecorder.hpp"
+#include "Audio/SharedOutput.hpp"
 
 namespace Keybindings {
 	std::map<std::string, ModCommand, std::less<>> keyUpCommands;
 	std::map<std::string, ModCommand, std::less<>> keyDownCommands;
-	static std::atomic_bool audioBridgeFocusTransferPending = false;
 
-	constexpr UINT TOGGLE_RECORDING_MESSAGE = WM_APP + 0x421;
-	// Cross-process contract with the GUI: must equal ProductInfo.AUDIO_BRIDGE_WINDOW_TITLE
-	// (GUI/ProductInfo.cs), which is what the bridge window sets as its title. Change both together.
-	constexpr wchar_t AUDIO_BRIDGE_WINDOW_TITLE[] = L"RSModsPlus 4 \x00B7 Audio bridge";
-
-	bool ResolveAudioBridgePaths(std::wstring& executable, std::wstring& directory)
+	// Takes are recorded in game by Audio::Takes (audio in process, video by a hidden RSMods.exe).
+	// Hotkey path: the remembered format (AudioRouting.ini CaptureMode).
+	void ToggleAudioBridgeRecording()
 	{
-		wchar_t gamePath[MAX_PATH] = {};
-		const DWORD length = GetModuleFileNameW(nullptr, gamePath, static_cast<DWORD>(std::size(gamePath)));
-		if (length == 0 || length >= std::size(gamePath))
-		{
-			LOG_ERROR("[Audio Bridge] Cannot resolve the Rocksmith installation path." << std::endl);
-			return false;
-		}
-
-		directory = std::filesystem::path(gamePath).parent_path().wstring();
-		executable = std::filesystem::path(directory).append(L"RSMods.exe").wstring();
-		if (GetFileAttributesW(executable.c_str()) == INVALID_FILE_ATTRIBUTES)
-		{
-			LOG_ERROR("[Audio Bridge] RSMods.exe is missing; the bridge cannot start." << std::endl);
-			return false;
-		}
-		return true;
+		Audio::Takes::Toggle(Audio::Takes::PreferVideo());
 	}
 
-	bool EnsureAudioBridgeRunning(bool showWindow)
-	{
-		if (FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE) != nullptr) return true;
-
-		std::wstring executable;
-		std::wstring directory;
-		if (!ResolveAudioBridgePaths(executable, directory)) return false;
-
-		std::wstring command = L"\"" + executable + L"\" --audio-bridge \"" + directory
-			+ L"\" --rocksmith-pid " + std::to_wstring(GetCurrentProcessId());
-		if (showWindow) command += L" --show";
-		STARTUPINFOW startup = {};
-		startup.cb = sizeof(startup);
-		PROCESS_INFORMATION process = {};
-		if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
-			CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &process))
-		{
-			LOG_ERROR("[Audio Bridge] Cannot start the background bridge, error=" << GetLastError() << std::endl);
-			return false;
-		}
-		CloseHandle(process.hThread);
-		CloseHandle(process.hProcess);
-		LOG_INFO("[Audio Bridge] Started for Rocksmith process " << GetCurrentProcessId() << "." << std::endl);
-		return true;
-	}
-
-	bool IsAudioBridgeFocusTransferPending()
-	{
-		return audioBridgeFocusTransferPending.load(std::memory_order_acquire);
-	}
-
-	void NotifyGameFocused()
-	{
-		audioBridgeFocusTransferPending.store(false, std::memory_order_release);
-	}
-
-	static void PostRecordingToggle(WPARAM flags)
-	{
-		HWND bridgeWindow = FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE);
-		if (bridgeWindow == nullptr)
-		{
-			LOG_ERROR("[Audio Bridge] Recording toggle ignored because the background bridge is unavailable." << std::endl);
-			return;
-		}
-		if (!PostMessageW(bridgeWindow, TOGGLE_RECORDING_MESSAGE, flags, 0))
-			LOG_ERROR("[Audio Bridge] Cannot deliver the recording toggle, error=" << GetLastError() << std::endl);
-	}
-
-	// Hotkey path: toggle using the desktop bridge's own current format.
-	void ToggleAudioBridgeRecording() { PostRecordingToggle(0); }
-
-	// Overlay path: toggle and override the desktop bridge's format. Wet and dry WAVs are always paired.
+	// Overlay path: explicit format. Wet and dry WAVs are always paired.
 	void ToggleAudioBridgeRecording(bool video)
 	{
-		PostRecordingToggle(static_cast<WPARAM>(0x100 | (video ? 2 : 0)));
-	}
-
-	void BringAudioBridgeToFront()
-	{
-		// The game normally suppresses focus loss while a song is active. Explicitly suspend that policy for
-		// this user-requested handoff so exclusive fullscreen releases cleanly instead of fighting a topmost
-		// desktop window. WndProc clears the handoff when focus returns to Rocksmith.
-		audioBridgeFocusTransferPending.store(true, std::memory_order_release);
-		HWND bridgeWindow = FindWindowW(nullptr, AUDIO_BRIDGE_WINDOW_TITLE);
-		if (bridgeWindow == nullptr)
-		{
-			// This is an explicit open request, so a newly started bridge must show normally instead of
-			// following the background bridge's auto-minimise startup path.
-			if (!EnsureAudioBridgeRunning(true)) NotifyGameFocused();
-			return;
-		}
-		if (IsIconic(bridgeWindow)) ShowWindow(bridgeWindow, SW_RESTORE);
-		if (!SetForegroundWindow(bridgeWindow)) NotifyGameFocused();
+		Audio::Takes::Toggle(video);
 	}
 
 	void HandleTuningOffset()

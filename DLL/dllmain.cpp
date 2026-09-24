@@ -116,9 +116,6 @@ const bool ensureForcedTopMode = false;
 /// <param name="lParam"> - Data Sent</param>
 /// <returns>Verification that message was sent.</returns>
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM keyPressed, LPARAM lParam) {
-	if (msg == WM_SETFOCUS || (msg == WM_ACTIVATEAPP && keyPressed != FALSE))
-		Keybindings::NotifyGameFocused();
-
 	// The overlay toggle is owned by RSModsPlus. Consume it before ImGui's general keyboard capture so
 	// keyboard navigation inside the focused panel cannot prevent the same key from closing the panel.
 	if (GameState::GameLoaded && keyPressed == VK_OEM_5 && (msg == WM_KEYDOWN || msg == WM_KEYUP)) {
@@ -147,8 +144,7 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM keyPressed, LPARAM lParam) {
 			return true;
 	}
 
-	if (Settings::ReturnSettingValue("PreventMidSongPause") == "on" && D3DHooks::cachedIsInSong
-		&& !Keybindings::IsAudioBridgeFocusTransferPending()) {
+	if (Settings::ReturnSettingValue("PreventMidSongPause") == "on" && D3DHooks::cachedIsInSong) {
 		switch (msg) {
 			case WM_NCACTIVATE:
 			case WM_ACTIVATEAPP:
@@ -238,6 +234,9 @@ HRESULT APIENTRY D3DHooks::Hook_EndScene(IDirect3DDevice9* pDevice) {
 	RocksmithGate::ApplyPerFrame();
 
 	Menu::Init(pDevice, (LONG_PTR)WndProc);
+	// Patches dinput8's shared mouse vtable so overlay clicks never reach the game. Once, on the render thread.
+	static const bool inputCaptureInstalled = OverlayInputCapture::Install();
+	(void)inputCaptureInstalled;
 	Menu::RenderImGuiMenu();
 	OverlayInputCapture::SetMouseCapture((Menu::menuEnabled || Menu::audioBridgeMenuEnabled) && ImGui::GetIO().WantCaptureMouse);
 	Menu::UpdateStringTextures(pDevice);
@@ -278,7 +277,8 @@ unsigned WINAPI MainThread() {
 	Keybindings::InitializeCommands();
 	ModManager::InitializeConfiguration();
 	ModManager::InitializeMods(debug);
-	Keybindings::EnsureAudioBridgeRunning();
+	// The desktop Audio Bridge window is retired (2026-09-23): the in-game overlay (\) does everything while
+	// playing, and game-closed setup lives on the RSMods Rocksmith Audio Bridge page.
 	ModManager::ApplyStartupMods();
 
 	// Note by Note is a FEATURE and must initialize in every configuration: the
@@ -331,7 +331,8 @@ void Initialize() {
 	LogSettings::startupTime = clock();
 
 	Wwise::Exports::Initialize();
-	OverlayInputCapture::Install();
+	// OverlayInputCapture::Install() runs on the first EndScene instead: it creates a DirectInput object, which
+	// must not happen here under the loader lock.
 
 	// Read before any thread is spawned. Every mod thread reads these maps, so
 	// rebuilding them later frees the strings a reader is still holding.

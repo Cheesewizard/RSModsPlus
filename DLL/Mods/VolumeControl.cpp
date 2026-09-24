@@ -38,57 +38,6 @@ bool VolumeControl::SetPlaybackVolumeWithTransition(unsigned int channel, float 
 	return true;
 }
 
-bool VolumeControl::EnableExternalAmpMode()
-{
-	if (externalAmpModeEnabled)
-	{
-		LOG_INFO("External amp mode is already enabled; keeping the saved Player 1 volume." << std::endl);
-		return true;
-	}
-
-	float currentVolume = 0.f;
-	if (!GetPlaybackVolume(1, currentVolume))
-	{
-		LOG_ERROR("Could not enable external amp mode: failed to read Mixer_Player1 volume." << std::endl);
-		return false;
-	}
-
-	if (!SetPlaybackVolumeWithTransition(1, 0.f, 100))
-	{
-		LOG_ERROR("Could not enable external amp mode: failed to mute Mixer_Player1." << std::endl);
-		return false;
-	}
-
-	player1VolumeBeforeExternalAmp = currentVolume;
-	externalAmpModeEnabled = true;
-	LOG_INFO("Enabled external amp mode: muted Rocksmith's audible Mixer_Player1 bus; dry guitar detection is unchanged." << std::endl);
-	return true;
-}
-
-bool VolumeControl::RestoreRocksmithGuitar()
-{
-	if (!externalAmpModeEnabled)
-	{
-		LOG_INFO("Rocksmith guitar is already restored; external amp mode is disabled." << std::endl);
-		return true;
-	}
-
-	if (!SetPlaybackVolumeWithTransition(1, player1VolumeBeforeExternalAmp, 100))
-	{
-		LOG_ERROR("Could not restore Rocksmith guitar: failed to restore Mixer_Player1 volume." << std::endl);
-		return false;
-	}
-
-	externalAmpModeEnabled = false;
-	LOG_INFO("Disabled external amp mode: restored Rocksmith's Mixer_Player1 volume." << std::endl);
-	return true;
-}
-
-bool VolumeControl::IsExternalAmpModeEnabled()
-{
-	return externalAmpModeEnabled;
-}
-
 /// <summary>
 /// Increase Volume of Mixer's Backend
 /// </summary>

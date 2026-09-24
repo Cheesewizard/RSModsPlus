@@ -106,7 +106,7 @@ void MlServiceLauncher::EnsureStarted()
 	const auto executable = directory / L"RSMods.exe";
 	std::error_code error;
 	if (!std::filesystem::is_regular_file(executable, error)
-		|| !std::filesystem::is_regular_file(directory / L"rsmodsplus.dll", error))
+		|| !std::filesystem::is_regular_file(directory / L"RocksmithAudioBridge.dll", error))
 	{
 		LOG_ERROR("[MlServiceLauncher] Bundled ML service is missing. Install the complete matching release package." << std::endl);
 		serviceError = ERROR_FILE_NOT_FOUND;
@@ -180,4 +180,85 @@ void MlServiceLauncher::Shutdown()
 		CloseHandle(serviceProcess);
 		serviceProcess = nullptr;
 	}
+}
+
+namespace
+{
+	// Mirrors MlServiceConnection.ReadResults: results are "fresh" when the service's last result is under
+	// 500 ms old and within half a second of the audio the game is currently publishing.
+	bool ReadResultsFresh(std::string& message)
+	{
+		HANDLE resultMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, L"Local\RSModsPlus.MlStringFret.v2");
+		HANDLE audioMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, L"Local\RSModsPlus.MlAudio.v2");
+		const uint8_t* result = resultMapping ? static_cast<const uint8_t*>(MapViewOfFile(resultMapping, FILE_MAP_READ, 0, 0, 112)) : nullptr;
+		const uint8_t* audio = audioMapping ? static_cast<const uint8_t*>(MapViewOfFile(audioMapping, FILE_MAP_READ, 0, 0, 64)) : nullptr;
+		bool fresh = false;
+		if (result == nullptr || audio == nullptr)
+			message = "ML service running, initializing or waiting for game audio.";
+		else if (*reinterpret_cast<const uint32_t*>(result) != 0x46535352 || *reinterpret_cast<const uint32_t*>(result + 4) != 2
+			|| *reinterpret_cast<const uint32_t*>(audio) != 0x4C4D5352 || *reinterpret_cast<const uint32_t*>(audio + 4) != 2)
+			message = "ML data version mismatch. Install the matching package.";
+		else
+		{
+			message = "ML service running, waiting for a consistent result.";
+			for (int attempt = 0; attempt < 4; ++attempt)
+			{
+				const uint32_t sequence = *reinterpret_cast<const volatile uint32_t*>(result + 8);
+				if (sequence & 1) continue;
+				MemoryBarrier();
+				const uint64_t tick = *reinterpret_cast<const volatile uint64_t*>(result + 88);
+				const uint64_t sample = *reinterpret_cast<const volatile uint64_t*>(result + 96);
+				const uint32_t rate = *reinterpret_cast<const volatile uint32_t*>(result + 104);
+				MemoryBarrier();
+				if (*reinterpret_cast<const volatile uint32_t*>(result + 8) != sequence) continue;
+				const uint32_t currentRate = *reinterpret_cast<const volatile uint32_t*>(audio + 8);
+				const uint64_t currentSample = *reinterpret_cast<const volatile uint64_t*>(audio + 16);
+				const uint64_t now = GetTickCount64();
+				fresh = tick != 0 && now >= tick && now - tick <= 500 && rate != 0 && rate == currentRate
+					&& currentSample >= sample && currentSample - sample <= rate / 2;
+				message = fresh ? "Connected, receiving fresh ML results." : "ML service running, waiting for fresh audio/results.";
+				break;
+			}
+		}
+		if (result) UnmapViewOfFile(result);
+		if (audio) UnmapViewOfFile(audio);
+		if (resultMapping) CloseHandle(resultMapping);
+		if (audioMapping) CloseHandle(audioMapping);
+		return fresh;
+	}
+}
+
+void MlServiceLauncher::Describe(std::string& message, bool& connected, bool& canRestart)
+{
+	connected = false;
+	canRestart = false;
+	if (restartEvent == nullptr)
+	{
+		message = "ML controls unavailable. The service has not been started in this session.";
+		return;
+	}
+	switch (restarting ? MlServiceControl::State::Restarting : serviceState)
+	{
+	case MlServiceControl::State::Starting: message = "Starting ML service..."; return;
+	case MlServiceControl::State::Restarting: message = "Restarting ML service..."; return;
+	case MlServiceControl::State::Stopped:
+		message = "ML service stopped (exit code " + std::to_string(serviceError) + ").";
+		canRestart = true;
+		return;
+	case MlServiceControl::State::Failed:
+		message = serviceError == ERROR_FILE_NOT_FOUND ? "ML files missing. Install the complete matching package."
+			: "ML service could not start (Windows error " + std::to_string(serviceError) + ").";
+		canRestart = true;
+		return;
+	case MlServiceControl::State::Waiting:
+		connected = ReadResultsFresh(message);
+		canRestart = true;
+		return;
+	}
+	message = "Unknown ML status.";
+}
+
+bool MlServiceLauncher::RequestRestart()
+{
+	return restartEvent != nullptr && SetEvent(restartEvent) != FALSE;
 }

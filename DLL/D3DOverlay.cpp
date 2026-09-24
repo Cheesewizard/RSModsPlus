@@ -13,6 +13,7 @@
 #include "PitchNames.hpp"
 #include "Mods/ExtendedRangeMode.hpp"
 #include "ProductVersion.hpp"
+#include "Overlay/HudLayout.hpp"
 
 /// <returns>Size of Rocksmith Window</returns>
 Resolution GameOverlay::GetWindowSize() {
@@ -88,6 +89,36 @@ void GameOverlay::DX9DrawTextW(const std::wstring& textToDraw, int textColorHex,
 
 	RECT TextRectangle{ topLeftX, topLeftY, bottomRightX, bottomRightY }; // Left, Top, Right, Bottom
 	font->DrawTextW(nullptr, textToDraw.c_str(), -1, &TextRectangle, format, textColorHex);
+}
+
+namespace
+{
+	// Pixel size DX9DrawText would give `text` at `fontHeight` (same font cache entry), for the HUD layout editor's
+	// hit boxes. Falls back to a rough estimate if the font cannot be acquired.
+	SIZE MeasureHudText(const std::string& text, int fontHeight, LPDIRECT3DDEVICE9 device)
+	{
+		CComPtr<ID3DXFont> font;
+		const auto key = GameOverlay::FontKey::Make(Settings::ReturnSettingValue("OnScreenFont"), fontHeight, 0, FW_NORMAL, false);
+		if (!text.empty() && GameOverlay::fontCache.Get(device, key, font)) {
+			RECT rect{ 0, 0, 0, 0 };
+			font->DrawTextA(nullptr, text.c_str(), -1, &rect, DT_LEFT | DT_SINGLELINE | DT_CALCRECT, 0);
+			return { rect.right - rect.left, rect.bottom - rect.top };
+		}
+		return { static_cast<LONG>(text.size()) * fontHeight / 2, fontHeight };
+	}
+
+	// Bend depth in the words players use ("half bend", "full bend"); empty for no bend.
+	std::string BendWords(int semitones)
+	{
+		switch (semitones) {
+		case 0: return {};
+		case 1: return "half bend";
+		case 2: return "full bend";
+		case 3: return "1 1/2 bend";
+		case 4: return "2 step bend";
+		default: return semitones > 0 ? std::to_string(semitones) + " semitone bend" : std::string{};
+		}
+	}
 }
 
 void GameOverlay::DisplayMixer() {
@@ -612,11 +643,28 @@ void GameOverlay::DisplayMlStringFretOverlay()
 	const int targetString = haveState && state.selectedChordId == -1 ? state.selectedString : -1;
 	int targetColorString = targetString;
 	const int targetFret = haveState ? state.selectedFret : -1;
+	// The game leaves a viewport smaller than the screen (the "invisible wall" that cut the target in half
+	// when dragged low and right), so draw the whole Note by Note HUD against the full backbuffer.
+	FullSurfaceViewport viewport(pDevice, static_cast<int>(WindowSize.width), static_cast<int>(WindowSize.height));
 	const bool showDiagnostics = OverlayToggles::Get("ml_fret")
 		&& Settings::IsNoteByNoteDetectionVisible();
 
+	const Settings::NoteByNoteTargetStyle targetStyle = Settings::GetNoteByNoteTargetStyle();
+	const std::string bendWords = BendWords(state.isBendTarget && state.bendAcceptMidi >= 0 && targetMidi >= 0
+		? state.bendAcceptMidi - targetMidi : 0);
+	// Frets per string (index 0 = low E, -1 = not played) for the Tab style.
+	int tabFrets[6] = { -1, -1, -1, -1, -1, -1 };
+	if (targetString >= 0 && targetString < 6 && targetFret >= 0) tabFrets[targetString] = targetFret;
+
 	std::string targetText = NoteByNote::FormatPitch(targetMidi);
-	if (targetString >= 0 && targetFret >= 0)
+	if (targetString >= 0 && targetFret >= 0 && targetStyle != Settings::NoteByNoteTargetStyle::Detailed)
+	{
+		// Simple style: the string colour swatch carries the string, so the text is just the fret, plus the
+		// bend depth. Needs no tuning lookup. (Also the fallback text if Tab cannot draw.)
+		targetText = std::to_string(targetFret);
+		if (!bendWords.empty()) targetText += " " + bendWords;
+	}
+	else if (targetString >= 0 && targetFret >= 0)
 	{
 		int physicalOpenMidi = -1;
 		static bool reportedMissingPhysicalTuning = false;
@@ -650,38 +698,85 @@ void GameOverlay::DisplayMlStringFretOverlay()
 			targetColorString))
 		{
 			targetText = fingering;
+			// "[x/3/3/x/x/x]", low E first: the Tab style's per-string frets.
+			int stringIndex = 0;
+			for (const char* at = fingering + 1; *at && *at != ']' && stringIndex < 6; ++stringIndex) {
+				tabFrets[stringIndex] = (*at >= '0' && *at <= '9') ? std::atoi(at) : -1;
+				while (*at && *at != '/' && *at != ']') ++at;
+				if (*at == '/') ++at;
+			}
 		}
 		else
 			targetText = "(fingering unavailable)";
 	}
 
-	const int baseX = static_cast<int>(WindowSize.width / 96.0f);
-	const int baseY = static_cast<int>(WindowSize.height / 5.2f);
-	const bool targetIsCentred = Settings::GetNoteByNoteTargetPosition() == Settings::NoteByNoteTargetPosition::Center;
+	// Two independent blocks (2026-09-23): the readout (Native/Enhanced/ML) sized by NoteByNoteUiSize and the
+	// target (string-colour swatch + note) sized ONLY by NoteByNoteTargetSize. Each block's top-left is either
+	// the built-in layout or a position the player dragged in the overlay's layout editor (fractions of the
+	// window, see Settings::HudPlacement). The target's dragged placement applies only in the Custom position and
+	// is remembered while Left or Center is chosen. The one remaining link is deliberate: the "Left" (Under
+	// readout) target follows the readout's bottom edge; Custom decouples it entirely.
+	using HudBlock = Settings::NoteByNoteHudBlock;
+	Overlay::HudLayout::frameWidth = static_cast<float>(WindowSize.width);
+	Overlay::HudLayout::frameHeight = static_cast<float>(WindowSize.height);
+	const Settings::HudPlacement readoutPlacement = Settings::GetNoteByNoteHudPlacement(HudBlock::Readout);
+	const Settings::HudPlacement targetPlacement = Settings::GetNoteByNoteHudPlacement(HudBlock::Target);
+	const int baseX = readoutPlacement.IsSet()
+		? static_cast<int>(readoutPlacement.x * WindowSize.width)
+		: static_cast<int>(WindowSize.width / 96.0f);
+	const int baseY = readoutPlacement.IsSet()
+		? static_cast<int>(readoutPlacement.y * WindowSize.height)
+		: static_cast<int>(WindowSize.height / 5.2f);
+	const Settings::NoteByNoteTargetPosition targetPosition = Settings::GetNoteByNoteTargetPosition();
+	const bool targetIsCentred = targetPosition == Settings::NoteByNoteTargetPosition::Center;
+	// Custom with nothing dragged yet starts from the Under readout spot.
+	const bool targetIsCustom = targetPosition == Settings::NoteByNoteTargetPosition::Custom && targetPlacement.IsSet();
 	const int defaultTextHeight = std::max(14, static_cast<int>(WindowSize.height / 80.0f));
 	const int textHeight = std::max(7, defaultTextHeight * Settings::GetNoteByNoteUiSize() / 100);
 	const int targetTextHeight = std::max(7, defaultTextHeight * Settings::GetNoteByNoteTargetSize() / 100);
-	const int rowHeight = textHeight * 2;
+	// Tab style: six lines, high string on top, "E |--7--" with the frets in one aligned column. The string
+	// names are drawn in each string's colour, which stands in for the swatch.
+	bool useTab = false;
+	for (const int fret : tabFrets) useTab |= targetStyle == Settings::NoteByNoteTargetStyle::Tab && fret >= 0;
+	const int tabLine = targetTextHeight + targetTextHeight / 6;
+	const int tabLabelW = MeasureHudText("G#", targetTextHeight, pDevice).cx + targetTextHeight / 3;
+	const int tabBarW = MeasureHudText("|", targetTextHeight, pDevice).cx + targetTextHeight / 8;
+	const int tabDashW = MeasureHudText("--", targetTextHeight, pDevice).cx;
+	const int tabCellW = MeasureHudText("00", targetTextHeight, pDevice).cx + targetTextHeight / 3;
+	const int tabBendW = bendWords.empty() ? 0 : MeasureHudText("  " + bendWords, targetTextHeight, pDevice).cx;
+	const int tabWidth = tabLabelW + tabBarW + tabDashW * 2 + tabCellW + tabBendW;
+	const int tabHeight = tabLine * 6;
+	// Line spacing only stretches the gap between readout lines; 100% is the original two text heights.
+	const int rowHeight = std::max(textHeight, textHeight * 2 * Settings::GetNoteByNoteLineSpacing() / 100);
 	const int valueX = baseX + textHeight * 7;
+	const int readoutBottom = baseY + rowHeight * 2 + textHeight;
 	const int rightEdge = static_cast<int>(WindowSize.width);
-	// Horizontal layout is anchored to the UI text size, NOT the target size, so raising the
-	// target size only grows the value glyphs; it never shifts the row sideways. The target
-	// value starts at the same left edge as the detector labels.
-	int targetValueX = targetIsCentred
-		? static_cast<int>(WindowSize.width * 0.485f)
-		: baseX;
-	// The target value is a fixed-top box: its top-left is anchored here and never moves with the
-	// target size. The value text is top-aligned, so making it bigger only grows the box out to
-	// the right and downward - it never climbs into the Native/Enhanced/ML block above (there is a
-	// full textHeight gap above this anchor) and never shifts sideways. Scaling is purely downward.
-	// The lyric clearance is a fixed nudge so the anchor clears the game's audio/lyric line, which
-	// can render two lines across this band; proportional to text size so the gap holds at any
-	// resolution. (~two rows below the ML block clears both lyric lines seen in practice.)
-	const int targetLyricClearance = rowHeight * 2;
-	const int targetRowTop = targetIsCentred
-		? static_cast<int>(WindowSize.height * 0.20f)
-		: baseY + rowHeight * 3 + targetLyricClearance;
-	if (targetColorString >= 0 && targetColorString < 6)
+	// The target is a fixed-top box: its top-left is anchored and never moves with the target size, and the
+	// text is top-aligned, so a bigger target only grows right and downward. Built-in "Left" anchor: under the
+	// readout plus a lyric clearance (two original rows) so it clears the game's two-line lyric band.
+	int targetValueX, targetRowTop;
+	if (targetIsCustom)
+	{
+		targetValueX = static_cast<int>(targetPlacement.x * WindowSize.width);
+		targetRowTop = static_cast<int>(targetPlacement.y * WindowSize.height);
+	}
+	else if (targetIsCentred)
+	{
+		// Centre the whole block (swatch + text) on the screen, not its left edge, so a bigger target or a longer
+		// chord name stays centred instead of growing to the right.
+		const bool hasSwatch = targetColorString >= 0 && targetColorString < 6;
+		const int blockWidth = useTab ? tabWidth : MeasureHudText(targetText, targetTextHeight, pDevice).cx
+			+ (hasSwatch ? targetTextHeight + targetTextHeight / 2 : 0);
+		targetValueX = std::max(0, static_cast<int>(WindowSize.width / 2) - blockWidth / 2);
+		targetRowTop = static_cast<int>(WindowSize.height * 0.20f);
+	}
+	else
+	{
+		targetValueX = baseX;
+		targetRowTop = readoutBottom + textHeight + textHeight * 4;
+	}
+	const int targetLeft = targetValueX;
+	if (!useTab && targetColorString >= 0 && targetColorString < 6)
 	{
 		RSColor stringColor;
 		const bool hasStringColor = ERMode::TryGetActiveStringColor(targetColorString, stringColor);
@@ -689,10 +784,12 @@ void GameOverlay::DisplayMlStringFretOverlay()
 		if (hasStringColor)
 		{
 			reportedMissingStringColor = false;
+			// Part of the target block, so it scales with the TARGET size (it used the readout size, which
+			// made the readout slider resize the target's string colour).
 			const int y = targetRowTop;
 			DX9DrawTextW(L"\u25A0", D3DCOLOR_COLORVALUE(stringColor.r, stringColor.g, stringColor.b, 1.0f),
-				targetValueX, y, targetValueX + textHeight, y + textHeight * 2, pDevice, textHeight, DT_LEFT | DT_NOCLIP);
-			targetValueX += textHeight + textHeight / 2;
+				targetValueX, y, targetValueX + targetTextHeight, y + targetTextHeight * 2, pDevice, targetTextHeight, DT_LEFT | DT_NOCLIP);
+			targetValueX += targetTextHeight + targetTextHeight / 2;
 		}
 		else if (!reportedMissingStringColor)
 		{
@@ -714,22 +811,36 @@ void GameOverlay::DisplayMlStringFretOverlay()
 		const bool showDecision = haveState
 			&& (nativeColor != 0xFFFFFFFF || enhancedColor != 0xFFFFFFFF || mlColor != 0xFFFFFFFF);
 		const int matchingMidi = haveState && state.isBendTarget ? state.bendAcceptMidi : targetMidi;
+		// Speaker Mode leaves the input unshifted, so the game's detector reads in the chart's tuning
+		// frame, one route-shift away from what the player physically plays (Eb chart, E guitar: every
+		// pick read one semitone low, so a correct A showed "Ab" and the row could never go green).
+		// Shift native reads into the player's frame; Drop Pedal shifts the input itself, so 0 there.
+		const int nativeFrameOffset = DropPedal::GetPitchMode() == DropPedal::PitchMode::SpeakerMode
+			? -DropPedal::GetShiftSemitones() : 0;
+		auto toPlayerFrame = [&](int midi) { return midi >= 0 ? midi + nativeFrameOffset : -1; };
 		bool nativeMatchesLive = false;
 		bool mlMatchesLive = false;
 		int heard = -1;
-		if (showDecision) heard = feedback.nativeMidi;
+		if (showDecision) heard = toPlayerFrame(feedback.nativeMidi);
 		else if (haveState && state.detectorSampleValid && state.detectorPassesLevel)
-			heard = state.detectorLoudestMidi;
+			heard = toPlayerFrame(state.detectorLoudestMidi);
 		if (!showDecision && targetString >= 0 && NoteByNote::MatchesDetectorTarget(heard, matchingMidi))
 			nativeMatchesLive = true;
-		const std::string nativeText = NoteByNote::FormatPitch(heard);
-		const std::string enhancedText = NoteByNote::FormatPitch(showDecision ? feedback.enhancedMidi : -1);
+		// A chord has no single pitch to show for a pass without a reading; name the pass instead.
+		auto decisionText = [&](int midi, NoteByNote::DetectorRole role) {
+			return midi >= 0 ? NoteByNote::FormatPitch(midi)
+				: role == NoteByNote::DetectorRole::Confirmed ? std::string("chord") : std::string("--");
+		};
+		const std::string nativeText = showDecision
+			? decisionText(heard, feedback.nativeRole) : NoteByNote::FormatPitch(heard);
+		const std::string enhancedText = showDecision
+			? decisionText(feedback.enhancedMidi, feedback.enhancedRole) : std::string("--");
 
 		MlStringFretReader::StringFret sample;
 		std::string mlText;
 		if (showDecision)
 		{
-			mlText = NoteByNote::FormatPitch(feedback.mlMidi);
+			mlText = decisionText(feedback.mlMidi, feedback.mlRole);
 		}
 		else if (!MlStringFretReader::TryGet(sample))
 		{
@@ -755,19 +866,20 @@ void GameOverlay::DisplayMlStringFretOverlay()
 			}
 			if (mlText.empty()) mlText = "--";
 		}
-		// Each detector row's colour is derived from the SAME pitch it shows as text, never from a
-		// separate role/timer, so the swatch and the text can never disagree. A row is green only when
-		// the pitch it is displaying IS the target pitch, and neutral otherwise (a correct read always
-		// reads as correct; a wrong or absent read is calm neutral, not red). Detection here means "did
-		// I see the right pitch"; whether the note then PROGRESSES is a separate concern handled by the
-		// acceptance logic, deliberately not shown on these rows. A short hold keeps each row's text and
-		// colour on screen together for a moment so a flickering live reading does not strobe; they
-		// refresh and expire as one unit, so they always stay in sync.
-		auto matchesTarget = [&](int midi) { return matchingMidi >= 0 && midi == matchingMidi; };
-		const int shownEnhancedMidi = showDecision ? feedback.enhancedMidi : -1;
-		const bool nativeMatch = showDecision ? matchesTarget(heard) : nativeMatchesLive;
-		const bool enhancedMatch = matchesTarget(shownEnhancedMidi);
-		const bool mlMatch = showDecision ? matchesTarget(feedback.mlMidi) : mlMatchesLive;
+		// Two separate paths (Philip, 2026-09-23):
+		// - LIVE (no accept on screen): a row is green when the pitch it shows IS the target - pure
+		//   detection truth, neutral otherwise (no red on a transient).
+		// - DECISION (for ~1.3 s after an accept): a row is green only if that detector was used to pass
+		//   the note (its role in the accept, set by the scoring controller), for single notes and chords
+		//   alike. It must not compare against the HUD's target: by then the target is already the NEXT
+		//   note, which is why the accept green almost never showed.
+		// A short hold keeps each row's text and colour on screen together so a flickering live reading
+		// does not strobe; they refresh and expire as one unit.
+		const bool nativeMatch = showDecision
+			? feedback.nativeRole == NoteByNote::DetectorRole::Confirmed : nativeMatchesLive;
+		const bool enhancedMatch = showDecision && feedback.enhancedRole == NoteByNote::DetectorRole::Confirmed;
+		const bool mlMatch = showDecision
+			? feedback.mlRole == NoteByNote::DetectorRole::Confirmed : mlMatchesLive;
 		struct RowHold { std::string text = "--"; uint32_t color = 0; uint64_t tick = 0; };
 		static RowHold holds[3];
 		constexpr uint64_t ROW_HOLD_MS = 300;
@@ -780,12 +892,14 @@ void GameOverlay::DisplayMlStringFretOverlay()
 				? std::pair<std::string, uint32_t>{ holds[index].text, holds[index].color }
 				: std::pair<std::string, uint32_t>{ std::string("--"), palette.neutral };
 		};
-		const auto nativeRow = resolveRow(0, nativeText, nativeMatch, heard >= 0);
-		const auto enhancedRow = resolveRow(1, enhancedText, enhancedMatch, shownEnhancedMidi >= 0);
+		const auto nativeRow = resolveRow(0, nativeText, nativeMatch, nativeText != "--");
+		const auto enhancedRow = resolveRow(1, enhancedText, enhancedMatch, enhancedText != "--");
 		const auto mlRow = resolveRow(2, mlText, mlMatch, mlText != "--");
 		const std::string values[] = { nativeRow.first, enhancedRow.first, mlRow.first };
 		const uint32_t colors[] = { nativeRow.second, enhancedRow.second, mlRow.second };
 		const char* labels[] = { "Native:", "Enhanced:", "ML:" };
+		// Readout hit box for the layout editor: at least a few characters wide so a "--" block is still grabbable.
+		LONG widestValue = textHeight * 4;
 		for (int row = 0; row < 3; ++row)
 		{
 			const int y = baseY + row * rowHeight;
@@ -793,12 +907,59 @@ void GameOverlay::DisplayMlStringFretOverlay()
 				pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
 			DX9DrawText(values[row], colors[row], valueX, y, rightEdge, y + textHeight * 2,
 				pDevice, { 0, static_cast<unsigned>(textHeight) }, DT_LEFT | DT_NOCLIP);
+			widestValue = std::max(widestValue, MeasureHudText(values[row], textHeight, pDevice).cx);
 		}
+		Overlay::HudLayout::Publish(HudBlock::Readout, static_cast<float>(baseX), static_cast<float>(baseY),
+			static_cast<float>(valueX + widestValue), static_cast<float>(readoutBottom));
+	}
+
+	if (useTab)
+	{
+		const Resolution font{ 0, static_cast<unsigned>(targetTextHeight) };
+		constexpr int dim = static_cast<int>(0xFF8A8A8A);   // staff lines and empty strings recede behind the frets
+		for (int row = 0; row < 6; ++row)
+		{
+			const int stringIndex = 5 - row;
+			const int y = targetRowTop + row * tabLine;
+			const int bottom = y + tabLine * 2;
+			// String name from the physical tuning (Drop Pedal aware), standard tuning if unavailable; the top
+			// string is lower case, as tabs write it.
+			static const char* const standard[] = { "E", "A", "D", "G", "B", "e" };
+			std::string name = standard[stringIndex];
+			int openMidi = -1;
+			if (DropPedal::TryGetPhysicalOpenStringMidi(stringIndex, openMidi)) {
+				name = PitchNames::ForPitchClass(openMidi);
+				if (stringIndex == 5 && !name.empty()) name[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(name[0])));
+			}
+			RSColor stringColor;
+			const int labelColor = ERMode::TryGetActiveStringColor(stringIndex, stringColor)
+				? static_cast<int>(D3DCOLOR_COLORVALUE(stringColor.r, stringColor.g, stringColor.b, 1.0f)) : static_cast<int>(palette.neutral);
+			int x = targetLeft;
+			DX9DrawText(name, labelColor, x, y, x + tabLabelW, bottom, pDevice, font, DT_LEFT | DT_NOCLIP);
+			x += tabLabelW;
+			DX9DrawText("|--", dim, x, y, x + tabBarW + tabDashW, bottom, pDevice, font, DT_LEFT | DT_NOCLIP);
+			x += tabBarW + tabDashW;
+			const bool played = tabFrets[stringIndex] >= 0;
+			DX9DrawText(played ? std::to_string(tabFrets[stringIndex]) : "--", played ? static_cast<int>(palette.neutral) : dim,
+				x, y, x + tabCellW, bottom, pDevice, font, DT_CENTER | DT_NOCLIP);
+			x += tabCellW;
+			DX9DrawText("--", dim, x, y, x + tabDashW, bottom, pDevice, font, DT_LEFT | DT_NOCLIP);
+			x += tabDashW;
+			if (played && !bendWords.empty())
+				DX9DrawText("  " + bendWords, palette.neutral, x, y, rightEdge, bottom, pDevice, font, DT_LEFT | DT_NOCLIP);
+		}
+		Overlay::HudLayout::Publish(HudBlock::Target, static_cast<float>(targetLeft), static_cast<float>(targetRowTop),
+			static_cast<float>(targetLeft + tabWidth), static_cast<float>(targetRowTop + tabHeight));
+		return;
 	}
 
 	DX9DrawText(targetText, palette.neutral, targetValueX, targetRowTop, rightEdge,
 		targetRowTop + targetTextHeight * 2, pDevice,
 		{ 0, static_cast<unsigned>(targetTextHeight) }, DT_LEFT | DT_NOCLIP);
+	const SIZE targetSize = MeasureHudText(targetText, targetTextHeight, pDevice);
+	Overlay::HudLayout::Publish(HudBlock::Target, static_cast<float>(targetLeft), static_cast<float>(targetRowTop),
+		static_cast<float>(targetValueX + std::max<LONG>(targetSize.cx, targetTextHeight * 2)),
+		static_cast<float>(targetRowTop + std::max<LONG>(targetSize.cy, targetTextHeight)));
 }
 // The bend visualizer (Philip, 2026-08-18): a tuner-style ladder at the screen's
 // right edge while a bend gesture is the target. Five rungs - the bend target in
@@ -919,14 +1080,27 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 	const float bandLow = static_cast<float>(base) - 1.0f;
 	const float bandHigh = static_cast<float>(target) + 1.5f;
 	bool haveNeedle = false;
-	// The one tween-speed knob (Philip 2026-09-05), now a TIME constant: how fast the pin eases
-	// DOWN toward the current pitch / back to base. Up is instant (a strong new high snaps the
-	// pin straight there), so the pin feels 1:1 on the way up while the return stays smooth.
-	// 0.06 s reproduces the old 0.25-per-frame ease at 60 fps; lower toward 0.03 = snappier
-	// return, raise toward 0.1 = smoother.
-	constexpr float BEND_PIN_TAU_SECONDS = 0.06f;
-	const float ease = 1.0f
-		- std::exp(-static_cast<float>(frameDelta) / BEND_PIN_TAU_SECONDS);
+	// Critically damped spring follower (Philip 2026-09-23: "not smooth at all ... like it
+	// teleports. We should interpolate"). The pitch feed updates at the scoring-tick rate (20-60
+	// Hz) and the raw-tap estimate at ~25 Hz, so the target the pin chases moves in steps. The old
+	// follower snapped UP to any strong new high and eased down, which drew every one of those
+	// steps as a jump. The spring carries velocity, so the pin glides between feed updates in both
+	// directions with no overshoot; BEND_PIN_SMOOTH_SECONDS is the one feel knob (~time to cover
+	// most of a step). 0.045 s keeps it visibly 1:1 with the bend; raise toward 0.08 = smoother,
+	// lower toward 0.03 = snappier.
+	static float displayVelocity = 0.0f;
+	constexpr float BEND_PIN_SMOOTH_SECONDS = 0.045f;
+	const auto springTo = [&](float goal)
+	{
+		const float omega = 2.0f / BEND_PIN_SMOOTH_SECONDS;
+		const float dt = static_cast<float>(frameDelta);
+		const float x = omega * dt;
+		const float decay = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+		const float change = displaySounding - goal;
+		const float temp = (displayVelocity + omega * change) * dt;
+		displayVelocity = (displayVelocity - omega * temp) * decay;
+		displaySounding = goal + (change + temp) * decay;
+	};
 	// The signal-loss hold: how long the pin keeps gliding home after the pitch read dies.
 	// 10 frames at 60 fps was ~167 ms; the time-based 150 ms keeps that feel at any fps.
 	constexpr double BEND_PIN_HOLD_SECONDS = 0.15;
@@ -935,48 +1109,25 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 	{
 		if (displaySounding < 0.0f)
 		{
-			// SEED at the base and let the low-pass climb from there (2026-09-05). A bend starts
-			// at the base, so the pin must start at the bottom and rise with it. The old rule
-			// skipped the seed unless the first frame was already near the base, so when the only
-			// source that registered was the native tracker - which does not report the low part of
-			// a bend and first appears ~0.6 semitone up - the pin stayed dead and then "teleported a
-			// quarter of the way up". Clamping the seed to the base means the pin always starts at
-			// the bottom and low-passes up to the real pitch, never above it. (The raw-tap estimate
-			// now fills the low part, so the first frame is usually already a base-region read.)
+			// SEED at the base and let the spring climb from there (2026-09-05). A bend starts
+			// at the base, so the pin must start at the bottom and rise with it; seeding at the
+			// first read would teleport it wherever a late-registering source first appears.
 			displaySounding = state.soundingMidi < static_cast<float>(base)
 				? state.soundingMidi
 				: static_cast<float>(base);
-			staleSeconds = 0.0;
-			haveNeedle = true;
+			displayVelocity = 0.0f;
 		}
-		else
-		{
-			// Peak-follower (Philip 2026-09-05): snap the pin straight UP to a new high - that
-			// high point is the bend's target and feels 1:1 on the way up. Otherwise ease it
-			// smoothly toward the current pitch, so a held bend sits still, a release glides back
-			// down toward base, and the weak quarter-bend jitter/drop-outs never yank it around.
-			// The snap needs a stronger read than the ease (responsiveness review, win #3): a
-			// single noisy overshoot frame at passable quality used to teleport the needle to
-			// the top on its own. A genuine bend's read clears this bar; a noisier one still
-			// climbs via the ease, just without the snap. (The probe's "strong green" bar is 70;
-			// this sits between the ease floor of 20 and that.)
-			constexpr float BEND_PIN_SNAP_QUALITY = 50.0f;
-			if (state.soundingMidi > displaySounding
-				&& state.soundingQuality >= BEND_PIN_SNAP_QUALITY)
-				displaySounding = state.soundingMidi;
-			else
-				displaySounding += (state.soundingMidi - displaySounding) * ease;
-			staleSeconds = 0.0;
-			haveNeedle = true;
-		}
+		springTo(state.soundingMidi);
+		staleSeconds = 0.0;
+		haveNeedle = true;
 	}
-	// Signal gone/weak: ease the pin back toward base (the "back to zero" release) with the same
-	// tween so the return feels consistent, instead of freezing at the high point. It keeps
+	// Signal gone/weak: glide the pin back toward base (the "back to zero" release) on the same
+	// spring so the return feels consistent, instead of freezing at the high point. It keeps
 	// drawing for a short wall-clock window while it glides home, then clears below.
 	else if (displaySounding >= 0.0f
 		&& (staleSeconds += frameDelta) < BEND_PIN_HOLD_SECONDS)
 	{
-		displaySounding += (static_cast<float>(base) - displaySounding) * ease;
+		springTo(static_cast<float>(base));
 		haveNeedle = true;
 	}
 	else
@@ -984,6 +1135,7 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 		// Signal gone: drop the pin AND clear the held value so the next bend re-seeds at the
 		// base instead of resuming from the previous bend's top.
 		displaySounding = -1.0f;
+		displayVelocity = 0.0f;
 		staleSeconds = 0.0;
 	}
 	
@@ -1007,33 +1159,40 @@ void GameOverlay::DisplayNoteByNoteBendMeter()
 	constexpr int TARGET_ROW = 2;            // rows above the target are overbend headroom
 	const int baseRow = ROWS - 1;
 	const int travel = baseRow - TARGET_ROW; // rows from base up to target
-	int needleRow = baseRow - static_cast<int>(std::lround(frac * static_cast<float>(travel)));
-	if (needleRow < 0) needleRow = 0;
-	if (needleRow > baseRow) needleRow = baseRow;
-	
+
 	const int rowHeight = std::max(16, static_cast<int>(WindowSize.height / 40.0f));
 	const int left = static_cast<int>(WindowSize.width * 0.68f);
 	const int right = static_cast<int>(WindowSize.width * 0.90f);
-	int top = static_cast<int>(WindowSize.height * 0.28f);
+	const int railTop = static_cast<int>(WindowSize.height * 0.28f);
 	const int goldText = 0xFFFFD24C;
 	const int greenText = 0xFF66FF66;
-	
+
+	int top = railTop;
 	for (int r = 0; r < ROWS; ++r)
 	{
 		const bool isTargetRow = (r == TARGET_ROW);
 		const bool isBaseRow = (r == baseRow);
-		const bool isNeedle = haveNeedle && (r == needleRow);
 		std::ostringstream row;
 		row << (isTargetRow || isBaseRow ? "==" : " |");
 		if (isTargetRow) row << " " << noteName(target) << " target";
 		else if (isBaseRow) row << " " << noteName(base) << " base";
-		if (isNeedle) row << "   <==";
-		const int colour = isNeedle
-			? (onTarget ? greenText : whiteText)
-			: (isTargetRow ? goldText : greyText);
-		DX9DrawText(row.str(), colour, left, top, right, top + rowHeight, pDevice,
-			{ NULL, NULL }, DT_LEFT | DT_NOCLIP);
+		DX9DrawText(row.str(), isTargetRow ? goldText : greyText, left, top, right, top + rowHeight,
+			pDevice, { NULL, NULL }, DT_LEFT | DT_NOCLIP);
 		top += rowHeight;
+	}
+
+	// The needle is drawn at a CONTINUOUS pixel height beside the rail (2026-09-23), not appended
+	// to whichever text rung the pitch rounded to: 12 rungs over the bend meant each rung was
+	// ~1/9 of the bend, so even a perfectly smooth pitch made the needle hop rung to rung. It sits
+	// left of the rail pointing in, so it never collides with the rung labels.
+	if (haveNeedle)
+	{
+		float rowPosition = static_cast<float>(baseRow) - frac * static_cast<float>(travel);
+		if (rowPosition < 0.0f) rowPosition = 0.0f;
+		if (rowPosition > static_cast<float>(baseRow)) rowPosition = static_cast<float>(baseRow);
+		const int needleTop = railTop + static_cast<int>(std::lround(rowPosition * static_cast<float>(rowHeight)));
+		DX9DrawText("==>", onTarget ? greenText : whiteText, left - rowHeight * 2, needleTop, left,
+			needleTop + rowHeight, pDevice, { NULL, NULL }, DT_RIGHT | DT_NOCLIP);
 	}
 }
 

@@ -20,18 +20,10 @@ struct ModCommand {
 };
 
 namespace Keybindings {
-    bool EnsureAudioBridgeRunning(bool showWindow = false);
-	bool IsAudioBridgeFocusTransferPending();
-	void NotifyGameFocused();
-    // Toggle a recording take on the desktop bridge (audio, plus MP4 video when the bridge's Format is set
-    // to video). Posts the same message the in-game recording hotkey does; the in-game overlay uses this so
-    // its Record button captures video without the user tabbing out. No-op if the bridge is not running.
+    // Start or stop a recording take in game (Audio::Takes): the hotkey uses the remembered format, the overlay
+    // passes its own. Video takes run a hidden RSMods.exe; no desktop window is involved.
     void ToggleAudioBridgeRecording();
-    // Overlay path: toggle recording and override the desktop bridge's format. Wet and dry WAVs are always paired.
     void ToggleAudioBridgeRecording(bool video);
-    // Switch focus to the desktop audio bridge window, or launch it visibly if it is not open.
-    // The in-game overlay's "Open the desktop bridge" button calls this so the user can reach the full window.
-    void BringAudioBridgeToFront();
 
     void DispatchCommand(WPARAM keyPressed, const std::map<std::string, ModCommand, std::less<>>& commands);
 

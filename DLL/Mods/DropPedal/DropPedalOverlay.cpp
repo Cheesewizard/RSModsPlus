@@ -5,6 +5,15 @@
 #include "../../Resolution.h"
 #include "../../Settings.hpp"
 #include "DropPedal.hpp"
+#include "DropPedalState.hpp"
+
+namespace
+{
+	// F7 refused while Speaker Mode is locked for the song: how long the mode line flashes, and in what.
+	constexpr unsigned long long LOCKED_FLASH_MS = 2500;
+	// Deep orange: distinct from the light amber DROP_PEDAL_UP_TEXT a Speaker "(+1)" line already uses.
+	constexpr unsigned int LOCKED_FLASH_COLOR = 0xFFFF6A00;
+}
 
 namespace
 {
@@ -86,6 +95,14 @@ void DropPedal::Overlay::LoadSettings()
 void DropPedal::Overlay::Render(ID3DXFont* font, const Resolution& windowSize)
 {
 	if (!DropPedal::IsConfiguredEnabled() || !font) return;
+	// F7 refused mid-song because Speaker Mode is locked for the song: the mode line flashes orange
+	// for a moment, even when the readout is hidden, so the press visibly "did something" (Philip,
+	// 2026-09-23: pressed F7 with the readout hidden and it just felt stuck).
+	const unsigned long long lockedTick = DropPedalState::GetModeLockedNoticeTick();
+	const unsigned long long now = GetTickCount64();
+	const bool isLockedFlash = lockedTick != 0 && now - lockedTick < LOCKED_FLASH_MS;
+	// Visibility only: the pedal keeps working (F7 and the shift keys) with its readout hidden.
+	if (Settings::ReturnSettingValue("DropPedalShowOverlay") == "off" && !isLockedFlash) return;
 
 	// Speaker Mode shifts the one shared song mix, so Player 2 has nothing to
 	// control and only Player One's row renders.
@@ -110,11 +127,21 @@ void DropPedal::Overlay::RenderTuning(
 	const int top = static_cast<int>(windowSize.height / 54.0f)
 		+ row * static_cast<int>(windowSize.height / 36.0f);
 
+	// Locked-mode flash (see Render): alternate orange and the normal colour every 250 ms.
+	unsigned int textColor = tuningTextColors[playerIndex];
+	const unsigned long long lockedTick = DropPedalState::GetModeLockedNoticeTick();
+	const unsigned long long now = GetTickCount64();
+	if (player == Player::One && lockedTick != 0 && now - lockedTick < LOCKED_FLASH_MS
+		&& ((now - lockedTick) / 250) % 2 == 0)
+	{
+		textColor = LOCKED_FLASH_COLOR;
+	}
+
 	DrawShadowedText(
 		font,
 		windowSize,
 		tuningLines[playerIndex],
-		tuningTextColors[playerIndex],
+		textColor,
 		static_cast<int>(windowSize.width / 96.0f),
 		top,
 		static_cast<int>(windowSize.width / 3.0f),

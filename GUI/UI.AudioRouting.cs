@@ -36,46 +36,12 @@ namespace RSMods
 			}
 		}
 
-		// The bridge is opened from the RSModsPlus navigation ("Audio bridge" opens it directly). What this
-		// window still owes the bridge is the settings sync: re-read the bridge-owned values whenever the
+		// The desktop bridge window is retired, but the game DLL and the overlay still write these values one line
+		// at a time, so this window keeps the settings sync: re-read the bridge-owned values whenever the
 		// window is activated, so a later full save from here cannot revert what the bridge wrote.
 		private void AddAudioRoutingButton()
 		{
 			Activated += (sender, args) => SyncModernCableSettingFromDisk();
-		}
-
-		private void OpenAudioRouting(object sender, EventArgs args)
-		{
-			try
-			{
-				switch (AudioBridgeWindow.TryBringToFront())
-				{
-					case AudioBridgeWindow.Presence.Shown:
-						return;
-					case AudioBridgeWindow.Presence.FoundButNotShown:
-						MessageBox.Show(this,
-							"The audio bridge is already open but cannot be brought to the front from here. "
-							+ "It is probably running as administrator alongside Rocksmith; switch to it from the taskbar.",
-							"Audio bridge", MessageBoxButtons.OK, MessageBoxIcon.Information);
-						return;
-				}
-
-				var startInfo = new ProcessStartInfo
-				{
-					FileName = Application.ExecutablePath,
-					Arguments = "--audio-bridge \"" + Path.Combine(GenUtil.GetRSDirectory(), ".") + "\"",
-					UseShellExecute = false
-				};
-				using (var process = Process.Start(startInfo))
-				{
-					if (process == null) throw new InvalidOperationException("Audio bridge did not start.");
-				}
-			}
-			catch (Exception exception)
-			{
-				Console.Error.WriteLine(exception);
-				MessageBox.Show(this, exception.Message, "Cannot open audio bridge", MessageBoxButtons.OK, MessageBoxIcon.Error);
-			}
 		}
 	}
 }

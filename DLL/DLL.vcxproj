@@ -35,6 +35,8 @@
     <ClCompile Include="Audio\MlStringFretReader.cpp" />
     <ClCompile Include="Audio\RawPitchVerifier.cpp" />
     <ClCompile Include="Audio\SharedOutput.cpp" />
+    <ClCompile Include="Audio\OutputDevices.cpp" />
+    <ClCompile Include="Audio\TakeRecorder.cpp" />
     <ClCompile Include="Audio\OutputTap.cpp" />
     <ClCompile Include="Audio\GameAudioRecorder.cpp" />
     <ClCompile Include="Audio\DelayLinePitchShifter.cpp" />
@@ -155,6 +157,16 @@
       <PrecompiledHeader Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Menu.cpp" />
+    <ClCompile Include="Overlay\OverlayShell.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="Overlay\OverlayUi.cpp">
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug with Wwise Logging|Win32'">../stdafx.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="('$(Configuration)|$(Platform)'=='Release|Win32') Or ('$(Configuration)|$(Platform)'=='Release Public|Win32') Or ('$(Configuration)|$(Platform)'=='Release Developer|Win32')">../stdafx.h</PrecompiledHeaderFile>
+    </ClCompile>
     <ClCompile Include="ModManager.cpp" />
     <ClCompile Include="Mods\AudioDevices.cpp">
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">../stdafx.h</PrecompiledHeaderFile>
@@ -332,6 +344,8 @@
     <ClInclude Include="Audio\MlFretDisplay.hpp" />
     <ClInclude Include="Audio\RawPitchVerifier.hpp" />
     <ClInclude Include="Audio\SharedOutput.hpp" />
+    <ClInclude Include="Audio\OutputDevices.hpp" />
+    <ClInclude Include="Audio\TakeRecorder.hpp" />
     <ClInclude Include="Audio\OutputTap.hpp" />
     <ClInclude Include="Audio\GameAudioRecorder.hpp" />
     <ClInclude Include="Audio\DrySignalRecording.hpp" />
@@ -421,6 +435,10 @@
     <ClInclude Include="Lib\Midi\RtMidi.h" />
     <ClInclude Include="Log.hpp" />
     <ClInclude Include="Menu.hpp" />
+    <ClInclude Include="Overlay\OverlayShell.hpp" />
+    <ClInclude Include="Overlay\OverlayUi.hpp" />
+    <ClInclude Include="Overlay\HudLayout.hpp" />
+    <ClInclude Include="Overlay\AudioBridgeLogo.h" />
     <ClInclude Include="MidiPedal.h" />
     <ClInclude Include="ModManager.hpp" />
     <ClInclude Include="Mods\AudioDevices.hpp" />

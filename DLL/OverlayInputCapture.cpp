@@ -4,257 +4,186 @@
 #define DIRECTINPUT_VERSION 0x0800
 #include <dinput.h>
 
+// Rocksmith reads the mouse ONLY through DirectInput 8 (no raw input, GetCursorPos or GetAsyncKeyState), so
+// swallowing WM_ mouse messages in the WndProc is not enough: while the overlay has the mouse, the game's
+// DirectInput mouse reads must come back empty too.
+//
+// History (2026-09-23): this used to patch the game's DirectInput8Create import and hook each mouse device as
+// the game created it. The game creates its DirectInput interface before Install() runs, so that hook never
+// fired ("mouse device hooked" was never logged) and every overlay click reached the game. Now Install() makes
+// a throwaway mouse device of its own and patches GetDeviceState / GetDeviceData in dinput8.dll's device
+// vtables, which every device object shares, so devices created before we loaded are covered as well.
 namespace OverlayInputCapture
 {
 	namespace
 	{
-		constexpr size_t DIRECT_INPUT_VTABLE_SIZE = 32;
-		constexpr size_t DIRECT_INPUT_DEVICE_VTABLE_SIZE = 32;
-		constexpr size_t CREATE_DEVICE_SLOT = 3;
+		constexpr size_t GET_CAPABILITIES_SLOT = 3;
 		constexpr size_t GET_DEVICE_STATE_SLOT = 9;
 		constexpr size_t GET_DEVICE_DATA_SLOT = 10;
 
 		using DirectInput8CreateFunction = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
-		using CreateDeviceFunction = HRESULT(STDMETHODCALLTYPE*)(IDirectInput8A*, REFGUID, LPDIRECTINPUTDEVICE8A*, LPUNKNOWN);
-		using GetDeviceStateFunction = HRESULT(STDMETHODCALLTYPE*)(IDirectInputDevice8A*, DWORD, LPVOID);
-		using GetDeviceDataFunction = HRESULT(STDMETHODCALLTYPE*)(IDirectInputDevice8A*, DWORD, LPDIDEVICEOBJECTDATA, LPDWORD, DWORD);
-
-		std::atomic<bool> mouseButtonsCaptured{ false };
-		DirectInput8CreateFunction originalDirectInput8Create = nullptr;
-		CreateDeviceFunction originalCreateDevice = nullptr;
-		GetDeviceStateFunction originalGetDeviceState = nullptr;
-		GetDeviceDataFunction originalGetDeviceData = nullptr;
-		void** directInputImportSlot = nullptr;
-		std::atomic<bool> installed{ false };
-		std::atomic<bool> loggedStateRead{ false };
-		std::atomic<bool> loggedDataRead{ false };
-		std::atomic<bool> loggedCaptureEnabled{ false };
-
-		HRESULT STDMETHODCALLTYPE HookGetDeviceState(IDirectInputDevice8A* self, DWORD size, LPVOID data);
-		HRESULT STDMETHODCALLTYPE HookGetDeviceData(
-			IDirectInputDevice8A* self,
-			DWORD size,
-			LPDIDEVICEOBJECTDATA data,
-			LPDWORD itemCount,
-			DWORD flags);
+		using GetCapabilitiesFunction = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, LPDIDEVCAPS);
+		using GetDeviceStateFunction = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, DWORD, LPVOID);
+		using GetDeviceDataFunction = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, DWORD, LPDIDEVICEOBJECTDATA, LPDWORD, DWORD);
 
 		const GUID DIRECT_INPUT8_A_GUID =
 		{ 0xbf798031, 0x483a, 0x4da2, { 0xaa, 0x99, 0x5d, 0x64, 0xed, 0x36, 0x97, 0x00 } };
 		const GUID DIRECT_INPUT8_W_GUID =
 		{ 0xbf798030, 0x483a, 0x4da2, { 0xaa, 0x99, 0x5d, 0x64, 0xed, 0x36, 0x97, 0x00 } };
+		const GUID SYS_MOUSE_GUID =
+		{ 0x6f1d2b60, 0xd5a0, 0x11cf, { 0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00 } };
 
-		bool IsMouseButtonOffset(DWORD offset)
+		// One patched vtable per character set (the A and W device classes have their own vtables).
+		struct PatchedVtable
 		{
-			return offset >= DIMOFS_BUTTON0 && offset <= DIMOFS_BUTTON7;
+			void** vtable = nullptr;
+			GetCapabilitiesFunction getCapabilities = nullptr;
+			GetDeviceStateFunction getDeviceState = nullptr;
+			GetDeviceDataFunction getDeviceData = nullptr;
+		};
+		PatchedVtable patched[2];
+		int patchedCount = 0;
+
+		std::atomic<bool> mouseCaptured{ false };
+		std::atomic<bool> installed{ false };
+		std::atomic<bool> loggedStateRead{ false };
+		std::atomic<bool> loggedDataRead{ false };
+		std::atomic<bool> loggedCaptureEnabled{ false };
+
+		const PatchedVtable* Find(IUnknown* self)
+		{
+			void** vtable = *reinterpret_cast<void***>(self);
+			for (int i = 0; i < patchedCount; ++i)
+				if (patched[i].vtable == vtable) return &patched[i];
+			return nullptr;
 		}
 
-		bool IsMouseDevice(IDirectInputDevice8A* device)
+		// The shared vtable also serves the keyboard and any joystick, so only mouse devices are filtered.
+		// The answer is cached per device object (the game keeps a handful for its whole life).
+		bool IsMouse(IUnknown* self, const PatchedVtable& table)
 		{
-			DIDEVICEINSTANCEA info = {};
-			info.dwSize = sizeof(info);
-			return SUCCEEDED(device->GetDeviceInfo(&info))
-				&& GET_DIDEVICE_TYPE(info.dwDevType) == DI8DEVTYPE_MOUSE;
+			thread_local struct { IUnknown* device; bool mouse; } cache[8] = {};
+			thread_local unsigned next = 0;
+			for (const auto& entry : cache) if (entry.device == self) return entry.mouse;
+			DIDEVCAPS caps{};
+			caps.dwSize = sizeof(caps);
+			const bool mouse = SUCCEEDED(table.getCapabilities(self, &caps)) && GET_DIDEVICE_TYPE(caps.dwDevType) == DI8DEVTYPE_MOUSE;
+			cache[next++ % 8] = { self, mouse };
+			return mouse;
 		}
 
-		void HookDevice(IDirectInputDevice8A* device)
+		HRESULT STDMETHODCALLTYPE HookGetDeviceState(IUnknown* self, DWORD size, LPVOID data)
 		{
-			if (device == nullptr) return;
-
-			auto** originalVtable = reinterpret_cast<void***>(device);
-			if (*originalVtable == nullptr) return;
-
-			auto* hookedVtable = static_cast<void**>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-				DIRECT_INPUT_DEVICE_VTABLE_SIZE * sizeof(void*)));
-			if (hookedVtable == nullptr)
-			{
-				LOG_ERROR("[OverlayInputCapture] Could not allocate the DirectInput mouse vtable." << std::endl);
-				return;
-			}
-
-			std::memcpy(hookedVtable, *originalVtable, DIRECT_INPUT_DEVICE_VTABLE_SIZE * sizeof(void*));
-			if (originalGetDeviceState == nullptr)
-				originalGetDeviceState = reinterpret_cast<GetDeviceStateFunction>(hookedVtable[GET_DEVICE_STATE_SLOT]);
-			if (originalGetDeviceData == nullptr)
-				originalGetDeviceData = reinterpret_cast<GetDeviceDataFunction>(hookedVtable[GET_DEVICE_DATA_SLOT]);
-
-			hookedVtable[GET_DEVICE_STATE_SLOT] = reinterpret_cast<void*>(&HookGetDeviceState);
-			hookedVtable[GET_DEVICE_DATA_SLOT] = reinterpret_cast<void*>(&HookGetDeviceData);
-			*originalVtable = hookedVtable;
-			LOG_INFO("[OverlayInputCapture] Rocksmith DirectInput mouse device hooked." << std::endl);
-		}
-
-		HRESULT STDMETHODCALLTYPE HookCreateDevice(
-			IDirectInput8A* self,
-			REFGUID guid,
-			LPDIRECTINPUTDEVICE8A* device,
-			LPUNKNOWN outer)
-		{
-			const HRESULT result = originalCreateDevice(self, guid, device, outer);
-			if (SUCCEEDED(result) && device != nullptr && *device != nullptr && IsMouseDevice(*device))
-				HookDevice(*device);
-			return result;
-		}
-
-		void HookDirectInput(IDirectInput8A* directInput)
-		{
-			if (directInput == nullptr) return;
-
-			auto** originalVtable = reinterpret_cast<void***>(directInput);
-			if (*originalVtable == nullptr) return;
-
-			auto* hookedVtable = static_cast<void**>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-				DIRECT_INPUT_VTABLE_SIZE * sizeof(void*)));
-			if (hookedVtable == nullptr)
-			{
-				LOG_ERROR("[OverlayInputCapture] Could not allocate the DirectInput vtable." << std::endl);
-				return;
-			}
-
-			std::memcpy(hookedVtable, *originalVtable, DIRECT_INPUT_VTABLE_SIZE * sizeof(void*));
-			if (originalCreateDevice == nullptr)
-				originalCreateDevice = reinterpret_cast<CreateDeviceFunction>(hookedVtable[CREATE_DEVICE_SLOT]);
-			hookedVtable[CREATE_DEVICE_SLOT] = reinterpret_cast<void*>(&HookCreateDevice);
-			*originalVtable = hookedVtable;
-		}
-
-		HRESULT WINAPI HookDirectInput8Create(
-			HINSTANCE instance,
-			DWORD version,
-			REFIID riid,
-			LPVOID* output,
-			LPUNKNOWN outer)
-		{
-			const HRESULT result = originalDirectInput8Create(instance, version, riid, output, outer);
-			if (SUCCEEDED(result) && output != nullptr && *output != nullptr
-				&& (IsEqualGUID(riid, DIRECT_INPUT8_A_GUID) || IsEqualGUID(riid, DIRECT_INPUT8_W_GUID)))
-			{
-				HookDirectInput(reinterpret_cast<IDirectInput8A*>(*output));
-				LOG_INFO("[OverlayInputCapture] Rocksmith created its DirectInput 8 interface." << std::endl);
-			}
-			return result;
-		}
-
-		bool PatchDirectInputImport()
-		{
-			auto* module = reinterpret_cast<HMODULE>(GetModuleHandleW(nullptr));
-			auto* dosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(module);
-			if (dosHeader == nullptr || dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
-
-			auto* ntHeaders = reinterpret_cast<PIMAGE_NT_HEADERS>(reinterpret_cast<BYTE*>(module) + dosHeader->e_lfanew);
-			const auto& directory = ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-			if (directory.VirtualAddress == 0) return false;
-
-			auto* imports = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(reinterpret_cast<BYTE*>(module) + directory.VirtualAddress);
-			for (; imports->Name != 0; ++imports)
-			{
-				const char* moduleName = reinterpret_cast<const char*>(reinterpret_cast<BYTE*>(module) + imports->Name);
-				if (_stricmp(moduleName, "DINPUT8.dll") != 0) continue;
-
-				auto* names = reinterpret_cast<PIMAGE_THUNK_DATA>(reinterpret_cast<BYTE*>(module) + imports->OriginalFirstThunk);
-				auto* functions = reinterpret_cast<PIMAGE_THUNK_DATA>(reinterpret_cast<BYTE*>(module) + imports->FirstThunk);
-				for (; names->u1.AddressOfData != 0; ++names, ++functions)
-				{
-					if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
-					auto* importName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(reinterpret_cast<BYTE*>(module) + names->u1.AddressOfData);
-					if (std::strcmp(reinterpret_cast<const char*>(importName->Name), "DirectInput8Create") != 0) continue;
-
-					DWORD oldProtection = 0;
-					if (!VirtualProtect(&functions->u1.Function, sizeof(void*), PAGE_READWRITE, &oldProtection)) return false;
-					originalDirectInput8Create = reinterpret_cast<DirectInput8CreateFunction>(functions->u1.Function);
-					directInputImportSlot = reinterpret_cast<void**>(&functions->u1.Function);
-					functions->u1.Function = reinterpret_cast<ULONG_PTR>(&HookDirectInput8Create);
-					DWORD unused = 0;
-					VirtualProtect(&functions->u1.Function, sizeof(void*), oldProtection, &unused);
-					FlushInstructionCache(GetCurrentProcess(), &functions->u1.Function, sizeof(void*));
-					return true;
-				}
-			}
-			return false;
-		}
-
-		HRESULT STDMETHODCALLTYPE HookGetDeviceState(IDirectInputDevice8A* self, DWORD size, LPVOID data)
-		{
+			const PatchedVtable* table = Find(self);
+			if (table == nullptr) return DIERR_GENERIC;   // cannot happen: only patched vtables point here
+			const HRESULT result = table->getDeviceState(self, size, data);
+			if (FAILED(result) || data == nullptr || !mouseCaptured.load(std::memory_order_relaxed)) return result;
+			if (size != sizeof(DIMOUSESTATE) && size != sizeof(DIMOUSESTATE2)) return result;   // not a mouse format
+			if (!IsMouse(self, *table)) return result;
 			if (!loggedStateRead.exchange(true, std::memory_order_relaxed))
-				LOG_INFO("[OverlayInputCapture] Rocksmith reads mouse state through GetDeviceState." << std::endl);
-			const HRESULT result = originalGetDeviceState(self, size, data);
-			if (SUCCEEDED(result) && mouseButtonsCaptured.load(std::memory_order_relaxed) && data != nullptr)
-			{
-				if (size >= sizeof(DIMOUSESTATE2))
-				{
-					auto* state = static_cast<DIMOUSESTATE2*>(data);
-					std::memset(state->rgbButtons, 0, sizeof(state->rgbButtons));
-				}
-				else if (size >= sizeof(DIMOUSESTATE))
-				{
-					auto* state = static_cast<DIMOUSESTATE*>(data);
-					std::memset(state->rgbButtons, 0, sizeof(state->rgbButtons));
-				}
-			}
+				LOG_INFO("[OverlayInputCapture] Blocking Rocksmith's DirectInput mouse state under the overlay." << std::endl);
+			// No buttons, no wheel (scrolling a panel used to scroll the song list behind it) and no movement.
+			auto* state = static_cast<DIMOUSESTATE*>(data);
+			state->lX = state->lY = state->lZ = 0;
+			std::memset(state->rgbButtons, 0, size - offsetof(DIMOUSESTATE, rgbButtons));
 			return result;
 		}
 
-		HRESULT STDMETHODCALLTYPE HookGetDeviceData(
-			IDirectInputDevice8A* self,
-			DWORD size,
-			LPDIDEVICEOBJECTDATA data,
-			LPDWORD itemCount,
-			DWORD flags)
+		HRESULT STDMETHODCALLTYPE HookGetDeviceData(IUnknown* self, DWORD size, LPDIDEVICEOBJECTDATA data, LPDWORD itemCount, DWORD flags)
 		{
-			if (!loggedDataRead.exchange(true, std::memory_order_relaxed))
-				LOG_INFO("[OverlayInputCapture] Rocksmith reads buffered mouse events through GetDeviceData." << std::endl);
-			const HRESULT result = originalGetDeviceData(self, size, data, itemCount, flags);
-			if (FAILED(result) || !mouseButtonsCaptured.load(std::memory_order_relaxed)
-				|| data == nullptr || itemCount == nullptr || size < sizeof(DWORD))
+			const PatchedVtable* table = Find(self);
+			if (table == nullptr) return DIERR_GENERIC;
+			const HRESULT result = table->getDeviceData(self, size, data, itemCount, flags);
+			if (FAILED(result) || data == nullptr || itemCount == nullptr || !mouseCaptured.load(std::memory_order_relaxed))
 				return result;
-
-			DWORD writeIndex = 0;
-			auto* bytes = reinterpret_cast<BYTE*>(data);
-			for (DWORD readIndex = 0; readIndex < *itemCount; ++readIndex)
-			{
-				auto* source = bytes + readIndex * size;
-				const DWORD offset = *reinterpret_cast<DWORD*>(source);
-				if (IsMouseButtonOffset(offset)) continue;
-				if (writeIndex != readIndex)
-					std::memmove(bytes + writeIndex * size, source, size);
-				++writeIndex;
-			}
-			*itemCount = writeIndex;
+			if (!IsMouse(self, *table)) return result;
+			if (!loggedDataRead.exchange(true, std::memory_order_relaxed))
+				LOG_INFO("[OverlayInputCapture] Blocking Rocksmith's buffered DirectInput mouse events under the overlay." << std::endl);
+			// Every buffered mouse event (buttons, wheel, movement) is dropped, so a press and its release are
+			// never split between the overlay and the game.
+			*itemCount = 0;
 			return result;
+		}
+
+		bool PatchSlot(void** slot, void* hook)
+		{
+			DWORD oldProtection = 0;
+			if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &oldProtection)) return false;
+			*slot = hook;
+			DWORD unused = 0;
+			VirtualProtect(slot, sizeof(void*), oldProtection, &unused);
+			return true;
+		}
+
+		// Creates a throwaway system-mouse device for one character set and patches its class vtable.
+		void PatchCharacterSet(DirectInput8CreateFunction create, const GUID& iid)
+		{
+			IDirectInput8A* directInput = nullptr;   // A and W share the layout of every slot used here
+			if (FAILED(create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION, iid, reinterpret_cast<LPVOID*>(&directInput), nullptr)) || directInput == nullptr)
+			{
+				LOG_ERROR("[OverlayInputCapture] Could not create a DirectInput interface to find the mouse vtable." << std::endl);
+				return;
+			}
+			IDirectInputDevice8A* device = nullptr;
+			if (SUCCEEDED(directInput->CreateDevice(SYS_MOUSE_GUID, &device, nullptr)) && device != nullptr)
+			{
+				void** vtable = *reinterpret_cast<void***>(device);
+				bool known = false;
+				for (int i = 0; i < patchedCount; ++i) known |= patched[i].vtable == vtable;
+				if (!known && patchedCount < 2)
+				{
+					PatchedVtable entry;
+					entry.vtable = vtable;
+					entry.getCapabilities = reinterpret_cast<GetCapabilitiesFunction>(vtable[GET_CAPABILITIES_SLOT]);
+					entry.getDeviceState = reinterpret_cast<GetDeviceStateFunction>(vtable[GET_DEVICE_STATE_SLOT]);
+					entry.getDeviceData = reinterpret_cast<GetDeviceDataFunction>(vtable[GET_DEVICE_DATA_SLOT]);
+					// Record first so a game thread that lands in a hook mid-patch always finds its originals.
+					patched[patchedCount++] = entry;
+					if (!PatchSlot(&vtable[GET_DEVICE_STATE_SLOT], reinterpret_cast<void*>(&HookGetDeviceState))
+						|| !PatchSlot(&vtable[GET_DEVICE_DATA_SLOT], reinterpret_cast<void*>(&HookGetDeviceData)))
+						LOG_ERROR("[OverlayInputCapture] Could not patch the DirectInput mouse vtable." << std::endl);
+				}
+				device->Release();
+			}
+			else LOG_ERROR("[OverlayInputCapture] Could not create a DirectInput mouse device to find its vtable." << std::endl);
+			directInput->Release();
 		}
 	}
 
 	bool Install()
 	{
 		if (installed.load(std::memory_order_acquire)) return true;
-		if (!PatchDirectInputImport())
+		HMODULE dinput = GetModuleHandleW(L"dinput8.dll");
+		if (dinput == nullptr) dinput = LoadLibraryW(L"dinput8.dll");
+		const auto create = dinput ? reinterpret_cast<DirectInput8CreateFunction>(GetProcAddress(dinput, "DirectInput8Create")) : nullptr;
+		if (create == nullptr)
 		{
-			LOG_ERROR("[OverlayInputCapture] DirectInput8Create import was not found; mouse button capture is unavailable." << std::endl);
+			LOG_ERROR("[OverlayInputCapture] dinput8.dll is unavailable; overlay clicks will reach the game." << std::endl);
 			return false;
 		}
+		PatchCharacterSet(create, DIRECT_INPUT8_A_GUID);
+		PatchCharacterSet(create, DIRECT_INPUT8_W_GUID);
+		if (patchedCount == 0) return false;
 		installed.store(true, std::memory_order_release);
-		LOG_INFO("[OverlayInputCapture] DirectInput mouse button capture installed." << std::endl);
+		LOG_INFO("[OverlayInputCapture] DirectInput mouse capture installed on " << patchedCount << " shared device vtable(s)." << std::endl);
 		return true;
 	}
 
 	void SetMouseCapture(bool shouldCapture)
 	{
-		mouseButtonsCaptured.store(shouldCapture, std::memory_order_relaxed);
+		mouseCaptured.store(shouldCapture, std::memory_order_relaxed);
 		if (shouldCapture && !loggedCaptureEnabled.exchange(true, std::memory_order_relaxed))
-			LOG_INFO("[OverlayInputCapture] ImGui requested DirectInput mouse-button capture." << std::endl);
+			LOG_INFO("[OverlayInputCapture] ImGui requested DirectInput mouse capture." << std::endl);
 	}
 
 	void Shutdown()
 	{
-		mouseButtonsCaptured.store(false, std::memory_order_relaxed);
-		if (directInputImportSlot != nullptr && originalDirectInput8Create != nullptr)
+		mouseCaptured.store(false, std::memory_order_relaxed);
+		// Put the original methods back; the table entries stay so a call already inside a hook still resolves.
+		for (int i = 0; i < patchedCount; ++i)
 		{
-			DWORD oldProtection = 0;
-			if (VirtualProtect(directInputImportSlot, sizeof(void*), PAGE_READWRITE, &oldProtection))
-			{
-				*directInputImportSlot = reinterpret_cast<void*>(originalDirectInput8Create);
-				DWORD unused = 0;
-				VirtualProtect(directInputImportSlot, sizeof(void*), oldProtection, &unused);
-			}
+			PatchSlot(&patched[i].vtable[GET_DEVICE_STATE_SLOT], reinterpret_cast<void*>(patched[i].getDeviceState));
+			PatchSlot(&patched[i].vtable[GET_DEVICE_DATA_SLOT], reinterpret_cast<void*>(patched[i].getDeviceData));
 		}
 		installed.store(false, std::memory_order_release);
 	}

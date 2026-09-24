@@ -22,6 +22,8 @@ namespace
 	std::atomic<bool> isGameplayInProgress{ false };
 	std::atomic<bool> isSpeakerTargetSynchronized{ false };
 	std::atomic<unsigned long long> modeNoticeTick{ 0 };
+	// When F7 was refused because Speaker Mode is locked for the song (the overlay flashes).
+	std::atomic<unsigned long long> modeLockedNoticeTick{ 0 };
 
 	// The tuning the player's guitar is physically in, as semitones from E standard.
 	// Everything the mod shows is relative to this, so a player who lives in Eb sees
@@ -87,6 +89,7 @@ bool DropPedalState::TryCyclePitchMode(DropPedal::PitchMode& nextMode)
 	if (isGameplay && currentMode == DropPedal::PitchMode::SpeakerMode)
 	{
 		nextMode = currentMode;
+		modeLockedNoticeTick.store(GetTickCount64(), std::memory_order_relaxed);
 		return false;
 	}
 	if (isGameplay && currentMode == DropPedal::PitchMode::DropPedal)
@@ -268,4 +271,9 @@ int DropPedalState::GetShiftDirection(DropPedal::Player player)
 unsigned long long DropPedalState::GetModeNoticeTick()
 {
 	return modeNoticeTick.load(std::memory_order_relaxed);
+}
+
+unsigned long long DropPedalState::GetModeLockedNoticeTick()
+{
+	return modeLockedNoticeTick.load(std::memory_order_relaxed);
 }

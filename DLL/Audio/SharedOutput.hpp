@@ -39,6 +39,9 @@ namespace Audio::SharedOutput
 	// Run one control request against the live engine directly (same dispatch the pipe uses), for the
 	// in-game overlay to drive the audio backend in-process without a pipe round trip. Thread-safe.
 	ControlResponse DispatchControl(const ControlRequest& request);
+	// State of the live alternate-device route (op 21): S_FALSE none, S_OK playing, E_PENDING opening,
+	// failure = could not open / lost / its ASIO source stalled. For the overlay's switch-and-verify.
+	HRESULT RouteHealth();
 	// Reconciles the proxy's current transport with the saved output. In virtual mode this automatically
 	// opens a shared Windows route (or stays silently alive when no endpoint exists). A returning ASIO
 	// device is never selected here; promotion requires an explicit Apply output command, and input is

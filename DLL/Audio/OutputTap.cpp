@@ -393,10 +393,10 @@ namespace Audio::OutputTap
 		// bridge off the proxy is a pure passthrough (no sink, no copy).
 		void SetProxySink(bool on)
 		{
-			HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+			HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 			if (!proxy)
 			{
-				if (on) LOG_ERROR("(OUTPUT TAP) Rocksmith Audio Bridge driver not loaded; wet recording needs the proxy ASIO driver" << std::endl);
+				if (on) LOG_ERROR("(OUTPUT TAP) Rocksmith Audio Bridge ASIO driver not loaded; wet recording needs the proxy ASIO driver" << std::endl);
 				return;
 			}
 			using SetSinkFn = void(__cdecl*)(void(__cdecl*)(const void*, long, long, long, double));
@@ -477,12 +477,12 @@ namespace Audio::OutputTap
 	bool TapClientSeen() { return g_clientSeen.load(std::memory_order_acquire); }
 	bool ProxyAvailable()
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		return proxy && GetProcAddress(proxy, "RSModsAsio_SetSink") != nullptr;
 	}
 	int ProxyOutputMode()
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return 0;
 		using ModeFn = int(__cdecl*)();
 		auto mode = reinterpret_cast<ModeFn>(GetProcAddress(proxy, "RSModsAsio_GetOutputMode"));
@@ -490,7 +490,7 @@ namespace Audio::OutputTap
 	}
 	int ProxyInputMode()
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return 0;
 		using ModeFn = int(__cdecl*)();
 		auto mode = reinterpret_cast<ModeFn>(GetProcAddress(proxy, "RSModsAsio_GetInputMode"));
@@ -499,7 +499,7 @@ namespace Audio::OutputTap
 	bool TryPromoteProxyOutput(const std::wstring& driverName)
 	{
 		if (driverName.empty()) return false;
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return false;
 		using PromoteFn = int(__cdecl*)(const wchar_t*);
 		auto promote = reinterpret_cast<PromoteFn>(GetProcAddress(proxy, "RSModsAsio_TryPromote"));
@@ -508,7 +508,7 @@ namespace Audio::OutputTap
 	bool TryRebindProxyOutput(const std::wstring& driverName)
 	{
 		if (driverName.empty()) return false;
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return false;
 		using RebindFn = int(__cdecl*)(const wchar_t*);
 		auto rebind = reinterpret_cast<RebindFn>(GetProcAddress(proxy, "RSModsAsio_TryRebind"));
@@ -516,7 +516,7 @@ namespace Audio::OutputTap
 	}
 	bool TryDemoteProxyOutput()
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return false;
 		using DemoteFn = int(__cdecl*)();
 		auto demote = reinterpret_cast<DemoteFn>(GetProcAddress(proxy, "RSModsAsio_TryDemote"));
@@ -526,7 +526,7 @@ namespace Audio::OutputTap
 	// false when the proxy driver is not loaded (WASAPI output, or ASIO without the bridge). gain == 1 = off.
 	bool ConfigureLimiter(float gainLinear, float reserved)
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return false;
 		using ConfigFn = void(__cdecl*)(float, float);
 		auto fn = reinterpret_cast<ConfigFn>(GetProcAddress(proxy, "RSModsAsio_ConfigureLimiter"));
@@ -539,7 +539,7 @@ namespace Audio::OutputTap
 	// target are linear (0..1). Returns false when the proxy driver is not loaded.
 	bool ConfigureOutputGuard(bool limiterOn, float ceilingLin, bool agcOn, float targetRms)
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return false;
 		using GuardFn = void(__cdecl*)(int, float, int, float);
 		auto fn = reinterpret_cast<GuardFn>(GetProcAddress(proxy, "RSModsAsio_ConfigureOutputGuard"));
@@ -551,7 +551,7 @@ namespace Audio::OutputTap
 	// samples (0 if the proxy is not loaded), which the host regenerates as the correlation reference.
 	int ArmLatencyProbe()
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return 0;
 		using LenFn = int(__cdecl*)();
 		using ArmFn = void(__cdecl*)();
@@ -567,7 +567,7 @@ namespace Audio::OutputTap
 	void ReadOutputLevels(float* peak, float* rms, int maxCh)
 	{
 		for (int i = 0; i < maxCh; ++i) { if (peak) peak[i] = 0.0f; if (rms) rms[i] = 0.0f; }
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return;
 		static bool metering = false;
 		if (!metering)
@@ -583,8 +583,8 @@ namespace Audio::OutputTap
 	bool AddProxySink(ProxySinkFn sink)
 	{
 		if (!sink) return false;
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
-		if (!proxy) { LOG_ERROR("(OUTPUT TAP) alternate-device routing needs the Rocksmith Audio Bridge proxy driver, which is not loaded" << std::endl); return false; }
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
+		if (!proxy) { LOG_ERROR("(OUTPUT TAP) alternate-device routing needs the Rocksmith Audio Bridge ASIO proxy driver, which is not loaded" << std::endl); return false; }
 		using AddFn = int(__cdecl*)(void(__cdecl*)(const void*, long, long, long, double));
 		auto add = reinterpret_cast<AddFn>(GetProcAddress(proxy, "RSModsAsio_AddSink"));
 		if (!add) return false;
@@ -593,7 +593,7 @@ namespace Audio::OutputTap
 
 	void RemoveProxySink(ProxySinkFn sink)
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy || !sink) return;
 		using RemoveFn = void(__cdecl*)(void(__cdecl*)(const void*, long, long, long, double));
 		if (auto remove = reinterpret_cast<RemoveFn>(GetProcAddress(proxy, "RSModsAsio_RemoveSink"))) remove(sink);
@@ -601,7 +601,7 @@ namespace Audio::OutputTap
 
 	bool SetProxyForwardMuted(bool muted)
 	{
-		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridge.dll");
+		HMODULE proxy = GetModuleHandleW(L"RocksmithAudioBridgeAsio.dll");
 		if (!proxy) return false;
 		using MuteFn = void(__cdecl*)(int);
 		auto fn = reinterpret_cast<MuteFn>(GetProcAddress(proxy, "RSModsAsio_SetForwardMuted"));

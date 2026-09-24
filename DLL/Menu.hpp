@@ -7,7 +7,6 @@ namespace Menu
 	inline bool enableColorBlindCheckboxGUI = false; // Do we allow the user to change Colorblind mode in the imGUI menu?
 
 	void Init(IDirect3DDevice9* pDevice, LONG_PTR WndProc);
-	void AddAudioBridgeMenu();
 	void AddMidiMenu();
 	void AddMicrophonesMenu();
 	void AddVoicelinesMenu();

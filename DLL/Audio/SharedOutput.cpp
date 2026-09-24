@@ -6,6 +6,7 @@
 #include "DrySignalRecording.hpp"
 #include "AudioControl.hpp"
 #include "OutputTap.hpp"
+#include "OutputDevices.hpp"
 #include "PersistentInput.hpp"
 #include "AsioHook.hpp"
 #include "CableInput.hpp"
@@ -501,7 +502,22 @@ namespace Audio::SharedOutput
 					Invoke([&]() { lastRecordingPath = stoppedPath; recordingError = response.result; return S_OK; });
 				}
 			}
-			else if (request.operation == 4) response.result = SwitchOutput(request.value);
+			// Never open the Windows endpoint of an interface RS_ASIO holds (it silences the interface and its
+			// input does not recover). See OutputDevices.hpp.
+			else if (request.operation == 4)
+			{
+				response.result = OutputDevices::IsProtected(request.value)
+					? HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED) : SwitchOutput(request.value);
+				// Remember the pick (2026-09-24): OutputDevice is what the cable-mode session opens at launch, and
+				// ResolveActiveOutput falls back to the Windows default when that device is not plugged in.
+				if (SUCCEEDED(response.result))
+				{
+					wchar_t executable[MAX_PATH]{};
+					GetModuleFileNameW(nullptr, executable, MAX_PATH);
+					WritePrivateProfileStringW(L"Audio", L"OutputDevice", request.value,
+						(std::filesystem::path(executable).parent_path() / L"AudioRouting.ini").c_str());
+				}
+			}
 			else if (request.operation == 6)
 			{
 				wchar_t* end = nullptr;
@@ -1192,6 +1208,33 @@ namespace Audio::SharedOutput
 	bool g_routeManaged = false;                     // true only for a virtual-ASIO route chosen by the host
 	std::atomic<uint64_t> g_lastProxyRefreshTick{ 0 };
 	std::atomic<bool> g_proxyDemotionRunning{ false };
+
+	// Remembered output (2026-09-24, Philip): the device last picked in the overlay's Switch output is saved as
+	// AudioRouting.ini [Audio] LastOutput and restored once per launch when the game comes up on the ASIO
+	// bridge, so a chosen output sticks the way a hardcoded RS_ASIO output used to. Picking the ASIO entry
+	// (op 22) forgets it. A saved device that is unplugged is skipped (the game stays on ASIO) but not
+	// forgotten, so it is used again next time it is present.
+	std::atomic<bool> g_lastOutputRestoreTried{ false };
+
+	std::wstring AudioRoutingIni()
+	{
+		wchar_t executable[MAX_PATH]{};
+		GetModuleFileNameW(nullptr, executable, MAX_PATH);
+		return (std::filesystem::path(executable).parent_path() / L"AudioRouting.ini").wstring();
+	}
+
+	void SaveLastOutput(const std::wstring& endpointId)
+	{
+		// An empty id deletes the key rather than writing "LastOutput=".
+		WritePrivateProfileStringW(L"Audio", L"LastOutput", endpointId.empty() ? nullptr : endpointId.c_str(), AudioRoutingIni().c_str());
+	}
+
+	std::wstring ReadLastOutput()
+	{
+		wchar_t value[2048]{};
+		GetPrivateProfileStringW(L"Audio", L"LastOutput", L"", value, 2048, AudioRoutingIni().c_str());
+		return value;
+	}
 	// Route-source watchdog. On ASIO the routed mix is fed by the proxy's buffer callback; if the interface
 	// is unplugged that callback stops firing, so the route keeps a live WASAPI backend (green light) with no
 	// audio to render. These ticks let the status path tell that dead-source state from a healthy route, so
@@ -1295,6 +1338,30 @@ namespace Audio::SharedOutput
 		return S_OK;
 	}
 
+	bool RouteFeedStalled();
+
+	// Health of a live route, for the overlay's switch-and-verify: S_FALSE = no route, S_OK = playing,
+	// E_PENDING = still opening, a failure HRESULT = the device could not be opened or was lost.
+	HRESULT RouteHealth()
+	{
+		std::shared_ptr<OutputBackend> backend;
+		{
+			std::lock_guard<std::mutex> guard(g_routeMutex);
+			backend = g_routeBackend;
+		}
+		if (!backend) return S_FALSE;
+		if (RouteFeedStalled()) return HRESULT_FROM_WIN32(ERROR_NOT_READY);
+		const OutputBackendStatus status = backend->GetStatus();
+		switch (status.state)
+		{
+		case BackendState::Running: return S_OK;
+		case BackendState::Opening:
+		case BackendState::Priming:
+		case BackendState::Recovering: return E_PENDING;
+		default: return FAILED(status.error) ? status.error : E_FAIL;
+		}
+	}
+
 	// While routing, the reported endpoint includes the route transport so the GUI can distinguish
 	// real-ASIO-fed output from a route fed by the virtual proxy clock.
 	std::wstring RouteEndpointTag()
@@ -1387,12 +1454,17 @@ namespace Audio::SharedOutput
 		{
 			// Route the game mix to the given WASAPI device (e.g. laptop speakers) live, no restart.
 			// (Op 19 is the input suppressor, op 20 reserved; alternate-device routing is 21/22.)
-			response.result = RouteStart(request.value);
+			// Refused for the Windows endpoint of the interface RS_ASIO is bound to: opening it silences the ASIO
+			// device and RS_ASIO input never recovers (2026-09-16). See OutputDevices.hpp.
+			response.result = OutputDevices::IsProtected(request.value)
+				? HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED) : RouteStart(request.value);
+			if (SUCCEEDED(response.result)) SaveLastOutput(request.value);
 		}
 		else if (request.operation == 22)
 		{
-			// Stop routing: hand the mix back to the game's own (ASIO) device.
+			// Stop routing: hand the mix back to the game's own (ASIO) device, and stop restoring the last pick.
 			response.result = RouteStop();
+			SaveLastOutput(L"");
 		}
 		response.outputError = S_OK;
 		response.dryInputReady = DrySignalRecording::IsReady() ? 1 : 0;
@@ -1512,6 +1584,21 @@ namespace Audio::SharedOutput
 		if (mode == 2)
 		{
 			if (PlanProxyRoute(mode, routeExists, routeManaged, true, true) == ProxyRouteAction::StopManagedRoute) RouteStop();
+			else if (!routeExists && !g_lastOutputRestoreTried.exchange(true))
+			{
+				// First time this launch the game is playing straight to ASIO: move it to the remembered output
+				// if that device is present. Not managed (g_routeManaged stays false): it is the user's choice.
+				const std::wstring saved = ReadLastOutput();
+				std::wstring resolved;
+				bool usedDefault = false;
+				if (!saved.empty() && !OutputDevices::IsProtected(saved) && ResolveActiveOutput(saved, resolved, usedDefault) && !usedDefault)
+				{
+					const HRESULT restored = RouteStart(saved);
+					LOG_INFO("(AUDIO ROUTING) Restoring last output " << (SUCCEEDED(restored) ? "started" : "failed") << std::endl);
+				}
+				else if (!saved.empty())
+					LOG_INFO("(AUDIO ROUTING) Last output not present; staying on the ASIO device" << std::endl);
+			}
 			return;
 		}
 		if (mode != 1) return;

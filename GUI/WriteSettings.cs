@@ -87,6 +87,10 @@ namespace RSMods
 					{ ReadSettings.NOTE_BY_NOTE_UI_SIZE_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_UI_SIZE_IDENTIFIER, "100") },
 					{ ReadSettings.NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER, "150") },
 					{ ReadSettings.NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER, "Left") },
+					{ ReadSettings.NOTE_BY_NOTE_LINE_SPACING_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_LINE_SPACING_IDENTIFIER, "100") },
+					{ ReadSettings.NOTE_BY_NOTE_READOUT_PLACEMENT_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_READOUT_PLACEMENT_IDENTIFIER, "Default") },
+					{ ReadSettings.NOTE_BY_NOTE_TARGET_PLACEMENT_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_TARGET_PLACEMENT_IDENTIFIER, "Default") },
+					{ ReadSettings.NOTE_BY_NOTE_TARGET_STYLE_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_TARGET_STYLE_IDENTIFIER, "Detailed") },
                     { ReadSettings.NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER, "FFFFFF") },
                     { ReadSettings.NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER, "55DD77") },
                     { ReadSettings.NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER, CreateDefaultOnOldINI(ReadSettings.NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER, "FFAA44") },
@@ -96,7 +100,8 @@ namespace RSMods
             saveSettingsOrDefaults.Add(
                 "[Drop Pedal]", new Dictionary<string, string>
                 {
-                    { ReadSettings.DropPedalEnabledIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalEnabledIdentifier, "off") },
+                    { ReadSettings.DropPedalEnabledIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalEnabledIdentifier, "on") },
+                    { ReadSettings.DropPedalShowOverlayIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalShowOverlayIdentifier, "on") },
                     { ReadSettings.DropPedalCustomOverlayColorsIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalCustomOverlayColorsIdentifier, "off") },
                     { ReadSettings.DropPedalOverlayDownColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayDownColorIdentifier, "6BE06B") },
                     { ReadSettings.DropPedalOverlayUpColorIdentifier, CreateDefaultOnOldINI(ReadSettings.DropPedalOverlayUpColorIdentifier, "FFC24D") },
@@ -239,10 +244,10 @@ namespace RSMods
                     { ReadSettings.RewindLeadupIdentifier, CreateDefaultOnOldINI(ReadSettings.RewindLeadupIdentifier, "2000") }, // Amount of time (in ms) to move the grey note timer back after rewinding.
                     { ReadSettings.CustomNSPTimeLimitIdentifier, CreateDefaultOnOldINI(ReadSettings.CustomNSPTimeLimitIdentifier, "10000") }, // Amount of time (in ms) to have Non-stop play wait until the next song.
                     { ReadSettings.OnScreenFontSizeIdentifier, CreateDefaultOnOldINI(ReadSettings.OnScreenFontSizeIdentifier, "24") },
-					{ ReadSettings.ModernCableInputIdentifier, CreateDefaultOnOldINI(ReadSettings.ModernCableInputIdentifier, "on") }, // Real Tone Cable through the modern WASAPI capture client (RSModsPlus tab). Ships enabled.
-					{ ReadSettings.CableForPlayerTwoIdentifier, CreateDefaultOnOldINI(ReadSettings.CableForPlayerTwoIdentifier, "off") }, // Insert the RSModsPlus Cable device after RS_ASIO inputs for multiplayer.
-                    { ReadSettings.MonitorOutputIdentifier, CreateDefaultOnOldINI(ReadSettings.MonitorOutputIdentifier, "off") }, // Diagnostic output-stream monitor (RSModsPlus tab, experimental).
-                    { ReadSettings.AudioDiagnosticsOverlayIdentifier, CreateDefaultOnOldINI(ReadSettings.AudioDiagnosticsOverlayIdentifier, "on") }, // In-game audio latency / signal overlay (RSModsPlus tab).
+					{ ReadSettings.ModernCableInputIdentifier, CreateDefaultOnOldINI(ReadSettings.ModernCableInputIdentifier, "on") }, // Real Tone Cable through the modern WASAPI capture client (Rocksmith Audio Bridge tab). Ships enabled.
+					{ ReadSettings.CableForPlayerTwoIdentifier, CreateDefaultOnOldINI(ReadSettings.CableForPlayerTwoIdentifier, "off") }, // Insert the Rocksmith Audio Bridge Cable device after RS_ASIO inputs for multiplayer.
+                    { ReadSettings.MonitorOutputIdentifier, CreateDefaultOnOldINI(ReadSettings.MonitorOutputIdentifier, "off") }, // Diagnostic output-stream monitor (Rocksmith Audio Bridge tab, experimental).
+                    { ReadSettings.AudioDiagnosticsOverlayIdentifier, CreateDefaultOnOldINI(ReadSettings.AudioDiagnosticsOverlayIdentifier, "on") }, // In-game audio latency / signal overlay (Rocksmith Audio Bridge tab).
                 }
             );
             saveSettingsOrDefaults.Add(

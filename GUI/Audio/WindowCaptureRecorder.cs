@@ -42,21 +42,37 @@ namespace RSMods.Audio
 
 		public Task StartAsync(int gameProcessId, string directory)
 		{
-			if (capturing)
-				throw new InvalidOperationException("A video take is already open.");
 			using (var game = Process.GetProcessById(gameProcessId))
 			{
 				if (game.MainWindowHandle == IntPtr.Zero)
 					throw new InvalidOperationException("Rocksmith has no capture window.");
-				Directory.CreateDirectory(directory);
-				videoPath = Path.Combine(directory, "Rocksmith-video-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N") + ".mp4");
-				Check(RsCaptureStart(game.MainWindowHandle, videoPath, BITS_PER_SECOND, FRAMES_PER_SECOND), "Video capture could not start");
-				capturing = true;
+				Start(game.MainWindowHandle, directory);
 			}
 			return Task.FromResult(true);
 		}
 
-		public async Task<string> StopAsync(AudioControlStatus audio)
+		/// <summary>Starts capturing a known window. The headless video take (VideoTakeHost) passes the game's
+		/// window handle from the DLL, since a hidden helper has no reason to look it up by process.</summary>
+		public void Start(IntPtr window, string directory)
+		{
+			if (capturing)
+				throw new InvalidOperationException("A video take is already open.");
+			if (window == IntPtr.Zero)
+				throw new InvalidOperationException("Rocksmith has no capture window.");
+			Directory.CreateDirectory(directory);
+			videoPath = Path.Combine(directory, "Rocksmith-video-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N") + ".mp4");
+			Check(RsCaptureStart(window, videoPath, BITS_PER_SECOND, FRAMES_PER_SECOND), "Video capture could not start");
+			capturing = true;
+		}
+
+		public Task<string> StopAsync(AudioControlStatus audio)
+		{
+			return audio == null ? StopAsync(null, 0, 0) : StopAsync(audio.FilePath, audio.RecordingStarted, audio.Frames);
+		}
+
+		/// <summary>Stops the capture and muxes it with the finished game-audio take. The audio values are the ones
+		/// the engine reports when a take stops (op 3): the WAV path, its start FILETIME and frame count.</summary>
+		public async Task<string> StopAsync(string audioPath, ulong audioStarted, ulong audioFrames)
 		{
 			if (!capturing)
 				throw new InvalidOperationException("No video take is open.");
@@ -67,16 +83,19 @@ namespace RSMods.Audio
 			if (stopped == ERROR_EMPTY)
 				throw new IOException("No frames were captured. Play in a visible window and try the take again.");
 			Check(stopped, "Video capture failed");
-			if (audio == null || audio.RecordingStarted == 0 || audio.Frames == 0 || !File.Exists(audio.FilePath))
+			if (audioStarted == 0 || audioFrames == 0 || string.IsNullOrEmpty(audioPath) || !File.Exists(audioPath))
 				throw new IOException("No game audio was captured. The video file was retained.");
-			long offset = (long)audio.RecordingStarted - (long)startFileTime;
+			long offset = (long)audioStarted - (long)startFileTime;
 			if (Math.Abs(offset) > MAXIMUM_DRIFT_TICKS)
 				throw new IOException("Video and audio clocks did not agree. Separate take files were retained.");
-			string output = Path.ChangeExtension(audio.FilePath, ".mp4");
+			string output = Path.ChangeExtension(audioPath, ".mp4");
 			string video = videoPath;
-			await Task.Run(() => Combine(video, audio.FilePath, output, offset));
+			await Task.Run(() => Combine(video, audioPath, output, offset));
 			Delete(video);
 			videoPath = null;
+			// A video take is dry WAV + MP4, never a third file: the MP4 now carries the wet audio, so the wet WAV
+			// is redundant. It is only removed after a successful mux; on any failure above it stays as the take.
+			Delete(audioPath);
 			return output;
 		}
 

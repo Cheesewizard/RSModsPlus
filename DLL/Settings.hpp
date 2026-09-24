@@ -3,7 +3,7 @@
 #include <functional> 
 
 namespace Settings {
-	enum class NoteByNoteTargetPosition { Left, Center };
+	enum class NoteByNoteTargetPosition { Left, Center, Custom };   // Custom = the dragged NoteByNoteTargetPlacement
 	bool IsNoteByNoteDetectionVisible();
 	bool SetNoteByNoteDetectionVisible(bool visible);
 	bool SetNoteByNoteTargetPosition(NoteByNoteTargetPosition position);
@@ -11,6 +11,38 @@ namespace Settings {
 	int GetNoteByNoteTargetSize();
 	NoteByNoteTargetPosition GetNoteByNoteTargetPosition();
 	NoteByNote::DetectionPalette GetNoteByNoteDetectionPalette();
+
+	// Live edits from the in-game overlay. Each applies immediately (the detection HUD reads these atomics every
+	// frame); persist=false skips the RSMods.ini write so a slider drag only saves once, on release.
+	// Colour index order matches the palette: 0 text/target, 1 confirmed, 2 partial, 3 rejected. Colours are 0xRRGGBB.
+	bool IsNoteByNoteCustomColours();
+	bool SetNoteByNoteCustomColours(bool enabled);
+	uint32_t GetNoteByNoteColor(int index);
+	bool SetNoteByNoteColor(int index, uint32_t rgb, bool persist);
+	bool ResetNoteByNoteColors();
+	bool SetNoteByNoteUiSize(int percent, bool persist);
+	bool SetNoteByNoteTargetSize(int percent, bool persist);
+
+	// Free placement of the Note by Note HUD blocks, dragged in-game while the overlay is open. The position is the
+	// block's top-left as a fraction of the game window (resolution independent); IsSet() false means the built-in
+	// layout. The target placement is only used in NoteByNoteTargetPosition::Custom and is kept while another
+	// position is chosen, so switching back to Custom restores it.
+	struct HudPlacement { float x = -1.0f, y = -1.0f; bool IsSet() const { return x >= 0.0f && y >= 0.0f; } };
+	enum class NoteByNoteHudBlock { Readout, Target };
+	HudPlacement GetNoteByNoteHudPlacement(NoteByNoteHudBlock block);
+	bool SetNoteByNoteHudPlacement(NoteByNoteHudBlock block, HudPlacement placement, bool persist);   // unset placement = default
+	// Vertical distance between the Native, Enhanced and ML lines, percent of the original spacing (50..300).
+	int GetNoteByNoteLineSpacing();
+	bool SetNoteByNoteLineSpacing(int percent, bool persist);
+	// How the target is written: Detailed "low E string, fret 7 (B)", Simple "7" / "7 half bend" beside the string
+	// colour (chords keep their fingering), or Tab, a six-line tab with the fret(s) on their strings.
+	enum class NoteByNoteTargetStyle { Detailed, Simple, Tab };
+	NoteByNoteTargetStyle GetNoteByNoteTargetStyle();
+	bool SetNoteByNoteTargetStyle(NoteByNoteTargetStyle style);
+
+	// Drop Pedal settings edited from the in-game overlay: updates the live value (modSettings[modKey], what the
+	// DLL reads) and, when persist is true, the [Drop Pedal] iniKey in RSMods.ini. The caller reloads the feature.
+	bool SetDropPedalSetting(const char* modKey, const char* iniKey, const std::string& value, bool persist);
 
 	void Initialize(); // Default Settings
 

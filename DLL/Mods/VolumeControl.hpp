@@ -12,13 +12,8 @@ namespace VolumeControl {
 	void EnableSongPreviewAudio();
 	void AllowAltTabbingWithAudio();
 	void DisableAltTabbingWithAudio();
-	bool EnableExternalAmpMode();
-	bool RestoreRocksmithGuitar();
-	bool IsExternalAmpModeEnabled();
 	inline bool disabledSongPreviewAudio = false;
 	inline bool allowedAltTabbingWithAudio = false;
-	inline bool externalAmpModeEnabled = false;
-	inline float player1VolumeBeforeExternalAmp = 100.f;
 
 	inline bool player1Muted = false;
 	inline bool player2Muted = false;

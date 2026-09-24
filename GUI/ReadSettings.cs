@@ -12,6 +12,10 @@ namespace RSMods
 		public const string NOTE_BY_NOTE_UI_SIZE_IDENTIFIER = "NoteByNoteUiSize = ";
 		public const string NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER = "NoteByNoteTargetSize = ";
 		public const string NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER = "NoteByNoteTargetPosition = ";
+		public const string NOTE_BY_NOTE_LINE_SPACING_IDENTIFIER = "NoteByNoteLineSpacing = ";
+		public const string NOTE_BY_NOTE_READOUT_PLACEMENT_IDENTIFIER = "NoteByNoteReadoutPlacement = ";
+		public const string NOTE_BY_NOTE_TARGET_PLACEMENT_IDENTIFIER = "NoteByNoteTargetPlacement = ";
+		public const string NOTE_BY_NOTE_TARGET_STYLE_IDENTIFIER = "NoteByNoteTargetStyle = ";
 		public const string NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER = "NoteByNoteNeutralColor = ";
 		public const string NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER = "NoteByNoteConfirmedColor = ";
 		public const string NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER = "NoteByNotePartialColor = ";
@@ -189,6 +193,7 @@ namespace RSMods
             PreventMidSongPauseIdentifier               = "PreventMidSongPause = ",
             DropPedalEnabledIdentifier                   = "EnableDropPedal = ",
             DropPedalCustomOverlayColorsIdentifier       = "CustomOverlayColors = ",
+            DropPedalShowOverlayIdentifier               = "ShowOverlay = ",
             DropPedalOverlayDownColorIdentifier          = "OverlayDownColor = ",
             DropPedalOverlayUpColorIdentifier            = "OverlayUpColor = ",
             DropPedalOverlayStatusColorIdentifier        = "OverlayStatusColor = ",
@@ -321,6 +326,14 @@ namespace RSMods
             return setting;
         }
 
+        private static string NormalizeIniLine(string line)
+        {
+            int equals = line.IndexOf('=');
+            if (equals <= 0 || line.StartsWith("[") || line.StartsWith(";"))
+                return line;
+            return line.Substring(0, equals).TrimEnd() + " = " + line.Substring(equals + 1).TrimStart();
+        }
+
         private static bool IdentifierIsFound(string currentLine, string settingToFind, string identifierToGrab) => currentLine.Contains(settingToFind) && settingToFind == identifierToGrab;
 
         private static string DefaultSettingValue(string identifierToGrab)
@@ -334,7 +347,9 @@ namespace RSMods
             if (identifierToGrab == DropPedalBaseTuningKeyIdentifier)
                 return "VK_F9";
             if (identifierToGrab == DropPedalEnabledIdentifier)
-                return "off";
+                return "on";
+            if (identifierToGrab == DropPedalShowOverlayIdentifier)
+                return "on";
             if (identifierToGrab == DropPedalCustomOverlayColorsIdentifier)
                 return "off";
             if (identifierToGrab == DropPedalOverlayDownColorIdentifier)
@@ -362,6 +377,10 @@ namespace RSMods
 			if (identifierToGrab == NOTE_BY_NOTE_UI_SIZE_IDENTIFIER) return "100";
 			if (identifierToGrab == NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER) return "150";
 			if (identifierToGrab == NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER) return "Left";
+			if (identifierToGrab == NOTE_BY_NOTE_LINE_SPACING_IDENTIFIER) return "100";
+			if (identifierToGrab == NOTE_BY_NOTE_READOUT_PLACEMENT_IDENTIFIER) return "Default";
+			if (identifierToGrab == NOTE_BY_NOTE_TARGET_PLACEMENT_IDENTIFIER) return "Default";
+			if (identifierToGrab == NOTE_BY_NOTE_TARGET_STYLE_IDENTIFIER) return "Detailed";
             if (identifierToGrab == NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER) return "FFFFFF";
             if (identifierToGrab == NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER) return "55DD77";
             if (identifierToGrab == NOTE_BY_NOTE_PARTIAL_COLOR_IDENTIFIER) return "FFAA44";
@@ -402,8 +421,11 @@ namespace RSMods
         public static string ProcessSettings(string identifierToGrab)
         {
             VerifySettingsINI();
-            foreach (string currentLine in File.ReadLines(Path.Combine(GenUtil.GetRSDirectory(), "RSMods.ini")))
+            foreach (string rawLine in File.ReadLines(Path.Combine(GenUtil.GetRSDirectory(), "RSMods.ini")))
             {
+                // The in-game overlay saves with WritePrivateProfileString, which writes "Key=Value" (or keeps "Key =Value"),
+                // while every identifier here is "Key = ". Normalise so those edits are found instead of reverting to defaults.
+                string currentLine = NormalizeIniLine(rawLine);
                 #region Song Lists
                 // Song Lists (the ones that come with the game by default).
 
@@ -642,6 +664,14 @@ namespace RSMods
 					return FillSettingVariable(NOTE_BY_NOTE_TARGET_SIZE_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteTargetSize);
 				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER, identifierToGrab))
 					return FillSettingVariable(NOTE_BY_NOTE_TARGET_POSITION_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteTargetPosition);
+				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_LINE_SPACING_IDENTIFIER, identifierToGrab))
+					return FillSettingVariable(NOTE_BY_NOTE_LINE_SPACING_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteLineSpacing);
+				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_READOUT_PLACEMENT_IDENTIFIER, identifierToGrab))
+					return FillSettingVariable(NOTE_BY_NOTE_READOUT_PLACEMENT_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteReadoutPlacement);
+				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_TARGET_PLACEMENT_IDENTIFIER, identifierToGrab))
+					return FillSettingVariable(NOTE_BY_NOTE_TARGET_PLACEMENT_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteTargetPlacement);
+				if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_TARGET_STYLE_IDENTIFIER, identifierToGrab))
+					return FillSettingVariable(NOTE_BY_NOTE_TARGET_STYLE_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteTargetStyle);
                 if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER, identifierToGrab))
                     return FillSettingVariable(NOTE_BY_NOTE_NEUTRAL_COLOR_IDENTIFIER, SettingType.STRING, currentLine, out var noteByNoteNeutralColor);
                 if (IdentifierIsFound(currentLine, NOTE_BY_NOTE_CONFIRMED_COLOR_IDENTIFIER, identifierToGrab))
@@ -662,6 +692,8 @@ namespace RSMods
                     return FillSettingVariable(AudioDiagnosticsOverlayIdentifier, SettingType.ON_OFF, currentLine, out AudioDiagnosticsOverlay);
                 if (IdentifierIsFound(currentLine, DropPedalCustomOverlayColorsIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalCustomOverlayColorsIdentifier, SettingType.ON_OFF, currentLine, out DropPedalCustomOverlayColors);
+                if (IdentifierIsFound(currentLine, DropPedalShowOverlayIdentifier, identifierToGrab))
+                    return FillSettingVariable(DropPedalShowOverlayIdentifier, SettingType.ON_OFF, currentLine, out var dropPedalShowOverlay);
                 if (IdentifierIsFound(currentLine, DropPedalOverlayDownColorIdentifier, identifierToGrab))
                     return FillSettingVariable(DropPedalOverlayDownColorIdentifier, SettingType.STRING, currentLine, out DropPedalOverlayDownColor);
                 if (IdentifierIsFound(currentLine, DropPedalOverlayUpColorIdentifier, identifierToGrab))

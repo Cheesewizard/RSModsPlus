@@ -10,6 +10,20 @@ namespace
 	std::atomic<int> noteByNoteTargetSize{ 150 };
 	std::atomic<Settings::NoteByNoteTargetPosition> noteByNoteTargetPosition{ Settings::NoteByNoteTargetPosition::Left };
 	std::atomic<uint32_t> noteByNoteColors[] = { 0xFFFFFFFF, 0xFF55DD77, 0xFFFFAA44, 0xFFFF5555 };
+	std::atomic<int> noteByNoteLineSpacing{ 100 };
+	std::atomic<Settings::NoteByNoteTargetStyle> noteByNoteTargetStyle{ Settings::NoteByNoteTargetStyle::Detailed };
+	const char* const kNoteByNoteTargetStyles[] = { "Detailed", "Simple", "Tab" };
+	// HUD block placements in 1/10000ths of the window (-1 = built-in layout); index = NoteByNoteHudBlock.
+	// Packed x << 16 | y so a reader never sees a new x with an old y.
+	std::atomic<uint32_t> noteByNotePlacements[2] = { 0xFFFFFFFFu, 0xFFFFFFFFu };
+	const char* const kNoteByNotePlacementKeys[2] = { "NoteByNoteReadoutPlacement", "NoteByNoteTargetPlacement" };
+
+	uint32_t PackPlacement(Settings::HudPlacement placement)
+	{
+		if (!placement.IsSet()) return 0xFFFFFFFFu;
+		const auto unit = [](float v) { return static_cast<uint32_t>(std::clamp(v, 0.0f, 1.0f) * 10000.0f + 0.5f); };
+		return (unit(placement.x) << 16) | unit(placement.y);
+	}
 }
 
 bool Settings::IsNoteByNoteDetectionVisible()
@@ -33,7 +47,8 @@ bool Settings::SetNoteByNoteDetectionVisible(bool visible)
 
 bool Settings::SetNoteByNoteTargetPosition(NoteByNoteTargetPosition position)
 {
-	const char* value = position == NoteByNoteTargetPosition::Center ? "Center" : "Left";
+	const char* value = position == NoteByNoteTargetPosition::Center ? "Center"
+		: position == NoteByNoteTargetPosition::Custom ? "Custom" : "Left";
 	char executablePath[MAX_PATH]{};
 	GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
 	const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
@@ -66,6 +81,135 @@ NoteByNote::DetectionPalette Settings::GetNoteByNoteDetectionPalette()
 	if (!noteByNoteCustomColours.load()) return {};
 	return { noteByNoteColors[0].load(), noteByNoteColors[1].load(),
 		noteByNoteColors[2].load(), noteByNoteColors[3].load() };
+}
+
+namespace
+{
+	// Same keys, section and formats ReadModSettings loads, so an overlay edit survives the next launch and the
+	// desktop GUI shows it. Surgical per-key writes (never a whole-file rewrite) so nothing else in RSMods.ini moves.
+	const char* const kNoteByNoteColorKeys[] = { "NoteByNoteNeutralColor", "NoteByNoteConfirmedColor", "NoteByNotePartialColor", "NoteByNoteRejectedColor" };
+	const uint32_t kNoteByNoteColorDefaults[] = { 0xFFFFFF, 0x55DD77, 0xFFAA44, 0xFF5555 };
+
+	bool WriteNoteByNoteKey(const char* key, const std::string& value)
+	{
+		char executablePath[MAX_PATH]{};
+		GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
+		const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
+		if (WritePrivateProfileStringA("Note by Note", key, value.c_str(), iniPath.c_str())) return true;
+		LOG_ERROR("[SETTINGS] Could not persist " << key << std::endl);
+		return false;
+	}
+
+	std::string HexColor(uint32_t rgb)
+	{
+		char text[8]{};
+		sprintf_s(text, "%06X", rgb & 0xFFFFFFu);
+		return text;
+	}
+}
+
+bool Settings::IsNoteByNoteCustomColours()
+{
+	return noteByNoteCustomColours.load();
+}
+
+bool Settings::SetNoteByNoteCustomColours(bool enabled)
+{
+	noteByNoteCustomColours.store(enabled);
+	return WriteNoteByNoteKey("NoteByNoteCustomColours", enabled ? "on" : "off");
+}
+
+uint32_t Settings::GetNoteByNoteColor(int index)
+{
+	if (index < 0 || index > 3) return 0xFFFFFF;
+	return noteByNoteColors[index].load() & 0xFFFFFFu;
+}
+
+bool Settings::SetNoteByNoteColor(int index, uint32_t rgb, bool persist)
+{
+	if (index < 0 || index > 3) return false;
+	noteByNoteColors[index].store(0xFF000000u | (rgb & 0xFFFFFFu));
+	return !persist || WriteNoteByNoteKey(kNoteByNoteColorKeys[index], HexColor(rgb));
+}
+
+bool Settings::ResetNoteByNoteColors()
+{
+	bool saved = true;
+	for (int index = 0; index < 4; ++index)
+		saved = SetNoteByNoteColor(index, kNoteByNoteColorDefaults[index], true) && saved;
+	return saved;
+}
+
+bool Settings::SetNoteByNoteUiSize(int percent, bool persist)
+{
+	percent = std::clamp(percent, 50, 300);   // the range ReadModSettings accepts
+	noteByNoteUiSize.store(percent);
+	return !persist || WriteNoteByNoteKey("NoteByNoteUiSize", std::to_string(percent));
+}
+
+bool Settings::SetDropPedalSetting(const char* modKey, const char* iniKey, const std::string& value, bool persist)
+{
+	modSettings[modKey] = value;
+	if (!persist) return true;
+	char executablePath[MAX_PATH]{};
+	GetModuleFileNameA(nullptr, executablePath, MAX_PATH);
+	const auto iniPath = (std::filesystem::path(executablePath).parent_path() / "RSMods.ini").string();
+	if (WritePrivateProfileStringA("Drop Pedal", iniKey, value.c_str(), iniPath.c_str())) return true;
+	LOG_ERROR("[SETTINGS] Could not persist Drop Pedal " << iniKey << std::endl);
+	return false;
+}
+
+bool Settings::SetNoteByNoteTargetSize(int percent, bool persist)
+{
+	percent = std::clamp(percent, 50, 300);
+	noteByNoteTargetSize.store(percent);
+	return !persist || WriteNoteByNoteKey("NoteByNoteTargetSize", std::to_string(percent));
+}
+
+Settings::HudPlacement Settings::GetNoteByNoteHudPlacement(NoteByNoteHudBlock block)
+{
+	const uint32_t packed = noteByNotePlacements[static_cast<int>(block)].load();
+	if (packed == 0xFFFFFFFFu) return {};
+	return { (packed >> 16) / 10000.0f, (packed & 0xFFFFu) / 10000.0f };
+}
+
+bool Settings::SetNoteByNoteHudPlacement(NoteByNoteHudBlock block, HudPlacement placement, bool persist)
+{
+	const int index = static_cast<int>(block);
+	noteByNotePlacements[index].store(PackPlacement(placement));
+	if (!persist) return true;
+	std::string value = "Default";
+	if (placement.IsSet())
+	{
+		const HudPlacement stored = GetNoteByNoteHudPlacement(block);
+		char text[32]{};
+		sprintf_s(text, "%.4f,%.4f", stored.x, stored.y);
+		value = text;
+	}
+	return WriteNoteByNoteKey(kNoteByNotePlacementKeys[index], value);
+}
+
+int Settings::GetNoteByNoteLineSpacing()
+{
+	return noteByNoteLineSpacing.load();
+}
+
+bool Settings::SetNoteByNoteLineSpacing(int percent, bool persist)
+{
+	percent = std::clamp(percent, 50, 300);
+	noteByNoteLineSpacing.store(percent);
+	return !persist || WriteNoteByNoteKey("NoteByNoteLineSpacing", std::to_string(percent));
+}
+
+Settings::NoteByNoteTargetStyle Settings::GetNoteByNoteTargetStyle()
+{
+	return noteByNoteTargetStyle.load();
+}
+
+bool Settings::SetNoteByNoteTargetStyle(NoteByNoteTargetStyle style)
+{
+	noteByNoteTargetStyle.store(style);
+	return WriteNoteByNoteKey("NoteByNoteTargetStyle", kNoteByNoteTargetStyles[static_cast<int>(style)]);
 }
 
 /// <summary>
@@ -164,7 +308,8 @@ void Settings::Initialize()
 		{"DisplayCurrentAccuracy", "off"},
 		{"PreventMidSongPause", "off"},
 		{"RemoveFingerprints", "off"},
-		{"EnableDropPedal", "off"},
+		{"EnableDropPedal", "on"},   // ships with the mod; toggled in game with F7. "off" is a revert switch only.
+		{"DropPedalShowOverlay", "on"},
 		{"DropPedalCustomOverlayColors", "off"},
 		{"DropPedalOverlayDownColor", "6BE06B"},
 		{"DropPedalOverlayUpColor", "FFC24D"},
@@ -407,7 +552,8 @@ void Settings::ReadModSettings() {
 	modSettings["DisplayCurrentAccuracy"] = reader.GetValue("Toggle Switches", "DisplayCurrentAccuracy", "off");
 	modSettings["PreventMidSongPause"] = reader.GetValue("Toggle Switches", "PreventMidSongPause", "off");
 	modSettings["RemoveFingerprints"] = reader.GetValue("Toggle Switches", "RemoveFingerprints", "off");
-	modSettings["EnableDropPedal"] = reader.GetValue("Drop Pedal", "EnableDropPedal", "off");
+	modSettings["EnableDropPedal"] = reader.GetValue("Drop Pedal", "EnableDropPedal", "on");
+	modSettings["DropPedalShowOverlay"] = reader.GetValue("Drop Pedal", "ShowOverlay", "on");
 	modSettings["DropPedalCustomOverlayColors"] = reader.GetValue("Drop Pedal", "CustomOverlayColors", "off");
 	modSettings["DropPedalOverlayDownColor"] = reader.GetValue("Drop Pedal", "OverlayDownColor", "6BE06B");
 	modSettings["DropPedalOverlayUpColor"] = reader.GetValue("Drop Pedal", "OverlayUpColor", "FFC24D");
@@ -420,8 +566,10 @@ void Settings::ReadModSettings() {
 		noteByNoteTargetPosition.store(Settings::NoteByNoteTargetPosition::Left);
 	else if (targetPosition == "Center")
 		noteByNoteTargetPosition.store(Settings::NoteByNoteTargetPosition::Center);
+	else if (targetPosition == "Custom")
+		noteByNoteTargetPosition.store(Settings::NoteByNoteTargetPosition::Custom);
 	else
-		LOG_ERROR("Invalid NoteByNoteTargetPosition: expected Left or Center; keeping Left." << std::endl);
+		LOG_ERROR("Invalid NoteByNoteTargetPosition: expected Left, Center or Custom; keeping Left." << std::endl);
 	const char* sizeKeys[] = { "NoteByNoteUiSize", "NoteByNoteTargetSize" };
 	// Target text ships larger than the UI readout: at 100% the target label was too small to
 	// read comfortably, so its default is 150%. The UI readout stays at 100%.
@@ -442,6 +590,33 @@ void Settings::ReadModSettings() {
 			continue;
 		}
 		sizes[index]->store(size);
+	}
+	{
+		const std::string value = reader.GetValue("Note by Note", "NoteByNoteLineSpacing", "100");
+		const bool numeric = !value.empty() && value.size() <= 3 && value.find_first_not_of("0123456789") == std::string::npos;
+		const int spacing = numeric ? std::stoi(value) : -1;
+		if (spacing >= 50 && spacing <= 300) noteByNoteLineSpacing.store(spacing);
+		else LOG_ERROR("Invalid NoteByNoteLineSpacing: expected 50 to 300; keeping the current spacing." << std::endl);
+	}
+	{
+		const std::string style = reader.GetValue("Note by Note", "NoteByNoteTargetStyle", "Detailed");
+		bool known = false;
+		for (int index = 0; index < 3; ++index)
+			if (style == kNoteByNoteTargetStyles[index]) { noteByNoteTargetStyle.store(static_cast<NoteByNoteTargetStyle>(index)); known = true; }
+		if (!known) LOG_ERROR("Invalid NoteByNoteTargetStyle: expected Detailed, Simple or Tab; keeping Detailed." << std::endl);
+	}
+	for (int index = 0; index < 2; ++index)
+	{
+		// "Default" (or absent) = built-in layout; otherwise "x,y" as fractions of the game window.
+		const std::string value = reader.GetValue("Note by Note", kNoteByNotePlacementKeys[index], "Default");
+		HudPlacement placement;
+		if (value != "Default" && sscanf_s(value.c_str(), "%f,%f", &placement.x, &placement.y) != 2)
+		{
+			LOG_ERROR("Invalid " << kNoteByNotePlacementKeys[index] << ": expected Default or x,y fractions; using the default layout." << std::endl);
+			placement = {};
+		}
+		if (placement.IsSet() && (placement.x > 1.0f || placement.y > 1.0f)) placement = {};
+		noteByNotePlacements[index].store(PackPlacement(placement));
 	}
 	const char* colorKeys[] = { "NoteByNoteNeutralColor", "NoteByNoteConfirmedColor", "NoteByNotePartialColor", "NoteByNoteRejectedColor" };
 	const char* colorDefaults[] = { "FFFFFF", "55DD77", "FFAA44", "FF5555" };
