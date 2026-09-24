@@ -10,7 +10,8 @@ namespace NoteByNote
 		NativeMatcher,
 		CloseDyad,
 		MlStrings,
-		Tier0
+		Tier0,
+		PowerChord
 	};
 
 	struct ChordPitchDecisionInput
@@ -28,6 +29,10 @@ namespace NoteByNote
 		bool mlStringsMatch = false;
 		bool isTier0Enabled = false;
 		bool tier0Matches = false;
+		// Power chord: the fifth confirmed in the raw audio with a fresh attack
+		// (PowerChordConfirmation.hpp), and the game's vote or chord matcher agreed on this strum.
+		bool powerChordRawMatches = false;
+		bool nativeAgreedOnStrum = false;
 	};
 
 	inline ChordPitchConfirmation EvaluateChordPitchDecision(
@@ -49,6 +54,10 @@ namespace NoteByNote
 		// put the native sounding table in front of stronger exact evidence: it routinely
 		// under-reports a real close dyad as one of two tones.
 		if (input.closeDyadMatches) return ChordPitchConfirmation::CloseDyad;
+		// The game's sounding table almost never lists a power chord's fifth, so the table bar
+		// below is unreachable for one. The fifth confirmed in the raw audio (which a root alone
+		// cannot produce) plus the game's own vote or matcher on this strum stands in for it.
+		if (input.powerChordRawMatches && input.nativeAgreedOnStrum) return ChordPitchConfirmation::PowerChord;
 		// ML per-string reads confirm a chord of three or more tones ahead of the sounding
 		// table, but a two-note chord needs the table behind it: FretNet read a ringing
 		// sub-octave's second harmonic as the lower tone of [x/x/7/5/x/x] and accepted a
@@ -74,6 +83,7 @@ namespace NoteByNote
 			case ChordPitchConfirmation::CloseDyad: return "close-dyad";
 			case ChordPitchConfirmation::MlStrings: return "ml-strings";
 			case ChordPitchConfirmation::Tier0: return "tier0";
+			case ChordPitchConfirmation::PowerChord: return "power-chord";
 			default: return "none";
 		}
 	}

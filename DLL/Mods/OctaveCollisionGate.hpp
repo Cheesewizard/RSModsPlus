@@ -45,6 +45,22 @@ namespace NoteByNote
 		return false;
 	}
 
+	// A slow strum's later strings arrive as separate HFC attacks well after the strum starts
+	// (2026-09-23 1268.28: Fbsus2 strummed at 58220867; its B-string C4 = F2's 3f registered as an
+	// "attack" 157 ms later, confirmed F2 with targetRise 0.004, and native read the ringing F3 an
+	// octave low as F, so native corroboration passed too; Philip: the F "played through
+	// automatically", second time). When the chord just committed rings the target's measured
+	// harmonic bands, an attack this soon after its strum is the strum itself, not a pick. Every real
+	// chord->single pick in that session came >= 249 ms after the strum; the chart spacing there is
+	// 231 ms at 100%, so a rushed real pick inside the window only costs a re-pick.
+	constexpr uint32_t CHORD_STRUM_TAIL_MS = 200;
+
+	inline bool IsInsideChordStrumTail(uint64_t attackSample, uint64_t chordStrumSample, uint32_t sampleRate)
+	{
+		return chordStrumSample != 0 && sampleRate != 0 && attackSample >= chordStrumSample
+			&& attackSample - chordStrumSample < static_cast<uint64_t>(sampleRate) * CHORD_STRUM_TAIL_MS / 1000;
+	}
+
 	// Philip's rule: a chord followed by a plain single note always needs its own attack. The raw
 	// stream cannot tell that pick from the chord strum's tail or a sloppy strum ringing the next
 	// note (2026-09-22 893.23), so native must hear the note. Legato successors (hammer/pull/tap)
@@ -52,6 +68,18 @@ namespace NoteByNote
 	inline bool ChordToSingleBoundaryRequiresNative(int previousString, bool isLegatoTarget)
 	{
 		return previousString == CHORD_STRING_SENTINEL && !isLegatoTarget;
+	}
+
+	// ...but only inside the chord strum's tail, where the raw stream cannot tell a pick from the
+	// strum. Past it a raw-confirmed attack IS the pick, and requiring native there stalled re-picks
+	// of the chord's own tones: native keeps reporting the chord's OTHER tone (2026-09-23: G after a
+	// C+G chord withheld with native=48; E2+6 after [6/8/x/x/x/x] never accepted). With no strum
+	// known (after a legato run) the old always-native rule stands.
+	inline bool ChordToSingleAttackNeedsNative(int previousString, bool isLegatoTarget,
+		uint64_t attackSample, uint64_t chordStrumSample, uint32_t sampleRate)
+	{
+		return ChordToSingleBoundaryRequiresNative(previousString, isLegatoTarget)
+			&& (chordStrumSample == 0 || IsInsideChordStrumTail(attackSample, chordStrumSample, sampleRate));
 	}
 
 	// The native detector reads one semitone off expectedMidi in Speaker Mode (the E/Eb chart-1

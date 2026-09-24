@@ -83,10 +83,10 @@ namespace NoteByNote
 
 	inline void PublishDetectionFeedback(DetectionFeedback& displayed, DetectionFeedback next)
 	{
+		// Native's role is set by the caller from the pass logic (+-1 in Speaker Mode); an exact
+		// pitch match here would promote a Speaker Mode native read that is one semitone HIGH.
 		if (next.targetMidi >= 0 && next.targetMidi <= 127)
 		{
-			if (next.nativeMidi == next.targetMidi)
-				next.nativeRole = DetectorRole::Confirmed;
 			if (next.enhancedMidi == next.targetMidi && next.enhancedRole == DetectorRole::Partial)
 				next.enhancedRole = DetectorRole::Confirmed;
 		}

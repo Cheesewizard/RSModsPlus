@@ -11,6 +11,8 @@
 #include "ChordMatchWindow.hpp"
 #include "CloseChordConfirmation.hpp"
 #include "StrummedChordAttack.hpp"
+#include "StrumHandoff.hpp"
+#include "PowerChordConfirmation.hpp"
 #include "UnisonChord.hpp"
 #include "../Audio/RawPitchVerifier.hpp"
 #include "HeldPitchConfirmation.hpp"
@@ -254,6 +256,12 @@ namespace
 	// reached (both in the tracker search radius and the accept ceiling); a
 	// genuinely different note two or more semitones up stays excluded.
 	constexpr float BEND_OVERBEND_ALLOWANCE_SEMITONES = 1.5f;
+	// Error allowance for the raw-tap fractional veto (2026-09-23). The veto refuses an integer-
+	// path reach when the raw estimate reads below target - BEND_UNDERBEND_SEMITONES; the
+	// estimate of a still-moving pitch trails the string slightly, so without this allowance a
+	// bend resting ~0.2-0.3 under (a real, reached bend) was vetoed until overbent. A genuine
+	// half-way bend still sits far below target - 0.45 and stays refused.
+	constexpr float BEND_VETO_ESTIMATOR_SLACK_SEMITONES = 0.15f;
 
 	// Rocksmith's note-detection engine, decoded in
 	// docs/investigations/note-by-note-input-gates.md.
@@ -758,6 +766,15 @@ namespace
 	// "attack" at or before this is the chord's own strum re-flagged by the HFC detector,
 	// not a fresh pick (2026-09-22 893.23), so it is ignored.
 	uint64_t pickAttackFloorSample = 0;
+	// The strum that committed the last chord (0 after a legato run). A masked single-note
+	// successor ignores attacks inside that strum's tail (OctaveCollisionGate.hpp).
+	uint64_t lastChordStrumSample = 0;
+	// The strum the just-committed single note confirmed off but did not own
+	// (StrumHandoff.hpp, set in CompleteHeldCommit). Bound to the first chord hold that claims
+	// it so the dense successor's second hold reset re-inherits the same strum; dropped when it
+	// is too old for any chord to consume or another record comes along.
+	uint64_t successorStrumSample = 0;
+	uintptr_t successorStrumRecord = 0;
 	// Whether the note just committed was a bend. A bend sweeps through a range of
 	// pitches, so a carried onset from it does not necessarily carry that note's
 	// nominal pitch and cannot be told apart by pitch alone.
@@ -931,6 +948,9 @@ namespace
 	// complete a bend that was never bent.
 	bool isRawBendAcceptArmed = false;
 	int32_t rawBendAcceptStreak = 0;
+	// Consecutive ticks the raw-audio bend estimate (TryEstimateRawBendPitch) sat inside the
+	// target band; the player-frame bend reach (see the run confirmation).
+	int32_t rawEstimateBendStreak = 0;
 	// ND sounding-table bend evidence (2026-08-25 night, Philip: "you need to
 	// hold the pitch for like 43 seconds rather than a bend"). While frozen
 	// the motion trackers are unregistered and the gated integer query needs
@@ -1000,6 +1020,8 @@ namespace
 	// "how much of the chord was actually strummed" question is answered by the peak over the
 	// attack window, not by the read at the accept tick.
 	uint64_t chordSoundingPeakAttack = 0;
+	// The strum on which the game's vote or chord matcher last agreed (power-chord path).
+	uint64_t chordNativeAgreedAttack = 0;
 	int chordSoundingPeak = 0;
 	std::chrono::steady_clock::time_point chordDecisionLogAnchor;
 	bool hasChordDecisionLogAnchor = false;
@@ -1088,7 +1110,8 @@ namespace
 	NoteByNote::PickedAttack acceptedPick;
 	uintptr_t acceptedPickRecord = 0;
 	NoteByNote::DetectionFeedback detectionFeedback;
-	uint64_t feedbackPickSample = 0;
+	// Which detector(s) passed the chord just accepted, published at its commit.
+	NoteByNote::DetectionFeedback chordAcceptFeedback;
 	uint64_t feedbackMinimumMlSample = 0;
 	uint64_t feedbackMaximumMlSample = 0;
 	uintptr_t mlRescueRecord = 0;
@@ -2089,6 +2112,25 @@ namespace
 
 	void TickPickedAttackStream();
 
+	// The strum a just-committed single confirmed off but did not own (StrumHandoff.hpp), if
+	// this chord hold may still inherit it; 0 otherwise. Binds it to the first chord record
+	// that claims it, so the dense successor's second hold reset gets the same strum and no
+	// later record can.
+	uint64_t ClaimSuccessorStrum()
+	{
+		if (successorStrumSample == 0) return 0;
+		if ((successorStrumRecord != 0 && successorStrumRecord != selectedRecord)
+			|| !rawAttackStreamAvailable
+			|| !NoteByNote::StrumHandoffIsFresh(successorStrumSample, latestRawAudioSample, pickSampleRate))
+		{
+			successorStrumSample = 0;
+			successorStrumRecord = 0;
+			return 0;
+		}
+		successorStrumRecord = selectedRecord;
+		return successorStrumSample;
+	}
+
 	void ResetChordOnsetEvidenceAnchor()
 	{
 		if (selectedChordId >= 0)
@@ -2097,9 +2139,16 @@ namespace
 			// boundary so a pre-latch strum cannot arrive later as a new attack.
 			TickPickedAttackStream();
 			chordHoldNeedsCaptureBoundary = !rawAttackStreamAvailable;
-			chordAttacks.BeginHold(latestRawAudioSample);
-			LOG_INFO("(NBN CHORD HOLD) Fresh attack must start after sample=" << latestRawAudioSample
+			// Except a strum the single-note predecessor confirmed off but did not own: the
+			// boundary sits just before it and it becomes this hold's pending attack
+			// (StrumHandoff.hpp, ChordAttackGate::Inherit). 0 = nothing to inherit.
+			const uint64_t inheritedStrum = ClaimSuccessorStrum();
+			chordAttacks.BeginHold(inheritedStrum != 0 ? inheritedStrum - 1 : latestRawAudioSample);
+			const bool inherited = inheritedStrum != 0
+				&& chordAttacks.Inherit(inheritedStrum, latestRawAudioSample);
+			LOG_INFO("(NBN CHORD HOLD) Fresh attack must start after sample=" << chordAttacks.GetConsumedThroughSample()
 				<< " capturePending=" << chordHoldNeedsCaptureBoundary
+				<< " inheritedStrum=" << (inherited ? inheritedStrum : 0)
 				<< " record=0x" << std::hex << selectedRecord << std::dec << std::endl);
 		}
 		onsetScanFramesSinceLatch = 0;
@@ -2149,21 +2198,74 @@ namespace
 		return true;
 	}
 
+	void ConfirmPickedAttack(NoteByNote::PickedAttack* attack, uint64_t maximumSample);
+
+	// The latest attack is re-tried every tick as its window grows. Cut-short attacks the queue kept
+	// (PickedAttackQueue::Push, fast repeated picking) each get ONE evaluation once their full window
+	// has passed, borrowing the next pick's audio; a failure marks them rejected so Take skips them.
 	void ConfirmLatestPickedAttack(uint64_t maximumSample = 0)
 	{
-		auto* attack = pickedAttacks.Latest();
-		if (attack == nullptr || attack->confirmedMidi >= 0) return;
+		const unsigned count = pickedAttacks.Count();
+		for (unsigned index = 0; index + 1 < count; ++index)
+		{
+			auto* older = pickedAttacks.At(index);
+			if (older == nullptr || older->confirmedMidi >= 0 || older->rejected || older->sampleRate == 0) continue;
+			const uint32_t window = NoteByNote::PickConfirmationWindowSamples(older->candidateMidi, older->sampleRate);
+			if (latestRawAudioSample < older->minimumSample + window) continue;
+			ConfirmPickedAttack(older, 0);
+			if (older->confirmedMidi < 0)
+			{
+				older->rejected = true;
+				LOG_INFO("(NBN PICK BUFFER) Kept cut-short attack=" << older->time
+					<< " did not confirm over its full window; discarded." << std::endl);
+			}
+		}
+		ConfirmPickedAttack(pickedAttacks.Latest(), maximumSample);
+	}
+
+	void ConfirmPickedAttack(NoteByNote::PickedAttack* attack, uint64_t maximumSample)
+	{
+		if (attack == nullptr || attack->confirmedMidi >= 0 || attack->rejected) return;
 		const int nativeMidi = QueryNativeLoudestPlayedNote();
 		const int candidates[] = { attack->candidateMidi, nativeMidi };
+		// Why the TARGET candidate was refused, once per attack and reason, and only after the
+		// attack has had the audio a confirmation needs (before that "unconfirmed" just means
+		// "too early"). The 2026-09-23 review could not explain most failed picks because an
+		// attack that ends Unresolved or Expired left no reason in the log.
+		static uint64_t loggedRejectAttack = 0;
+		static const char* loggedRejectReason = nullptr;
+		auto logTargetReject = [&](int index, const char* reason, const ResearchProtocol::RawNoteConfirmation& raw,
+			float targetRise, float neighbourRise)
+		{
+			if (index != 0 || attack->sampleRate == 0 || raw.endSampleIndex < attack->minimumSample
+				|| raw.endSampleIndex - attack->minimumSample
+					< NoteByNote::PickConfirmationWindowSamples(candidates[0], attack->sampleRate)) return;
+			if (loggedRejectAttack == attack->minimumSample && loggedRejectReason == reason) return;
+			loggedRejectAttack = attack->minimumSample;
+			loggedRejectReason = reason;
+			LOG_INFO("(NBN PICK BUFFER) Not confirmed attack=" << attack->time << " midi=" << candidates[0]
+				<< ": " << reason << " (confirmed=" << static_cast<int>(raw.confirmed)
+				<< " change=" << raw.attackChange << " targetRise=" << targetRise
+				<< " neighbourRise=" << neighbourRise << " native=" << nativeMidi << ")" << std::endl);
+		};
 		for (int index = 0; index < 2; ++index)
 		{
 			const int midi = candidates[index];
 			if (midi < 0 || midi > 127 || (index != 0 && midi == candidates[0])) continue;
 			ResearchProtocol::RawNoteConfirmation raw;
 			const double frequency = 440.0 * std::pow(2.0, (midi - 69.0) / 12.0);
-			if (!ResearchProbeRuntime::QueryRawNoteConfirmation(frequency, raw, attack->minimumSample, maximumSample)
-				|| raw.confirmed == 0) continue;
-			if (raw.attackChange < 0.2f) continue;
+			if (!ResearchProbeRuntime::QueryRawNoteConfirmation(frequency, raw, attack->minimumSample, maximumSample))
+				continue;
+			if (raw.confirmed == 0)
+			{
+				logTargetReject(index, "pitch not confirmed in the raw audio", raw, 0.0f, 0.0f);
+				continue;
+			}
+			if (raw.attackChange < 0.2f)
+			{
+				logTargetReject(index, "no fresh attack at the pitch (change < 0.2)", raw, 0.0f, 0.0f);
+				continue;
+			}
 			float baseline = 0.0f;
 			if (!ReadPickedAttackBaseline(*attack, midi, baseline)) continue;
 			const int slot = midi == attack->candidateMidi ? 0 : 1;
@@ -2171,7 +2273,18 @@ namespace
 			const float minusRise = std::sqrt(raw.attackMinusPower) - std::sqrt(attack->baselineMinusPower[slot]);
 			const float plusRise = std::sqrt(raw.attackPlusPower) - std::sqrt(attack->baselinePlusPower[slot]);
 			const float neighbourRise = minusRise > plusRise ? minusRise : plusRise;
-			if (neighbourRise > 1e-3f && neighbourRise > (targetRise > 0.0f ? targetRise : 0.0f)) continue;
+			// A re-pick of the note that is still ringing cannot show a level RISE over its own ring
+			// (2026-09-23 1928.30: change 0.91, targetRise -0.013, neighbourRise 0.003 - a clear
+			// re-pick refused). raw.confirmed already requires the target to dominate its
+			// neighbours after the pick, so for a repeated note a strong phase break is the attack.
+			const bool repeatsRingingNote = midi == previousExpectedMidi && raw.attackChange >= 0.5f;
+			if (!repeatsRingingNote
+				&& neighbourRise > 1e-3f && neighbourRise > (targetRise > 0.0f ? targetRise : 0.0f))
+			{
+				logTargetReject(index, "a neighbouring semitone rose more than the target", raw,
+					targetRise, neighbourRise);
+				continue;
+			}
 			// Ringer / boundary veto: raw evidence cannot tell a fresh pick from a ringing
 			// neighbour's decay or a chord strum's tail, so at these moments native (loudest note,
 			// or pitchNow if the loudest query lags behind a louder ring) must actually hear the
@@ -2187,13 +2300,36 @@ namespace
 			const bool noteRings = hasLastCommitWallClock && previousExpectedMidi >= 0
 				&& std::chrono::duration<double>(std::chrono::steady_clock::now()
 					- lastCommitWallClock).count() < COMMITTED_CHORD_RESELECT_GUARD_SECONDS;
+			const bool chordMasks = chordRings
+				&& NoteByNote::RingingTonesMaskTarget(midi, researchChordTones, researchChordToneCount);
+			// Native cannot vouch here: it hears the chord's own octave-up tone as the target. An
+			// attack inside the strum's tail is the chord's later strings (OctaveCollisionGate.hpp).
+			const bool insideChordStrumTail = NoteByNote::IsInsideChordStrumTail(attack->minimumSample,
+				lastChordStrumSample, attack->sampleRate);
+			if (chordMasks && insideChordStrumTail)
+			{
+				static uint64_t loggedStrumTailAttack = 0;
+				if (loggedStrumTailAttack != attack->minimumSample)
+				{
+					loggedStrumTailAttack = attack->minimumSample;
+					LOG_INFO("(NBN PICK BUFFER) Withheld attack=" << attack->time << " midi=" << midi
+						<< ": inside the masking chord's strum tail ("
+						<< (attack->minimumSample - lastChordStrumSample) * 1000 / attack->sampleRate
+						<< " ms after strum=" << lastChordStrumSample << "); native loudest=" << nativeMidi
+						<< " targetRise=" << targetRise << std::endl);
+				}
+				continue;
+			}
 			const char* nativeRequired = nullptr;
-			if (chordRings && NoteByNote::RingingTonesMaskTarget(midi, researchChordTones, researchChordToneCount))
+			if (chordMasks)
 				nativeRequired = "the just-committed chord rings a masking partial";
 			else if (noteRings && NoteByNote::RingingNoteMasksTarget(midi, previousExpectedMidi))
 				nativeRequired = "the just-committed note rings a masking partial";
-			else if (NoteByNote::ChordToSingleBoundaryRequiresNative(previousSelectedString, isLegatoTarget))
-				nativeRequired = "chord->single needs its own attack";
+			// Philip's rule (a single after a chord needs its own attack), scoped to the strum's
+			// tail; see ChordToSingleAttackNeedsNative.
+			else if (NoteByNote::ChordToSingleAttackNeedsNative(previousSelectedString, isLegatoTarget,
+				attack->minimumSample, lastChordStrumSample, attack->sampleRate))
+				nativeRequired = "chord->single inside the strum tail needs its own attack";
 			if (nativeRequired != nullptr)
 			{
 				DetectorGateSample gateSample;
@@ -2201,8 +2337,10 @@ namespace
 				if (!NoteByNote::NativeCorroboratesPick(nativeMidi, midi)
 					&& !NoteByNote::NativeCorroboratesPick(pitchNow, midi))
 				{
-					static uint32_t withheldLogThrottle = 0;
-					if ((withheldLogThrottle++ % 30) == 0)
+					// Once per attack (a session-wide 1-in-30 throttle hid nearly every case).
+					static uint64_t loggedWithheldAttack = 0;
+					if (loggedWithheldAttack != attack->minimumSample
+						&& (loggedWithheldAttack = attack->minimumSample) != 0)
 						LOG_INFO("(NBN PICK BUFFER) Withheld attack=" << attack->time << " midi=" << midi
 							<< ": " << nativeRequired << "; native loudest=" << nativeMidi
 							<< " pitchNow=" << pitchNow << " targetRise=" << targetRise << std::endl);
@@ -2236,15 +2374,21 @@ namespace
 					continue;
 				}
 			}
-			NoteByNote::SetPickedDetectorRoles(feedback, nativeMidi == midi,
+			NoteByNote::SetPickedDetectorRoles(feedback, NoteByNote::NativeCorroboratesPick(nativeMidi, midi),
 				feedback.mlRole == NoteByNote::DetectorRole::Confirmed);
+			// Confirmed, but is the attack this note's own? A strum that cut the note's own pick
+			// short while native hears another pitch is left for the successor (StrumHandoff.hpp).
+			attack->strumBelongsToSuccessor = NoteByNote::StrumBelongsToSuccessor(
+				attack->cutShortPredecessorSample, nativeMidi, midi);
 			attack->confirmedMidi = midi;
 			attack->confirmedSample = raw.endSampleIndex;
 			attack->feedback = feedback;
 			LOG_INFO("(NBN PICK BUFFER) Confirmed attack=" << attack->time << " midi=" << midi
 				<< " samples=" << attack->minimumSample << ".." << raw.endSampleIndex
 				<< " change=" << raw.attackChange << " targetRise=" << targetRise << " neighbourRise=" << neighbourRise
-				<< " native=" << nativeMidi << " queued=" << pickedAttacks.Count() << std::endl);
+				<< " native=" << nativeMidi << " queued=" << pickedAttacks.Count()
+				<< (attack->strumBelongsToSuccessor ? " ownedBy=successor (cut-short predecessor pick; strum left for the next target)" : "")
+				<< std::endl);
 			return;
 		}
 	}
@@ -2399,8 +2543,10 @@ namespace
 			const double time = static_cast<double>(attackSample) / batch.sampleRate;
 			attack.time = time;
 			ConfirmLatestPickedAttack(attack.minimumSample);
-			detectionFeedback = {};
-			feedbackPickSample = attack.minimumSample;
+			// The HUD's accept readout (which detectors passed the last note) is NOT cleared
+			// here: in fast playing the next attack lands within ~200 ms and wiped the green
+			// before it could be seen (Philip 2026-09-23: "often no green is shown at all").
+			// It runs its own hold/fade timer and the next accept replaces it.
 			mlRescueRecord = 0;
 			enhancedRescueFeedback = {};
 			attack.minimumMlSample = ResearchProbeRuntime::GetMlAudioSampleIndex();
@@ -2411,8 +2557,16 @@ namespace
 			const auto* pending = pickedAttacks.Latest();
 			if (pending != nullptr && pending->confirmedMidi < 0)
 			{
+				// Push drops the older attack. If it never had the audio a confirmation needs,
+				// remember it: this new attack may be the successor's strum (StrumHandoff.hpp).
+				if (NoteByNote::PredecessorAttackWasCutShort(pending->minimumSample,
+					attack.minimumSample, attack.candidateMidi, batch.sampleRate))
+					attack.cutShortPredecessorSample = pending->minimumSample;
 				LOG_INFO("(NBN PICK BUFFER) Unresolved attack=" << pending->time
-					<< " ended by next attack=" << time << std::endl);
+					<< " ended by next attack=" << time
+					<< (attack.cutShortPredecessorSample != 0
+						? " (cut short before its confirmation window; kept to confirm on its full window)" : "")
+					<< std::endl);
 			}
 			if (!pickedAttacks.Push(attack))
 			{
@@ -2709,7 +2863,7 @@ namespace
 				g_lastAttackSpikeTick = GetTickCount64();
 				if (!IsPlainPickedTarget())
 				{
-					detectionFeedback = {};
+					// detectionFeedback (the accept readout) is left to its timer; see TickPickedAttackStream.
 					mlRescueRecord = 0;
 					enhancedRescueFeedback = {};
 				}
@@ -3852,6 +4006,46 @@ namespace
 		return true;
 	}
 
+	// Power chord: every probe tone (the fifth, PowerChordConfirmation.hpp) must be confirmed at its
+	// own pitch in the raw audio with a fresh attack (change >= 0.2, the pick stream's bar), so a
+	// root re-strummed over a ringing fifth, whose phase just continues, does not count. Measured
+	// once per strum, as soon as the verifier has the audio it needs after the attack (150 ms
+	// below 330 Hz); the snapshot still covers the pre-attack reference until ~240 ms.
+	bool RawPowerChordMatchesAttack(const int* tones, int count, uint64_t attackSample)
+	{
+		int probes[6] = {};
+		const int probeCount = NoteByNote::SelectPowerChordProbeTones(tones, count, probes);
+		if (probeCount == 0 || attackSample == 0 || pickSampleRate == 0) return false;
+		static uint64_t measuredAttack = 0;
+		static uintptr_t measuredRecord = 0;
+		static bool measuredResult = false;
+		if (measuredAttack == attackSample && measuredRecord == selectedRecord) return measuredResult;
+		uint32_t needed = 0;
+		for (int i = 0; i < probeCount; ++i)
+		{
+			const uint32_t window = NoteByNote::PickConfirmationWindowSamples(probes[i], pickSampleRate);
+			if (window > needed) needed = window;
+		}
+		if (latestRawAudioSample < attackSample || latestRawAudioSample - attackSample < needed) return false;
+		bool confirmed = true;
+		float weakestChange = 1e9f;
+		for (int i = 0; i < probeCount && confirmed; ++i)
+		{
+			ResearchProtocol::RawNoteConfirmation evidence;
+			const double frequency = 440.0 * std::pow(2.0, (probes[i] - 69.0) / 12.0);
+			confirmed = ResearchProbeRuntime::QueryRawNoteConfirmation(frequency, evidence, attackSample)
+				&& evidence.confirmed && evidence.attackChange >= 0.2f;
+			if (evidence.attackChange < weakestChange) weakestChange = evidence.attackChange;
+		}
+		measuredAttack = attackSample;
+		measuredRecord = selectedRecord;
+		measuredResult = confirmed;
+		LOG_INFO("(NBN RAW POWER CHORD) confirmed=" << confirmed << " probe=" << probes[0]
+			<< (probeCount > 1 ? "+" : "") << " change=" << weakestChange << " attack=" << attackSample
+			<< " record=0x" << std::hex << selectedRecord << std::dec << std::endl);
+		return confirmed;
+	}
+
 	// OFFLINE-CAPTURE diagnostic (2026-08-30): logs the raw spectral peak list at each fresh-onset
 	// frame during a single-note hold, labelled with the expected pitch, so the accept RULE can be
 	// designed and validated offline against real correct-vs-wrong plays instead of guessed live.
@@ -4283,7 +4477,15 @@ namespace
 		// refine the power peak for a sub-semitone pitch.
 		const double center = std::floor((baseMidi + targetMidi) * 0.5 + 0.5);
 		const double freq = 440.0 * std::pow(2.0, (center - 69.0) / 12.0);
-		const float windowSeconds = Tier0WindowSecondsForFrequency(freq);
+		// HALF the tier-0 window (2026-09-23). Tier-0 wants 150-300 ms to separate a steady note
+		// from its neighbours, but a bend is a MOVING pitch: that window averaged in the lower
+		// part of the climb, so at the moment the string reached target the estimate still read
+		// ~0.3-0.5 semitone low. The fractional veto below then refused a bend that was actually
+		// on pitch until the player overbent (raising the average) or re-picked at the peak (a
+		// fresh steady window) - Philip's "have to overbend / restrum at the peak". Half the
+		// window still resolves semitone-spaced bins (1/T <= one semitone above ~110 Hz) and
+		// tracks the glide within ~one scoring tick.
+		const float windowSeconds = Tier0WindowSecondsForFrequency(freq) * 0.5f;
 		ResearchProtocol::RawToneEvidence e;
 		if (!ResearchProbeRuntime::QueryRawToneEvidence(freq, windowSeconds, e)) return false;
 		if (!std::isfinite(e.totalRms) || e.totalRms < 0.015f) return false;
@@ -4303,11 +4505,14 @@ namespace
 		if (!(p[peak] > 0.0) || mean <= 0.0) return false;
 
 		double refined = m[peak];
-		if (peak > 0 && peak < 4)
+		if (peak > 0 && peak < 4 && p[peak - 1] > 0.0 && p[peak + 1] > 0.0)
 		{
-			const double y0 = p[peak - 1];
-			const double y1 = p[peak];
-			const double y2 = p[peak + 1];
+			// Parabola on LOG power (Gaussian interpolation, 2026-09-23). On linear power the
+			// fit is biased toward the peak bin's centre, so a pitch sitting between two
+			// semitones read as clinging to one of them and the needle stuck then jumped.
+			const double y0 = std::log(p[peak - 1]);
+			const double y1 = std::log(p[peak]);
+			const double y2 = std::log(p[peak + 1]);
 			const double denom = y0 - 2.0 * y1 + y2;
 			if (denom < 0.0)
 			{
@@ -4350,7 +4555,33 @@ namespace
 				&& legatoRunIsBend[legatoRunIndex]
 				? legatoRunMidi[legatoRunIndex]
 				: -1);
-		if (hasLastStateGateSample
+		// Sounding pitch, most continuous source first (2026-09-23). 3d9a99f moved this feed
+		// from the per-frame state read into this per-tick snapshot and kept only the INTEGER
+		// detector note, so the meter could only move in whole semitones - the "teleporting"
+		// needle. Restored cascade: the native motion tracker's fractional pitch, then the
+		// raw-tap fractional estimate (fills the low part of a bend the tracker does not report,
+		// and its drop-outs), then the integer detector as the last resort. Per tick, not per
+		// frame, so the cost stays what the snapshot was introduced to bound (the estimator is
+		// itself throttled to ~25 Hz and shared with the fractional veto).
+		const int32_t wanted = snapshot.targetMidi >= 0 ? snapshot.targetMidi : expectedMidi;
+		float trackerPitch = 0.0f;
+		float estimateMidi = -1.0f;
+		float estimateConfidence = 0.0f;
+		if (TryGetSoundingPitchNear(static_cast<float>(wanted),
+				static_cast<float>(MAX_BEND_SEMITONES) + 1.5f, trackerPitch))
+		{
+			snapshot.soundingMidi = trackerPitch;
+			snapshot.soundingQuality = 100.0f;
+		}
+		else if (snapshot.targetMidi > expectedMidi
+			&& TryEstimateRawBendPitch(static_cast<double>(expectedMidi),
+				static_cast<double>(snapshot.targetMidi), estimateMidi, estimateConfidence)
+			&& estimateConfidence >= 20.0f)
+		{
+			snapshot.soundingMidi = estimateMidi;
+			snapshot.soundingQuality = estimateConfidence;
+		}
+		else if (hasLastStateGateSample
 			&& lastStateGateSample.currentNote >= 0
 			&& std::isfinite(lastStateGateSample.quality)
 			&& lastStateGateSample.quality >= DETECTOR_RAW_BEND_QUALITY_FLOOR)
@@ -6146,6 +6377,7 @@ namespace
 		wasBendTrackerPitchLogged = false;
 		isRawBendAcceptArmed = false;
 		rawBendAcceptStreak = 0;
+		rawEstimateBendStreak = 0;
 		ndBendSightingStreak = 0;
 		// So the first fallback of a new bend reports immediately rather than inheriting the
 		// previous bend's throttle.
@@ -6156,6 +6388,25 @@ namespace
 		mlConfirmationState.Reset(ResearchProbeRuntime::GetMlAudioSampleIndex());
 		mlBendConfirmationState.Reset(ResearchProbeRuntime::GetMlAudioSampleIndex());
 		enhancedLegatoConfirmation.Reset(latestRawAudioSample);
+	}
+
+	// The input-release wait's onset shortcuts commit the target directly. For a bend target
+	// that skipped the bend entirely: 4 holds in the 2026-09-23 Yngwie song committed in
+	// 0.04-0.34 s while tier-0 confirmed the UNBENT base (2694.76, 2697.32). Route an accepted
+	// onset on a bend target into the same bend confirmation the Holding phase uses for a pick
+	// (see "Pick accepted at"), so the gesture is still required. Bend children are the held
+	// sustain of a bend already confirmed, so they keep the direct path.
+	bool StartBendFromWaitAccept(int onset, const char* how)
+	{
+		if (!isBendTarget || isBendChildTarget || bendAcceptMidi < 0) return false;
+		BeginBendConfirmation();
+		if (onset >= 0 && onset < bendAcceptMidi) isRawBendAcceptArmed = true;
+		gatePhase = GatePhase::Holding;
+		inputReleaseTickCount = 0;
+		LOG_INFO("(NBN LAS BEND) " << how << " " << onset << " accepted as the pick during the"
+			<< " input-release wait; now holding until the bend reaches " << bendAcceptMidi
+			<< " instead of committing the unbent note." << std::endl);
+		return true;
 	}
 
 	void BuildLegatoRun(void* owner, float runTime, int runString)
@@ -6512,9 +6763,9 @@ namespace
 
 	void PublishCommittedDetectionFeedback()
 	{
-		// A queued earlier pick must not recolour a newer attack that has already reset the HUD.
-		if (IsPlainPickedTarget() && acceptedPickRecord == selectedRecord
-			&& acceptedPick.minimumSample < feedbackPickSample) return;
+		// Every commit publishes which detector(s) passed it (the HUD's accept readout, green
+		// only on those rows). It used to be skipped when a newer attack had already arrived,
+		// which in fast playing was most commits (Philip 2026-09-23: "often no green").
 		NoteByNote::DetectionFeedback nextFeedback;
 		feedbackMinimumMlSample = mlConfirmationState.GetMinimumSampleIndex();
 		feedbackMaximumMlSample = ResearchProbeRuntime::GetMlAudioSampleIndex();
@@ -6522,6 +6773,11 @@ namespace
 		{
 			nextFeedback = acceptedPick.feedback;
 			feedbackMinimumMlSample = acceptedPick.minimumMlSample;
+		}
+		else if (selectedChordId >= 0 && chordAcceptFeedback.targetRecord == selectedRecord)
+		{
+			// Chords have no single target pitch; the roles come from the accept decision.
+			nextFeedback = chordAcceptFeedback;
 		}
 		else
 		{
@@ -6532,8 +6788,10 @@ namespace
 			if (enhancedRescueFeedback.targetRecord == selectedRecord)
 			{
 				nextFeedback = enhancedRescueFeedback;
+				// Speaker Mode reads native one semitone off (OctaveCollisionGate.hpp), so agreement
+				// is the same +-1 the pass logic uses, not exact equality.
 				nextFeedback.nativeRole = nextFeedback.nativeMidi < 0 ? NoteByNote::DetectorRole::Unused
-					: nextFeedback.nativeMidi == nextFeedback.enhancedMidi
+					: NoteByNote::NativeCorroboratesPick(nextFeedback.nativeMidi, nextFeedback.enhancedMidi)
 						? NoteByNote::DetectorRole::Confirmed : NoteByNote::DetectorRole::Rejected;
 			}
 			if (mlRescued)
@@ -6542,7 +6800,8 @@ namespace
 				nextFeedback.mlRole = mlRescueMidi == confirmedTarget
 					? NoteByNote::DetectorRole::Confirmed : NoteByNote::DetectorRole::Partial;
 				nextFeedback.mlMidi = mlRescueMidi;
-				if (mlRescueMidi == confirmedTarget && nextFeedback.nativeMidi != confirmedTarget)
+				if (mlRescueMidi == confirmedTarget
+					&& !NoteByNote::NativeCorroboratesPick(nextFeedback.nativeMidi, confirmedTarget))
 					nextFeedback.nativeRole = NoteByNote::DetectorRole::Unused;
 			}
 		}
@@ -6560,11 +6819,34 @@ namespace
 		PublishCommittedDetectionFeedback();
 		mlRescueRecord = 0;
 		enhancedRescueFeedback = {};
+		// A strum this note confirmed off but did not own is left for a successor chord;
+		// ClaimSuccessorStrum decides at the next chord hold whether it is still usable.
+		successorStrumSample = IsPlainPickedTarget() && acceptedPickRecord == selectedRecord
+			&& acceptedPick.strumBelongsToSuccessor ? acceptedPick.minimumSample : 0;
+		// Play-ahead: the note confirmed on its OWN pick, but a later attack (now kept when it cut
+		// the note's pick short, PickedAttackQueue::Push) is still waiting - the player already moved
+		// on. A following chord inherits it the same way; a following single note takes it from the
+		// queue as before. ClaimSuccessorStrum still drops it when stale or no chord claims it.
+		if (successorStrumSample == 0 && IsPlainPickedTarget() && acceptedPickRecord == selectedRecord)
+		{
+			for (unsigned index = 0; index < pickedAttacks.Count(); ++index)
+			{
+				const auto* waiting = pickedAttacks.At(index);
+				if (waiting != nullptr && !waiting->rejected
+					&& waiting->minimumSample > acceptedPick.minimumSample)
+				{
+					successorStrumSample = waiting->minimumSample;
+					break;
+				}
+			}
+		}
+		successorStrumRecord = 0;
 		if (IsPlainPickedTarget())
 		{
 			LOG_INFO("(NBN PICK BUFFER) Committed record=" << selectedRecord
 				<< " attack=" << acceptedPick.time << " sample=" << acceptedPick.confirmedSample
-				<< " remaining=" << pickedAttacks.Count() << std::endl);
+				<< " remaining=" << pickedAttacks.Count()
+				<< " successorStrum=" << successorStrumSample << std::endl);
 		}
 		acceptedPickRecord = 0;
 		consumedRecords.insert(selectedRecord);
@@ -6881,7 +7163,14 @@ namespace
 
 				if (IsPlainPickedTarget())
 				{
-					if (TakeBufferedPick())
+					// A hammer-on is plain-picked only so a PICKED hammer-on commits through the
+					// buffer; the hammer itself must still accept with no pick. This early return
+					// used to skip the Holding phase's legato check entirely, so on the dense path
+					// every hammer-on needed a pick-strength attack (2026-09-23: all 17 hammer-ons
+					// committed via the pick buffer, several after 1.5-4.3 s of re-picking).
+					if (TakeBufferedPick()
+						|| (isLegatoTarget && isHammerOnTarget && !isBendTarget && !isConfirmingLegatoRun
+							&& ConfirmHeldLegatoPitch()))
 					{
 						gatePhase = GatePhase::CommitBeforeRelease;
 						commitTickCount = 0;
@@ -6905,6 +7194,7 @@ namespace
 						!MatchesPickPitch(previousExpectedMidi));
 					if (reattack != -1 && IsAcceptedOnset(reattack))
 					{
+						if (StartBendFromWaitAccept(reattack, "Raw re-attack")) return;
 						gatePhase = GatePhase::CommitBeforeRelease;
 						commitTickCount = 0;
 						wasCommitOverrideLogged = false;
@@ -6949,6 +7239,7 @@ namespace
 						&& discardedOnset != previousExpectedMidi
 						&& !mayBeCarriedBend)
 					{
+						if (StartBendFromWaitAccept(discardedOnset, "Onset")) return;
 						gatePhase = GatePhase::CommitBeforeRelease;
 						commitTickCount = 0;
 						wasCommitOverrideLogged = false;
@@ -6967,6 +7258,7 @@ namespace
 					// pick, whatever the previous note was.
 					if (IsAcceptedOnset(discardedOnset) && spikeRecencyTicks > 0)
 					{
+						if (StartBendFromWaitAccept(discardedOnset, "Same-pitch onset")) return;
 						gatePhase = GatePhase::CommitBeforeRelease;
 						commitTickCount = 0;
 						wasCommitOverrideLogged = false;
@@ -7470,6 +7762,10 @@ namespace
 						// legato notes and the two need different tests.
 						const bool isBendElement = legatoRunIsBend[legatoRunIndex];
 						bool hasReachedRunPitch = false;
+						// True when the native motion tracker's FRACTIONAL pitch made the reach;
+						// the fractional veto below exists for the integer paths' rounding and
+						// must not overrule the engine's own continuous measurement.
+						bool reachedByTracker = false;
 						// A bend CHILD is the parent bend's SUSTAIN: the player holds ONE gesture
 						// across the parent and the child, so the string is ALREADY at the bent
 						// pitch with no fresh below-target approach. The base game treats the bend
@@ -7502,6 +7798,7 @@ namespace
 								hasReachedRunPitch =
 									sounding >= (wanted - BEND_UNDERBEND_SEMITONES)
 									&& sounding < (wanted + BEND_OVERBEND_ALLOWANCE_SEMITONES);
+								reachedByTracker = hasReachedRunPitch;
 								if (hasReachedRunPitch && !wasBendTrackerPitchLogged)
 								{
 									wasBendTrackerPitchLogged = true;
@@ -7686,6 +7983,53 @@ namespace
 									}
 								}
 
+								// Fourth source: the raw-audio estimate, in the PLAYER'S pitch frame.
+								// Every source above is the game's detector, which in Speaker Mode reads
+								// one semitone low most of the time but not always (2026-09-23 Yngwie,
+								// high register: 282 picks read -1, 101 exact). So a fixed +1 would let an
+								// unbent half bend pass whenever the base read exact, and no shift at all
+								// makes a half bend need a whole step (7 of 13 slow bends; "must
+								// overbend"). The estimate measures the audio itself, which the veto
+								// below already trusts to say "not there yet"; trust it the same way to
+								// say "reached": confident, inside the band, held for two ticks, and only
+								// after the bend was seen below target (an unbent half bend reads the
+								// base, so it never gets here; a ring already at pitch never arms).
+								if (!hasReachedRunPitch)
+								{
+									float estimateMidi = -1.0f;
+									float estimateConfidence = 0.0f;
+									if (TryEstimateRawBendPitch(static_cast<double>(expectedMidi),
+											static_cast<double>(expectedRunMidi), estimateMidi, estimateConfidence)
+										&& estimateConfidence >= 40.0f)
+									{
+										if (estimateMidi < wanted - BEND_UNDERBEND_SEMITONES)
+										{
+											hasBendApproachBeenObserved = true;
+											rawEstimateBendStreak = 0;
+										}
+										else if (estimateMidi < wanted + BEND_OVERBEND_ALLOWANCE_SEMITONES
+											&& hasBendApproachBeenObserved)
+										{
+											if (++rawEstimateBendStreak >= 2)
+											{
+												hasReachedRunPitch = true;
+												reachedByTracker = true;   // same estimator the veto uses; do not veto it
+												LOG_INFO("(NBN LAS BEND) Raw-audio estimate " << std::fixed
+													<< std::setprecision(2) << estimateMidi << " (confidence "
+													<< std::setprecision(0) << estimateConfidence
+													<< ") held the target " << expectedRunMidi
+													<< " for 2 ticks; native pitch=" << currentMidi
+													<< " (the player-frame reach; native may read a"
+													<< " semitone low in Speaker Mode)." << std::endl);
+											}
+										}
+										else
+										{
+											rawEstimateBendStreak = 0;
+										}
+									}
+								}
+
 								// But never silently. The fallback is the open-ended
 								// comparison the tracker was adopted to replace, so every
 								// time it carries a bend, the reason the tracker declined
@@ -7715,7 +8059,13 @@ namespace
 						// Bend elements only; a fretted legato note is judged exactly by the polls below.
 						bool enhancedCheckedBend = false;
 						float enhancedBendMidi = -1.0f;
-						if (isBendElement && hasReachedRunPitch)
+						// Two narrowings (2026-09-23, Philip: "sometimes you have to overbend ... or
+						// restrum at the bend peak"): the veto no longer overrules a reach made by
+						// the native tracker's own fractional pitch (it targets integer rounding,
+						// and the tracker does not round), and it allows the estimator
+						// BEND_VETO_ESTIMATOR_SLACK_SEMITONES of error below the accept band, since
+						// a moving pitch still reads slightly low even on the halved window.
+						if (isBendElement && hasReachedRunPitch && !reachedByTracker)
 						{
 							float vetoEstMidi = -1.0f;
 							float vetoEstConfidence = 0.0f;
@@ -7727,9 +8077,22 @@ namespace
 							{
 								enhancedCheckedBend = true;
 								enhancedBendMidi = vetoEstMidi;
-								if (vetoEstMidi < static_cast<float>(expectedRunMidi) - BEND_UNDERBEND_SEMITONES)
+								if (vetoEstMidi < static_cast<float>(expectedRunMidi)
+									- BEND_UNDERBEND_SEMITONES - BEND_VETO_ESTIMATOR_SLACK_SEMITONES)
 								{
 									hasReachedRunPitch = false;
+									// Logged once per veto episode (the 2026-09-23 review could only
+									// infer vetoes, because this refusal wrote nothing).
+									static uintptr_t loggedVetoRecord = 0;
+									static uint64_t loggedVetoHoldTick = 0;
+									if (loggedVetoRecord != selectedRecord || holdTickCount > loggedVetoHoldTick + 30)
+										LOG_INFO("(NBN LAS BEND VETO) Native reached " << expectedRunMidi
+											<< " (native pitch=" << currentMidi << ") but the raw-audio estimate reads "
+											<< std::fixed << std::setprecision(2) << vetoEstMidi << " (confidence "
+											<< std::setprecision(0) << vetoEstConfidence << "), below the band; not yet"
+											<< " bent." << std::endl);
+									loggedVetoRecord = selectedRecord;
+									loggedVetoHoldTick = holdTickCount;
 								}
 							}
 						}
@@ -7829,6 +8192,7 @@ namespace
 									lastCommittedChordRecord = selectedRecord;
 									lastCommittedChordAt = std::chrono::steady_clock::now();
 									pickAttackFloorSample = chordAttacks.GetConsumedThroughSample();
+									lastChordStrumSample = 0;
 								}
 								else
 								{
@@ -8563,6 +8927,9 @@ namespace
 					const bool freshAttack = rawAttackStreamAvailable
 						&& chordAttacks.HasFreshAttack(pickScanSample, pickSampleRate);
 					const uint64_t chordAttackSample = chordAttacks.GetAttackSample();
+					// An inherited strum (ChordAttackGate::Inherit) is aged from the hold for the
+					// corroboration bar and the native frame scan; raw matchers read at the strum.
+					const uint64_t chordAttackOriginSample = chordAttacks.GetAgeOriginSample();
 					uint32_t chordNoteMask = 0;
 					if (!TryRead(record + RECORD_MASK, chordNoteMask))
 					{
@@ -8594,8 +8961,8 @@ namespace
 					// landed 40-150 ms after the strum with the chord largely sounding, so the unvoted
 					// path now needs at least half the chord's tones sounding and the strum no older
 					// than 100 ms: the chord that was actually strummed, not the one slid into.
-					const double attackAgeMs = pickSampleRate != 0 && pickScanSample >= chordAttackSample
-						? static_cast<double>(pickScanSample - chordAttackSample) * 1000.0 / pickSampleRate
+					const double attackAgeMs = pickSampleRate != 0 && pickScanSample >= chordAttackOriginSample
+						? static_cast<double>(pickScanSample - chordAttackOriginSample) * 1000.0 / pickSampleRate
 						: 1e9;
 					// Full-chord requirement, on the game's vote and on the mod's path alike (Philip,
 					// 2026-09-15: two fingers of a G plus a light tap on one more string passed; the
@@ -8626,7 +8993,7 @@ namespace
 					const bool rawUnisonMatches = isUnison
 						&& RawUnisonMatchesAttack(unisonPitch, chordAttackSample);
 					const bool nativeMatcherMatches = !isUnison && !naturalResult
-						&& NativeChordMatchesAttack(matcherTones, matcherToneCount, chordAttackSample);
+						&& NativeChordMatchesAttack(matcherTones, matcherToneCount, chordAttackOriginSample);
 					// Exact fresh-attack evidence must confirm a correctly played chord even when the
 					// game also votes yes but the sounding table under-reports it (the vote-yes + 1/2
 					// dyad the 2026-09-21 stuck-dyad trace showed). Both matchers still require every
@@ -8644,6 +9011,16 @@ namespace
 					const bool tier0Matches = !isUnison && !naturalResult && !nativeMatcherMatches
 						&& !closeDyadMatches && !mlStringsMatch && isChordTier0RescueEnabled
 						&& Tier0ConfirmsChord(playedTones, matcherToneCount);
+					// Power chord: the game's vote or matcher on THIS strum (latched, since the vote
+					// flickers tick to tick), plus the fifth confirmed in the raw audio. Measured only
+					// once the game agreed, so a strum the game rejects costs no raw query.
+					if (freshAttack && (naturalResult || nativeMatcherMatches))
+						chordNativeAgreedAttack = chordAttackSample;
+					const bool nativeAgreedOnStrum = freshAttack && chordAttackSample != 0
+						&& chordNativeAgreedAttack == chordAttackSample;
+					const bool powerChordRawMatches = !isUnison && !closeDyadMatches && nativeAgreedOnStrum
+						&& NoteByNote::IsPowerChordShape(playedTones, matcherToneCount)
+						&& RawPowerChordMatchesAttack(playedTones, matcherToneCount, chordAttackSample);
 					NoteByNote::ChordPitchDecisionInput chordDecision;
 					chordDecision.toneCount = matcherToneCount;
 					chordDecision.isFretHandMuted = fretHandMuted;
@@ -8658,6 +9035,8 @@ namespace
 					chordDecision.mlStringsMatch = mlStringsMatch;
 					chordDecision.isTier0Enabled = isChordTier0RescueEnabled;
 					chordDecision.tier0Matches = tier0Matches;
+					chordDecision.powerChordRawMatches = powerChordRawMatches;
+					chordDecision.nativeAgreedOnStrum = nativeAgreedOnStrum;
 					const auto pitchConfirmation = NoteByNote::EvaluateChordPitchDecision(chordDecision);
 					const bool pitchesMatch = pitchConfirmation != NoteByNote::ChordPitchConfirmation::None;
 					if (pitchConfirmation == NoteByNote::ChordPitchConfirmation::MlStrings)
@@ -8725,6 +9104,31 @@ namespace
 						lastCommittedChordRecord = selectedRecord;
 						lastCommittedChordAt = std::chrono::steady_clock::now();
 						pickAttackFloorSample = chordAttacks.GetConsumedThroughSample();
+						lastChordStrumSample = chordAttackSample;
+						{
+							// HUD accept readout: green only on the detector(s) that passed this chord.
+							// Native = the game's vote or its own chord matcher; Enhanced = the raw-audio
+							// pitch paths (unison, close dyad, tier-0) or a fret-hand mute's attack;
+							// ML = the per-string model.
+							using NoteByNote::ChordPitchConfirmation;
+							using NoteByNote::DetectorRole;
+							chordAcceptFeedback = {};
+							chordAcceptFeedback.targetRecord = selectedRecord;
+							chordAcceptFeedback.nativeMidi = QueryNativeLoudestPlayedNote();
+							chordAcceptFeedback.nativeRole = naturalResult || nativeMatcherMatches
+								|| nativeAgreedOnStrum
+								|| pitchConfirmation == ChordPitchConfirmation::Natural
+								|| pitchConfirmation == ChordPitchConfirmation::NativeMatcher
+								? DetectorRole::Confirmed : DetectorRole::Unused;
+							chordAcceptFeedback.enhancedRole = fretHandMuted
+								|| pitchConfirmation == ChordPitchConfirmation::Unison
+								|| pitchConfirmation == ChordPitchConfirmation::CloseDyad
+								|| pitchConfirmation == ChordPitchConfirmation::Tier0
+								|| pitchConfirmation == ChordPitchConfirmation::PowerChord
+								? DetectorRole::Confirmed : DetectorRole::Unused;
+							chordAcceptFeedback.mlRole = pitchConfirmation == ChordPitchConfirmation::MlStrings
+								? DetectorRole::Confirmed : DetectorRole::Unused;
+						}
 						char chordIdentity[64] = "?";
 						NoteByNoteNativeScoring::TryDescribeChordTarget(
 							reinterpret_cast<uintptr_t>(note), chordIdentity, sizeof(chordIdentity));
@@ -8732,6 +9136,7 @@ namespace
 							<< " chord record=0x" << std::hex << selectedRecord << std::dec
 							<< " (chordId " << selectedChordId << ", " << chordIdentity
 							<< ") - consumed raw strum sample=" << chordAttackSample
+							<< (chordAttackOriginSample != chordAttackSample ? " (inherited from the previous note)" : "")
 							<< " through=" << chordAttacks.GetConsumedThroughSample()
 							<< " after " << chordDecisionEvalCount
 							<< " evaluation(s); committing." << std::endl);
