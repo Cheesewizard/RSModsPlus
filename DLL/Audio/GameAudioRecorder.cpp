@@ -65,6 +65,8 @@ namespace Audio
 		error.store(S_OK);
 		stopping.store(false);
 		peakSample.store(0);
+		sumSquares.store(0);
+		sampleCount.store(0);
 		if (!WriteHeader()) { const HRESULT result = HRESULT_FROM_WIN32(GetLastError()); Close(); return result; }
 		writer = std::thread(&GameAudioRecorder::WritePackets, this);
 		LOG_INFO("(AUDIO ROUTING) Recording game audio to " << (directory / name).string() << std::endl);
@@ -94,13 +96,17 @@ namespace Audio
 			return;
 		}
 		int32_t packetPeak = 0;
+		uint64_t packetSquares = 0;
 		for (uint32_t sample = 0; sample < frames * 2; ++sample)
 		{
 			const float input = samples[channels == 1 ? sample / 2 : sample];
 			const float value = std::isfinite(input) ? std::clamp(input, -1.0f, 1.0f) : 0.0f;
 			destination[sample] = static_cast<int16_t>(std::lround(value * 32767.0f));
 			packetPeak = std::max<int32_t>(packetPeak, std::abs(static_cast<int32_t>(destination[sample])));
+			packetSquares += static_cast<uint64_t>(static_cast<int64_t>(destination[sample]) * destination[sample]);
 		}
+		sumSquares.fetch_add(packetSquares, std::memory_order_relaxed);
+		sampleCount.fetch_add(frames * 2ull, std::memory_order_relaxed);
 		// Single producer thread, so load-then-store is enough to keep a running maximum.
 		if (packetPeak > peakSample.load(std::memory_order_relaxed)) peakSample.store(packetPeak, std::memory_order_relaxed);
 		queue.CommitWrite(frames * 2 * sizeof(int16_t));
@@ -179,19 +185,35 @@ namespace Audio
 		if (wakeEvent) { CloseHandle(wakeEvent); wakeEvent = nullptr; }
 	}
 
-	// The dry take is the detector-side input (post make-up gain, pre amp), so it lands ~13 dB under
-	// the wet mix and sounds near-silent beside it. A fixed boost would clip hard strums, so the whole
-	// file is scaled once at the end so its peak sits at -1 dBFS. The applied gain is logged so the
-	// detector-level signal can be recovered (divide by it). Gain is capped so a take of pure noise
-	// is not blown up to full scale, and a take already near full scale is left untouched.
+	double GameAudioRecorder::GetMeanSquare() const noexcept
+	{
+		const uint64_t count = sampleCount.load();
+		if (count == 0) return 0.0;
+		return static_cast<double>(sumSquares.load()) / count / (32767.0 * 32767.0);
+	}
+
+	// The dry take is the detector-side input (post make-up gain, pre amp), so it lands well under
+	// the wet mix and sounds near-silent beside it. The whole file is scaled once at the end so its
+	// mean level matches the wet take of the same session, so the pair plays back equally loud.
+	// (Peak-normalizing to -1 dBFS was tried first: it overshot by ~6 dB whenever the input was quiet,
+	// since the gain then depended on how hard the loudest note was played, and the wet mix peaks
+	// lower because of the output limiter.) Limits: the dry peak never exceeds -1 dBFS, the boost
+	// is capped at +30 dB so a take of pure noise is not blown up, and with no usable wet level
+	// (wet silent or unset) it falls back to the -1 dBFS peak target. The applied gain is logged so
+	// the detector-level signal can be recovered (divide by it).
 	void GameAudioRecorder::NormalizeFile()
 	{
 		const int32_t peak = peakSample.load();
-		if (peak <= 0 || dataBytes == 0) return;
+		const double ownMeanSquare = GetMeanSquare();
+		if (peak <= 0 || dataBytes == 0 || ownMeanSquare <= 0.0) return;
 		constexpr double targetPeak = 32767.0 * 0.891251;   // -1 dBFS
 		constexpr double maximumGain = 31.6228;              // +30 dB
-		const double gain = std::min(targetPeak / peak, maximumGain);
-		if (gain <= 1.0) return;
+		constexpr double silentMeanSquare = 1e-6;            // -60 dBFS
+		const double peakGain = targetPeak / peak;
+		const bool matchWet = loudnessReference > silentMeanSquare;
+		const double wantedGain = matchWet ? std::sqrt(loudnessReference / ownMeanSquare) : peakGain;
+		const double gain = std::min({ wantedGain, peakGain, maximumGain });
+		if (std::fabs(gain - 1.0) < 0.01) return;
 		std::vector<int16_t> block(32768);
 		uint64_t offset = 0;
 		while (offset < dataBytes)
@@ -220,9 +242,13 @@ namespace Audio
 			offset += chunk;
 		}
 		FlushFileBuffers(file);
-		LOG_INFO("(AUDIO ROUTING) Normalized " << std::filesystem::path(recordingPath).filename().string() << " by +" << std::fixed << std::setprecision(1)
-			<< 20.0 * std::log10(gain) << " dB (x" << std::setprecision(4) << gain << ", source peak "
-			<< std::setprecision(1) << 20.0 * std::log10(peak / 32767.0) << " dBFS)" << std::endl);
+		const double gainDb = 20.0 * std::log10(gain);
+		LOG_INFO("(AUDIO ROUTING) Normalized " << std::filesystem::path(recordingPath).filename().string() << " by "
+			<< (gainDb >= 0 ? "+" : "") << std::fixed << std::setprecision(1) << gainDb << " dB (x" << std::setprecision(4) << gain
+			<< ", " << (matchWet ? "matched wet mean " : "no wet level, peak target; ")
+			<< std::setprecision(1) << (matchWet ? 10.0 * std::log10(loudnessReference) : 0.0) << (matchWet ? " dBFS" : "")
+			<< ", source mean " << 10.0 * std::log10(ownMeanSquare) << " dBFS, source peak "
+			<< 20.0 * std::log10(peak / 32767.0) << " dBFS" << (gain < wantedGain ? ", limited by peak/cap" : "") << ")" << std::endl);
 	}
 
 	RecordingSession::~RecordingSession()
@@ -291,7 +317,11 @@ namespace Audio
 		started = wet->GetStarted();
 		wetPath = wet->GetPath();
 		wet->Close();
-		if (dry) dry->Close();
+		if (dry)
+		{
+			dry->SetLoudnessReference(wet->GetMeanSquare());
+			dry->Close();
+		}
 	}
 
 	HRESULT RecordingSession::GetError() const noexcept

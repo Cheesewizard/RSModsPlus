@@ -19,9 +19,13 @@ namespace Audio
 		HRESULT Open(const std::filesystem::path& directory, uint32_t maximumFrames, const wchar_t* label = L"",
 			const std::wstring& takeName = std::wstring());
 		static std::wstring NewTakeName(const std::filesystem::path& directory);
-		// Peak-normalize the finished file to -1 dBFS on Close (never attenuates, gain capped).
-		// Set before Open; used for the dry take, which sits ~13 dB under the wet mix.
+		// Rescale the finished file on Close so its mean level matches loudnessReference (a mean
+		// square on the 0..1 full-scale range, e.g. the paired wet take's GetMeanSquare()). Peak is
+		// kept at or under -1 dBFS. Set before Open; used for the dry take.
 		void SetNormalizeOnClose(bool enabled) noexcept { normalizeOnClose = enabled; }
+		void SetLoudnessReference(double meanSquare) noexcept { loudnessReference = meanSquare; }
+		// Mean square of everything recorded so far, full scale = 1.0 (0 when nothing recorded).
+		double GetMeanSquare() const noexcept;
 		void Submit(const float* stereo, uint32_t frames) noexcept;
 		void SubmitMono(const float* mono, uint32_t frames, uint32_t sampleRate) noexcept;
 		uint64_t GetFrames() const noexcept { return recordedFrames.load(); }
@@ -40,7 +44,9 @@ namespace Audio
 		std::atomic<HRESULT> error{ S_OK };
 		std::atomic<bool> stopping{ false };
 		std::atomic<int32_t> peakSample{ 0 };
+		std::atomic<uint64_t> sumSquares{ 0 }, sampleCount{ 0 };
 		bool normalizeOnClose = false;
+		double loudnessReference = 0.0;
 		HANDLE wakeEvent = nullptr;
 		HANDLE file = INVALID_HANDLE_VALUE;
 		std::thread writer;
