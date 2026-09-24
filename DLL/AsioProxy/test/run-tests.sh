@@ -17,7 +17,7 @@ here="$script_dir"
 cd "$output_dir"
 
 echo "== building proxy (current source) =="
-MSYS_NO_PATHCONV=1 "$cl" -nologo -LD -EHsc -std:c++17 -O2 -MT -DRSMODS_ASIO_PROXY_TESTING "$(cygpath -w "$here/../AsioProxyDriver.cpp")" "$(cygpath -w "$here/../VirtualCableCapture.cpp")" -Fe:RocksmithAudioBridgeAsio.dll -link -DEF:"$(cygpath -w "$here/../RocksmithAudioBridge.def")" ole32.lib advapi32.lib propsys.lib
+MSYS_NO_PATHCONV=1 "$cl" -nologo -LD -EHsc -std:c++17 -O2 -MT -DRSMODS_ASIO_PROXY_TESTING "$(cygpath -w "$here/../AsioProxyDriver.cpp")" "$(cygpath -w "$here/../VirtualCableCapture.cpp")" -Fe:RocksmithAudioBridgeAsio.dll -link -DEF:"$(cygpath -w "$here/../RocksmithAudioBridge.def")" ole32.lib advapi32.lib propsys.lib delayimp.lib -DELAYLOAD:avrt.dll
 
 echo "== building stub ASIO driver =="
 MSYS_NO_PATHCONV=1 "$cl" -nologo -LD -EHsc -std:c++17 -O2 -MT "$(cygpath -w "$here/StubAsioDriver.cpp")" -Fe:StubAsioDriver.dll \
