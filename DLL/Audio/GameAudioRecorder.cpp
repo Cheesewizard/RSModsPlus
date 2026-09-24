@@ -9,23 +9,47 @@ namespace Audio
 		Close();
 	}
 
-	HRESULT GameAudioRecorder::Open(const std::filesystem::path& directory, uint32_t maximumFrames, const wchar_t* label)
+	// Readable take name: "Rocksmith-2026-09-24_14-06-49". The date sorts in filename order and the
+	// time reads as a clock. Uniqueness comes from the directory, not from a process id or counter:
+	// if any file of a take with this stem already exists (two takes in one second, or the same
+	// second on another run), "_2", "_3"... is appended so the wet, dry and video files still
+	// share one stem.
+	std::wstring GameAudioRecorder::NewTakeName(const std::filesystem::path& directory)
+	{
+		SYSTEMTIME time{};
+		GetLocalTime(&time);
+		wchar_t base[64];
+		swprintf_s(base, L"Rocksmith-%04u-%02u-%02u_%02u-%02u-%02u", time.wYear, time.wMonth,
+			time.wDay, time.wHour, time.wMinute, time.wSecond);
+		static const wchar_t* const takeFiles[] = { L"-wet.wav", L"-wet.mp4", L"-dry.wav", L".wav", L".mp4" };
+		for (uint32_t attempt = 1;; ++attempt)
+		{
+			std::wstring stem = base;
+			if (attempt > 1) stem += L"_" + std::to_wstring(attempt);
+			bool taken = false;
+			for (const wchar_t* suffix : takeFiles)
+			{
+				std::error_code ignored;
+				if (std::filesystem::exists(directory / (stem + suffix), ignored)) { taken = true; break; }
+			}
+			if (!taken || attempt >= 1000) return stem;
+		}
+	}
+
+	HRESULT GameAudioRecorder::Open(const std::filesystem::path& directory, uint32_t maximumFrames, const wchar_t* label,
+		const std::wstring& takeName)
 	{
 		if (writer.joinable() || file != INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
 		if (maximumFrames == 0 || maximumFrames > 48000) return E_INVALIDARG;
 		std::error_code directoryError;
 		std::filesystem::create_directories(directory, directoryError);
 		if (directoryError) return HRESULT_FROM_WIN32(directoryError.value());
-		SYSTEMTIME time{};
-		GetLocalTime(&time);
+		const std::wstring stem = takeName.empty() ? NewTakeName(directory) : takeName;
 		wchar_t name[160];
-		static std::atomic<uint32_t> sequence{ 0 };
 		const wchar_t* separator = (label && label[0]) ? L"-" : L"";
-		swprintf_s(name, L"Rocksmith-%04u%02u%02u-%02u%02u%02u-%u-%u%ls%ls.wav", time.wYear, time.wMonth,
-			time.wDay, time.wHour, time.wMinute, time.wSecond, GetCurrentProcessId(), sequence.fetch_add(1),
-			separator, (label ? label : L""));
+		swprintf_s(name, L"%ls%ls%ls.wav", stem.c_str(), separator, (label ? label : L""));
 		recordingPath = (directory / name).wstring();
-		file = CreateFileW(recordingPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+		file = CreateFileW(recordingPath.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (file == INVALID_HANDLE_VALUE) return HRESULT_FROM_WIN32(GetLastError());
 		packetLimit = maximumFrames;
 		// Buffer enough packets to ride out disk contention (e.g. simultaneous video capture) without
@@ -40,6 +64,7 @@ namespace Audio
 		recordingStarted.store(0);
 		error.store(S_OK);
 		stopping.store(false);
+		peakSample.store(0);
 		if (!WriteHeader()) { const HRESULT result = HRESULT_FROM_WIN32(GetLastError()); Close(); return result; }
 		writer = std::thread(&GameAudioRecorder::WritePackets, this);
 		LOG_INFO("(AUDIO ROUTING) Recording game audio to " << (directory / name).string() << std::endl);
@@ -68,12 +93,16 @@ namespace Audio
 			SetEvent(wakeEvent);
 			return;
 		}
+		int32_t packetPeak = 0;
 		for (uint32_t sample = 0; sample < frames * 2; ++sample)
 		{
 			const float input = samples[channels == 1 ? sample / 2 : sample];
 			const float value = std::isfinite(input) ? std::clamp(input, -1.0f, 1.0f) : 0.0f;
 			destination[sample] = static_cast<int16_t>(std::lround(value * 32767.0f));
+			packetPeak = std::max<int32_t>(packetPeak, std::abs(static_cast<int32_t>(destination[sample])));
 		}
+		// Single producer thread, so load-then-store is enough to keep a running maximum.
+		if (packetPeak > peakSample.load(std::memory_order_relaxed)) peakSample.store(packetPeak, std::memory_order_relaxed);
 		queue.CommitWrite(frames * 2 * sizeof(int16_t));
 		if (!recordingStarted.load())
 		{
@@ -141,8 +170,59 @@ namespace Audio
 		stopping.store(true);
 		if (wakeEvent) SetEvent(wakeEvent);
 		if (writer.joinable()) writer.join();
-		if (file != INVALID_HANDLE_VALUE) { CloseHandle(file); file = INVALID_HANDLE_VALUE; }
+		if (file != INVALID_HANDLE_VALUE)
+		{
+			if (normalizeOnClose && SUCCEEDED(error.load())) NormalizeFile();
+			CloseHandle(file);
+			file = INVALID_HANDLE_VALUE;
+		}
 		if (wakeEvent) { CloseHandle(wakeEvent); wakeEvent = nullptr; }
+	}
+
+	// The dry take is the detector-side input (post make-up gain, pre amp), so it lands ~13 dB under
+	// the wet mix and sounds near-silent beside it. A fixed boost would clip hard strums, so the whole
+	// file is scaled once at the end so its peak sits at -1 dBFS. The applied gain is logged so the
+	// detector-level signal can be recovered (divide by it). Gain is capped so a take of pure noise
+	// is not blown up to full scale, and a take already near full scale is left untouched.
+	void GameAudioRecorder::NormalizeFile()
+	{
+		const int32_t peak = peakSample.load();
+		if (peak <= 0 || dataBytes == 0) return;
+		constexpr double targetPeak = 32767.0 * 0.891251;   // -1 dBFS
+		constexpr double maximumGain = 31.6228;              // +30 dB
+		const double gain = std::min(targetPeak / peak, maximumGain);
+		if (gain <= 1.0) return;
+		std::vector<int16_t> block(32768);
+		uint64_t offset = 0;
+		while (offset < dataBytes)
+		{
+			const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(block.size() * sizeof(int16_t), dataBytes - offset));
+			LARGE_INTEGER position{};
+			position.QuadPart = 44 + static_cast<LONGLONG>(offset);
+			DWORD transferred = 0;
+			if (!SetFilePointerEx(file, position, nullptr, FILE_BEGIN) ||
+				!ReadFile(file, block.data(), chunk, &transferred, nullptr) || transferred != chunk)
+			{
+				LOG_ERROR("(AUDIO ROUTING) Dry normalize read failed at byte " << offset << ", file partly scaled" << std::endl);
+				return;
+			}
+			for (size_t index = 0; index < chunk / sizeof(int16_t); ++index)
+			{
+				const long scaled = std::lround(block[index] * gain);
+				block[index] = static_cast<int16_t>(std::clamp<long>(scaled, -32768, 32767));
+			}
+			if (!SetFilePointerEx(file, position, nullptr, FILE_BEGIN) ||
+				!WriteFile(file, block.data(), chunk, &transferred, nullptr) || transferred != chunk)
+			{
+				LOG_ERROR("(AUDIO ROUTING) Dry normalize write failed at byte " << offset << ", file partly scaled" << std::endl);
+				return;
+			}
+			offset += chunk;
+		}
+		FlushFileBuffers(file);
+		LOG_INFO("(AUDIO ROUTING) Normalized " << std::filesystem::path(recordingPath).filename().string() << " by +" << std::fixed << std::setprecision(1)
+			<< 20.0 * std::log10(gain) << " dB (x" << std::setprecision(4) << gain << ", source peak "
+			<< std::setprecision(1) << 20.0 * std::log10(peak / 32767.0) << " dBFS)" << std::endl);
 	}
 
 	RecordingSession::~RecordingSession()
@@ -158,9 +238,14 @@ namespace Audio
 		if (directory.empty() || wetMaximumFrames == 0) return E_INVALIDARG;
 		auto wet = std::make_shared<GameAudioRecorder>();
 		auto dry = std::make_shared<GameAudioRecorder>();
-		HRESULT result = wet->Open(directory, wetMaximumFrames, L"wet");
+		dry->SetNormalizeOnClose(true);
+		// One take name for both files so the pair differs only by the -wet/-dry label (the video
+		// muxed from the wet file keeps that name too). Separate Open calls used to each draw their
+		// own sequence number, so a take landed as ...-2-wet.mp4 beside ...-3-dry.wav.
+		const std::wstring takeName = GameAudioRecorder::NewTakeName(directory);
+		HRESULT result = wet->Open(directory, wetMaximumFrames, L"wet", takeName);
 		if (FAILED(result)) return result;
-		result = dry->Open(directory, 4096, L"dry");
+		result = dry->Open(directory, 4096, L"dry", takeName);
 		if (FAILED(result)) { wet->Close(); return result; }
 		wetRecorder = std::move(wet);
 		dryRecorder = std::move(dry);
