@@ -1,0 +1,4 @@
+LIBRARY RSModsDebug
+EXPORTS
+	RSMP_StartDebugBridge
+	RSMP_StopDebugBridge

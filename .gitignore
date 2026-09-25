@@ -1,4 +1,9 @@
 # Project-specific files
+# Keep the persistent-input contract harness visible despite local scratch-test exclusions.
+!/Tests/PersistentInput/
+!/Tests/PersistentInput/persistent_tests.cpp
+!/Tests/PersistentInput/run.cmd
+!/Tests/PersistentInput/README.md
 xinput1_3.dll
 Tests/ShifterHarness/*.wav
 
@@ -23,6 +28,8 @@ RSMods/RSMods.vcxproj.user
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
+Release Public/
+Release Developer/
 [Rr]eleases/
 [Rr]elease with Wwise Logging/
 x64/
@@ -284,3 +291,55 @@ __pycache__/
 
 Installer/Resources/
 *.user
+
+# Note by Note research and native reverse-engineering material.
+#
+# This repository's origin is public. The material below is investigation output,
+# native addresses and captured runtime evidence, and it is deliberately kept off it.
+# The private RocksmithNativeAtlas repository is where that work belongs.
+#
+# Ignoring these paths stops a careless "git add ." from staging them. It does not
+# untrack anything already committed, so anything previously added has to be handled
+# separately.
+Research/
+DLL/Research/
+tools/
+docs/development/
+docs/investigations/note-by-note-handover*.md
+artifacts/
+BuildArchive/
+build/
+!Tests/MlControl/
+DLL/Installer/
+
+# Note by Note research lives in the private RocksmithNativeAtlas repository.
+# origin here is public; nothing in this family may be tracked.
+docs/investigations/note-by-note-*.md
+
+# Design and research docs are private for now. Blanket-ignore the design/research
+# folders so new docs stay out of the public repo. Already-released (tracked) docs in
+# these folders keep being tracked - gitignore does not untrack them - so this only
+# affects new/untracked docs going forward. Use `git add -f` to release one deliberately.
+docs/designs/
+docs/investigations/
+
+# MSYS/Cygwin crash dumps
+*.stackdump
+
+# Private research + local deployment backups (keep local, never commit)
+/private-debugging/
+/DeploymentBackups/
+
+# Local pre-release deploy staging folders and tool scratch output (never commit)
+/PreReleaseDeploy_*/
+/tmp/
+
+# Private tooling, test harnesses and dev docs live in the atlas (RocksmithNativeAtlas/rsmodsplus-private)
+# and are reached here through directory junctions. Git sees a junction as a symlink: no trailing slash.
+/Tests
+/docs
+/tools
+/DLL/AsioProxy/test
+/DLL/Audio/test
+/RSModsPlus/TestAudioParity.py
+/RSModsPlus/TestManagedStream.py

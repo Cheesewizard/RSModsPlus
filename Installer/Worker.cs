@@ -12,6 +12,13 @@ namespace RS2014_Mod_Installer
                 File.WriteAllBytes(Path.Combine(@rocksmithLocation, "xinput1_3.dll"), Properties.Resources.xinput1_3);
                 File.WriteAllBytes(Path.Combine(@rocksmithLocation, "xinput1_3.pdb"), Properties.Resources.xinput1_3_pdb);
 
+                // The Rocksmith Audio Bridge proxy ASIO driver (used for wet recording). Place the file next to
+                // the host so it is present on disk, but do NOT register it here: registration is the user's
+                // on-demand opt-in from the audio bridge GUI when they open a feature that needs it. Placing the
+                // file at install (instead of the GUI writing it out at runtime) keeps this out of dropper-style
+                // antivirus heuristics.
+                File.WriteAllBytes(Path.Combine(@rocksmithLocation, "RocksmithAudioBridgeAsio.dll"), Properties.Resources.RocksmithAudioBridge);
+
                 if (File.Exists(Path.Combine(@rocksmithLocation, "D3DX9_42.dll")) && new FileInfo(Path.Combine(@rocksmithLocation, "D3DX9_42.dll")).Length >= 300000)
                     File.Delete(Path.Combine(@rocksmithLocation, "D3DX9_42.dll"));
 
@@ -61,9 +68,9 @@ namespace RS2014_Mod_Installer
                 File.WriteAllBytes(Path.Combine(rootModFolder, "PSTaskDialog.dll"), Properties.Resources.PSTaskDialog);
                 File.WriteAllBytes(Path.Combine(rootModFolder, "RocksmithToolkitLib.dll"), Properties.Resources.RocksmithToolkitLib);
                 File.WriteAllBytes(Path.Combine(rootModFolder, "RocksmithToTabLib.dll"), Properties.Resources.RocksmithToTabLib);
-                File.WriteAllBytes(Path.Combine(rootModFolder, "RSMods.exe"), Properties.Resources.RSMods);
-                File.WriteAllText(Path.Combine(rootModFolder, "RSMods.exe.config"), Properties.Resources.RSMods_exe);
-                File.WriteAllBytes(Path.Combine(rootModFolder, "RSMods.pdb"), Properties.Resources.RSMods1);
+                File.WriteAllBytes(Path.Combine(rocksmithLocation, "RSMods.exe"), Properties.Resources.RSMods);
+                File.WriteAllText(Path.Combine(rocksmithLocation, "RSMods.exe.config"), Properties.Resources.RSMods_exe);
+                File.WriteAllBytes(Path.Combine(rocksmithLocation, "RSMods.pdb"), Properties.Resources.RSMods1);
                 File.WriteAllBytes(Path.Combine(rootModFolder, "SevenZipSharp.dll"), Properties.Resources.SevenZipSharp);
                 File.WriteAllBytes(Path.Combine(rootModFolder, "SharpConfig.dll"), Properties.Resources.SharpConfig);
                 File.WriteAllBytes(Path.Combine(rootModFolder, "System.Security.AccessControl.dll"), Properties.Resources.System_Security_AccessControl);

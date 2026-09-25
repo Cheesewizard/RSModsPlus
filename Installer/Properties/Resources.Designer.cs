@@ -899,6 +899,13 @@ namespace RS2014_Mod_Installer.Properties {
                 return ((byte[])(obj));
             }
         }
+
+        internal static byte[] RocksmithAudioBridge {
+            get {
+                object obj = ResourceManager.GetObject("RocksmithAudioBridge", resourceCulture);
+                return ((byte[])(obj));
+            }
+        }
         
         /// <summary>
         ///   Looks up a localized resource of type System.Byte[].

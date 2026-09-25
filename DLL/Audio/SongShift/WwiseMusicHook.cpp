@@ -389,8 +389,6 @@ namespace
 
 	IAkSoftwareCodec* __cdecl SpyVorbisFileFactory(void* context)
 	{
-		auto* selectedCache = static_cast<Audio::SongShift::PreparedPitchCache*>(
-			InterlockedCompareExchangePointer(&selectedSongCache, nullptr, nullptr));
 		const bool isPreparedSongExpected = InterlockedCompareExchange(
 			&isSelectedSongPlaybackExpected,
 			0,
@@ -403,17 +401,11 @@ namespace
 			LOG_ERROR("Speaker Mode did not resolve the selected chart tuning before playback" << std::endl);
 			DropPedal::DisableSpeakerMode();
 		}
-		else if (DropPedal::IsSpeakerModeEnabled() && isPreparedSongExpected
-			&& hasLeftPreSongTuner
-			&& DropPedal::GetShiftSemitones() != 0
-			&& (selectedCache == nullptr
-				|| !Audio::SongShift::PreRenderedPitchCache::WaitUntilPlayable(selectedCache, 30000)))
-		{
-			LOG_ERROR("Speaker Mode could not prepare the selected song opening: "
-				<< Audio::SongShift::PreRenderedPitchCache::GetError(selectedCache)
-				<< std::endl);
-			DropPedal::DisableSpeakerMode();
-		}
+
+		// Never wait for pre-rendering on Wwise's codec thread. Blocking this factory
+		// starves the mixer, so the output device repeats its last buffer as a tone.
+		// Decoder output uses the live shifter until the cache matches, and CopyFrames
+		// returns silence whenever playback reaches beyond the rendered frontier.
 
 		auto* source = originalVorbisFileFactory(context);
 		HookFileDecoderOutput(source);

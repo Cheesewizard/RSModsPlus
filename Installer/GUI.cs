@@ -49,7 +49,7 @@ namespace RS2014_Mod_Installer
 
             if (DLLStuff.InjectDLL(rsPath) && DLLStuff.InjectGUI(rsPath))
             {
-                string rsModsPath = Path.Combine(rsPath, "RSMods") + "\\RSMods.exe";
+                string rsModsPath = Path.Combine(rsPath, "RSMods.exe");
                 MessageBox.Show("This version of the installer allows you to take advantage of the new mod settings available by opening: " + rsModsPath, "New Mod Settings Available!", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 Process.Start(rsModsPath);
