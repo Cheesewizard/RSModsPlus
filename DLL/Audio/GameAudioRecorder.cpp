@@ -262,6 +262,9 @@ namespace Audio
 	{
 		if (wetRecorder || dryRecorder) return HRESULT_FROM_WIN32(ERROR_ALREADY_INITIALIZED);
 		if (directory.empty() || wetMaximumFrames == 0) return E_INVALIDARG;
+		// Refuse before creating any file: Attach below rejects a missing/wrong-rate input too, but by then both
+		// WAVs exist, and Stop only closes them, so a refused Record used to leave an empty header-only pair.
+		if (!DrySignalRecording::IsReady()) return AUDCLNT_E_DEVICE_INVALIDATED;
 		auto wet = std::make_shared<GameAudioRecorder>();
 		auto dry = std::make_shared<GameAudioRecorder>();
 		dry->SetNormalizeOnClose(true);
