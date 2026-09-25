@@ -333,3 +333,13 @@ docs/investigations/
 # Local pre-release deploy staging folders and tool scratch output (never commit)
 /PreReleaseDeploy_*/
 /tmp/
+
+# Private tooling, test harnesses and dev docs live in the atlas (RocksmithNativeAtlas/rsmodsplus-private)
+# and are reached here through directory junctions. Git sees a junction as a symlink: no trailing slash.
+/Tests
+/docs
+/tools
+/DLL/AsioProxy/test
+/DLL/Audio/test
+/RSModsPlus/TestAudioParity.py
+/RSModsPlus/TestManagedStream.py

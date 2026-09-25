@@ -1,9 +1,0 @@
-LIBRARY RSModsStubAsio
-EXPORTS
-    DllGetClassObject
-    DllCanUnloadNow
-    RSModsStub_SetCallbackStalled
-    RSModsStub_SetCreateBuffersFailed
-    RSModsStub_StopCalls
-    RSModsStub_DisposeCalls
-    RSModsStub_InvokeLateCallback
